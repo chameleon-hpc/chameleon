@@ -1,6 +1,11 @@
 #include "chameleon.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <mpi.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 MPI_Comm chameleon_comm;
 int chameleon_comm_rank;
@@ -34,3 +39,7 @@ int chameleon_finalize() {
 int chameleon_distributed_taskwait() {
     return 0;
 }
+
+#ifdef __cplusplus
+}
+#endif

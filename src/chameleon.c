@@ -25,7 +25,12 @@ int chameleon_init() {
     MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
     MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
 
-    printf("Chameleon: Hello from rank is %d of %d\n", chameleon_comm_rank, chameleon_comm_size);
+    printf("Chameleon: Hello from rank %d of %d\n", chameleon_comm_rank, chameleon_comm_size);
+
+    // dummy target region to force binary loading
+    #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
+    {
+    }
 
     // TODO: create communication thread (maybe start later)
 

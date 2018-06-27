@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <vector>
+#include <stdexcept>
 
 static std::mutex _mtx_data_entry;
 static std::list<OffloadingDataEntryTy> _data_entries;
@@ -76,30 +77,44 @@ int32_t chameleon_distributed_taskwait() {
         std::vector<void *> args(cur_task.arg_num);
         std::vector<void *> ptrs(cur_task.arg_num);
 
+        //printf("New OffloadingTaskEntryTy\n");
         for (int32_t i = 0; i < cur_task.arg_num; ++i) {
-            ptrs[i] = (void *)((intptr_t)cur_task.tgt_args[i] + cur_task.tgt_offsets[i]);
-            args[i] = &ptrs[i];
+            printf("- adding parameter address (" DPxMOD ") with offset = %td\n", DPxPTR(cur_task.tgt_args[i]), cur_task.tgt_offsets[i]);
 
-            // TODO: here we need to perform a pointer mapping to source pointers 
-            // because target pointers have already been deleted
-            if(cur_task.tgt_arg_types[i] && CH_OMP_TGT_MAPTYPE_LITERAL) {
+            int64_t tmp_type = cur_task.tgt_arg_types[i];
+            int64_t is_literal = (tmp_type & CH_OMP_TGT_MAPTYPE_LITERAL);
+            int64_t is_implicit = (tmp_type & CH_OMP_TGT_MAPTYPE_IMPLICIT);
+            int64_t is_to = (tmp_type & CH_OMP_TGT_MAPTYPE_TO);
+            int64_t is_from = (tmp_type & CH_OMP_TGT_MAPTYPE_FROM);
+            int64_t is_prt_obj = (tmp_type & CH_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
+
+            ptrs[i] = (void *)((intptr_t)cur_task.tgt_args[i] + cur_task.tgt_offsets[i]);
+
+            if(cur_task.tgt_arg_types[i] & CH_OMP_TGT_MAPTYPE_LITERAL) {
                 // no need to do anything because it is by value
+                args[i] = &ptrs[i];
                 continue;
             }
 
-            // get source pointer for tgt_ptr
+            // here we need to perform a pointer mapping to source pointers 
+            // because target pointers have already been deleted
             int found = 0;
+            void *tmp_ptr = ptrs[i];
             for(auto &entry : _data_entries) {
-                if(entry.tgt_ptr == args[i]) {
+                printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
+                if(entry.tgt_ptr == tmp_ptr) {
                     // increase reference count
-                    args[i] = entry.hst_ptr;
+                    ptrs[i] = entry.hst_ptr;
                     found = 1;
                     break;
                 }
             }
             if(!found) {
                 // something went wrong here
+                printf("Error: No mapping entry found for address (" DPxMOD ")\n", DPxPTR(ptrs[i]));
+                //throw std::runtime_error("Error: Could not find host pointer entry for target pointer...");
             }
+            args[i] = &ptrs[i];
         }
 
         ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, cur_task.arg_num,

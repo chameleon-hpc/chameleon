@@ -6,6 +6,13 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <inttypes.h>
+
+#ifndef DPxMOD
+#define DPxMOD "0x%0*" PRIxPTR
+#define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
+#endif
 
 // TODO: fix that to have only one place where that is defined
 // copy of OpenMP target types

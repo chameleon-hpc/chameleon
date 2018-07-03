@@ -3,19 +3,26 @@
 #define _CHAMELEON_H_
 
 #include <cstdint>
+#include <inttypes.h>
+#include <list>
+#include <mutex>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <inttypes.h>
+#include <string.h>
+#include <vector>
 
 #ifndef DPxMOD
 #define DPxMOD "0x%0*" PRIxPTR
+#endif
+
+#ifndef DPxPTR
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
 // TODO: fix that to have only one place where that is defined
-// copy of OpenMP target types
+// copy of OpenMP target argument types
 enum chameleon_tgt_map_type {
   // No flags
   CH_OMP_TGT_MAPTYPE_NONE            = 0x000,
@@ -81,10 +88,8 @@ struct OffloadingTaskEntryTy {
                 tgt_offsets[i] = p_tgt_offsets[i];
                 tgt_arg_types[i] = p_tgt_arg_types[i];
             }
-            //tgt_args = p_tgt_args;
-            //tgt_offsets = p_tgt_offsets;
-            //tgt_arg_types = p_tgt_arg_types;
         }
+    
     // ~OffloadingTaskEntryTy() {
     //     free(tgt_args);
     //     free(tgt_offsets);
@@ -115,6 +120,12 @@ struct OffloadingDataEntryTy {
         size = p_size;
         ref_count = 1;
     }
+    // ~OffloadingDataEntryTy() {
+    //     tgt_ptr = nullptr;
+    //     hst_ptr = nullptr;
+    //     size = 0;
+    //     ref_count = 1;
+    // }
 };
 
 #ifdef __cplusplus

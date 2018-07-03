@@ -1,22 +1,17 @@
-#include "chameleon.h"
 #include <ffi.h>
-#include <list>
 #include <mpi.h>
-#include <mutex>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <vector>
-#include <stdexcept>
 
-static std::mutex _mtx_data_entry;
-static std::list<OffloadingDataEntryTy> _data_entries;
-static std::mutex _mtx_tasks;
-static std::list<OffloadingTaskEntryTy> _tasks;
+#include "chameleon.h"
+#include "commthread.h"
 
-static MPI_Comm chameleon_comm;
-static int chameleon_comm_rank;
-static int chameleon_comm_size;
+// MPI_Comm chameleon_comm;
+// int chameleon_comm_rank;
+// int chameleon_comm_size;
+
+// std::mutex _mtx_data_entry;
+// std::list<OffloadingDataEntryTy> _data_entries;
+// std::mutex _mtx_tasks;
+// std::list<OffloadingTaskEntryTy> _tasks;
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,13 +33,13 @@ int32_t chameleon_init() {
 
     printf("Chameleon: Hello from rank %d of %d\n", chameleon_comm_rank, chameleon_comm_size);
 
-    // dummy target region to force binary loading
-    // currently the 
+    // dummy target region to force binary loading, use host offloading for that purpose
     #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
+        printf("Device Rank %d Dummy: Initializing Chameleon Lib\n", chameleon_comm_rank);
     }
 
-    // TODO: create communication thread (maybe start later)
+    // TODO: create communication thread (maybe start later?)
 
     return CHAM_SUCCESS;
 }
@@ -54,8 +49,6 @@ int32_t chameleon_finalize() {
 }
 
 int32_t chameleon_distributed_taskwait() {
-    // TODO: remember to remove entries from _data_entries as soon as reference count hits 0
-
     // first shot is to execute the tasks in place
     while(true) {
         // DEBUG info
@@ -81,12 +74,12 @@ int32_t chameleon_distributed_taskwait() {
         for (int32_t i = 0; i < cur_task.arg_num; ++i) {
             printf("- adding parameter address (" DPxMOD ") with offset = %td\n", DPxPTR(cur_task.tgt_args[i]), cur_task.tgt_offsets[i]);
 
-            int64_t tmp_type = cur_task.tgt_arg_types[i];
-            int64_t is_literal = (tmp_type & CH_OMP_TGT_MAPTYPE_LITERAL);
-            int64_t is_implicit = (tmp_type & CH_OMP_TGT_MAPTYPE_IMPLICIT);
-            int64_t is_to = (tmp_type & CH_OMP_TGT_MAPTYPE_TO);
-            int64_t is_from = (tmp_type & CH_OMP_TGT_MAPTYPE_FROM);
-            int64_t is_prt_obj = (tmp_type & CH_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
+            int64_t tmp_type        = cur_task.tgt_arg_types[i];
+            int64_t is_literal      = (tmp_type & CH_OMP_TGT_MAPTYPE_LITERAL);
+            int64_t is_implicit     = (tmp_type & CH_OMP_TGT_MAPTYPE_IMPLICIT);
+            int64_t is_to           = (tmp_type & CH_OMP_TGT_MAPTYPE_TO);
+            int64_t is_from         = (tmp_type & CH_OMP_TGT_MAPTYPE_FROM);
+            int64_t is_prt_obj      = (tmp_type & CH_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
 
             ptrs[i] = (void *)((intptr_t)cur_task.tgt_args[i] + cur_task.tgt_offsets[i]);
 
@@ -130,6 +123,10 @@ int32_t chameleon_distributed_taskwait() {
         ffi_call(&cif, entry, NULL, &args[0]);
     }
 
+    // TODO: Send around information that this rank does not have any tasks left
+
+    // Try to get incoming requests from other ranks
+
     return CHAM_SUCCESS;
 }
 
@@ -148,6 +145,7 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     if(!found) {
         // add it to list
         OffloadingDataEntryTy new_entry(tgt_ptr, hst_ptr, size);
+        // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
         _data_entries.push_back(new_entry);
     }
     _mtx_data_entry.unlock();
@@ -163,36 +161,6 @@ int32_t chameleon_add_task(OffloadingTaskEntryTy task) {
     _mtx_tasks.unlock();
     return CHAM_SUCCESS;
 }
-
-// int32_t chameleon_submit_implicit_data(void *tgt_ptr) {
-//     // check whether matching mapped entry already in lookup table
-//     _mtx_data_entry.lock();
-//     for(auto &entry : _data_entries) {
-//         if(entry.tgt_ptr == tgt_ptr && entry.is_implicit == 0) {
-//             // there is already an entry that has explicitly been mapped
-//             _mtx_data_entry.unlock();
-//             return 0;
-//         }
-//     }
-
-//     // copy value that is represented by pointer and insert in table + mark as implicit (can be deleted after work package)
-//     // Q: we currently assume that each agrument has 8 Byte.. Only addresses, some of which represent an address and some an actual value
-//     // Calling interface is not providing information about size of arguments
-
-//     // pointer value is not really a pointer but representing a numeric value
-//     double tt = *(double*)&tgt_ptr;
-//     double * pp = (double *) malloc(sizeof(double));
-//     *pp = tt;
-//     void * vpp = (void *)pp;
-
-//     // new entry + mark as implicit
-//     // OffloadingDataEntryTy new_entry(tgt_ptr, vpp, 8);
-//     // new_entry.is_implicit = 1;
-//     // add to list
-//     // _data_entries.push_back(new_entry);
-//     _mtx_data_entry.unlock();
-//     return CHAM_SUCCESS;
-// }
 
 #ifdef __cplusplus
 }

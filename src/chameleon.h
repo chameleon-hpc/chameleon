@@ -25,76 +25,118 @@
 // copy of OpenMP target argument types
 enum chameleon_tgt_map_type {
   // No flags
-  CH_OMP_TGT_MAPTYPE_NONE            = 0x000,
+  CHAM_OMP_TGT_MAPTYPE_NONE            = 0x000,
   // copy data from host to device
-  CH_OMP_TGT_MAPTYPE_TO              = 0x001,
+  CHAM_OMP_TGT_MAPTYPE_TO              = 0x001,
   // copy data from device to host
-  CH_OMP_TGT_MAPTYPE_FROM            = 0x002,
+  CHAM_OMP_TGT_MAPTYPE_FROM            = 0x002,
   // copy regardless of the reference count
-  CH_OMP_TGT_MAPTYPE_ALWAYS          = 0x004,
+  CHAM_OMP_TGT_MAPTYPE_ALWAYS          = 0x004,
   // force unmapping of data
-  CH_OMP_TGT_MAPTYPE_DELETE          = 0x008,
+  CHAM_OMP_TGT_MAPTYPE_DELETE          = 0x008,
   // map the pointer as well as the pointee
-  CH_OMP_TGT_MAPTYPE_PTR_AND_OBJ     = 0x010,
+  CHAM_OMP_TGT_MAPTYPE_PTR_AND_OBJ     = 0x010,
   // pass device base address to kernel
-  CH_OMP_TGT_MAPTYPE_TARGET_PARAM    = 0x020,
+  CHAM_OMP_TGT_MAPTYPE_TARGET_PARAM    = 0x020,
   // return base device address of mapped data
-  CH_OMP_TGT_MAPTYPE_RETURN_PARAM    = 0x040,
+  CHAM_OMP_TGT_MAPTYPE_RETURN_PARAM    = 0x040,
   // private variable - not mapped
-  CH_OMP_TGT_MAPTYPE_PRIVATE         = 0x080,
+  CHAM_OMP_TGT_MAPTYPE_PRIVATE         = 0x080,
   // copy by value - not mapped
-  CH_OMP_TGT_MAPTYPE_LITERAL         = 0x100,
+  CHAM_OMP_TGT_MAPTYPE_LITERAL         = 0x100,
   // mapping is implicit
-  CH_OMP_TGT_MAPTYPE_IMPLICIT        = 0x200,
+  CHAM_OMP_TGT_MAPTYPE_IMPLICIT        = 0x200,
   // member of struct, member given by 16 MSBs - 1
-  CH_OMP_TGT_MAPTYPE_MEMBER_OF       = 0xffff000000000000
+  CHAM_OMP_TGT_MAPTYPE_MEMBER_OF       = 0xffff000000000000
 };
 
 enum chameleon_result_types {
     CHAM_SUCCESS = 0,
-    CHAM_FAILURE = 1
+    CHAM_FAILURE = 1,
+
+    CHAM_REMOTE_TASK_NONE = 2,
+    CHAM_REMOTE_TASK_SUCCESS = 3,
+    CHAM_REMOTE_TASK_FAILURE = 4    
 };
 
-struct OffloadingTaskEntryTy {
-    void *tgt_entry_ptr;
-    void **tgt_args;
-    ptrdiff_t *tgt_offsets;
-    int64_t *tgt_arg_types;
+enum chameleon_task_status {
+    CHAM_TASK_STATUS_OPEN = 0,
+    CHAM_TASK_STATUS_PROCESSING = 1,
+    CHAM_TASK_STATUS_DONE = 2
+};
+
+struct TargetTaskEntryTy {
+    intptr_t tgt_entry_ptr;
+    // TODO: maybe we need index inside image here as well in case pointers are not matching for other ranks
+
+    // number of arguments that should be passed to "function call" for target region
     int32_t arg_num;
 
-    OffloadingTaskEntryTy() {
-        tgt_entry_ptr = nullptr;
-        tgt_args = nullptr;
-        tgt_offsets = nullptr;
-        tgt_arg_types = nullptr;
-        arg_num = 0;
+    // host pointers will be used for transfer execution target region
+    std::vector<void *> arg_hst_pointers;
+    std::vector<int64_t> arg_sizes;
+    std::vector<int64_t> arg_types;
+
+    // target pointers will just be used at sender side for host pointer lookup 
+    // and freeing of entries in data entry table
+    std::vector<void *> arg_tgt_pointers;
+    std::vector<ptrdiff_t> arg_tgt_offsets;
+    std::vector<void *> arg_tgt_converted_pointers;
+
+    // Some special flags for stolen tasks
+    // int32_t is_remote_task = 0;
+    int32_t status = CHAM_TASK_STATUS_OPEN;
+
+    // Constructor 1: Called when creating new task during decoding
+    TargetTaskEntryTy() {
+
     }
 
-    OffloadingTaskEntryTy(
+    // Constructor 2: Called from libomptarget plugin to create a new task
+    TargetTaskEntryTy(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num) {
+
+            tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;
             arg_num = p_arg_num;
-            tgt_entry_ptr = p_tgt_entry_ptr;
 
-            tgt_args = (void**) malloc(sizeof(void*) * p_arg_num);
-            tgt_offsets = (ptrdiff_t *) malloc(sizeof(ptrdiff_t) * p_arg_num);
-            tgt_arg_types = (int64_t *) malloc(sizeof(int64_t) * p_arg_num);
+            // resize vectors
+            arg_hst_pointers.resize(arg_num);
+            arg_sizes.resize(arg_num);
 
-            for(int i = 0; i < p_arg_num; i++){
-                tgt_args[i] = p_tgt_args[i];
-                tgt_offsets[i] = p_tgt_offsets[i];
-                tgt_arg_types[i] = p_tgt_arg_types[i];
+            arg_types.resize(arg_num);
+            arg_tgt_pointers.resize(arg_num);
+            arg_tgt_offsets.resize(arg_num);
+            arg_tgt_converted_pointers.resize(arg_num);
+
+            for(int i = 0; i < arg_num; i++) {
+                arg_tgt_pointers[i] = p_tgt_args[i];
+                arg_tgt_offsets[i] = p_tgt_offsets[i];
+                arg_types[i] = p_tgt_arg_types[i];
+                
+                // calculate converted pointers that include offset
+                arg_tgt_converted_pointers[i] = (void *)((intptr_t)arg_tgt_pointers[i] + arg_tgt_offsets[i]);
             }
         }
     
-    // ~OffloadingTaskEntryTy() {
-    //     free(tgt_args);
-    //     free(tgt_offsets);
-    //     free(tgt_arg_types);
-    // }
+    void ReSizeArrays(int32_t num_args) {
+        arg_hst_pointers.resize(num_args);
+        arg_sizes.resize(num_args);
+        arg_types.resize(num_args);
+    }
+};
+
+struct OffloadEntryTy {
+    TargetTaskEntryTy *task_entry;
+    int32_t target_rank;
+
+    OffloadEntryTy(TargetTaskEntryTy *par_task_entry, int32_t par_target_rank) {
+        task_entry = par_task_entry;
+        target_rank = par_target_rank;
+    }
 };
 
 struct OffloadingDataEntryTy {
@@ -102,10 +144,6 @@ struct OffloadingDataEntryTy {
     void *hst_ptr;
     int64_t size;
     int32_t ref_count;
-
-    // does it make sense to put these two here? (might be used in multiple target regions)
-    // int32_t send_back;
-    // int32_t is_implicit;
 
     OffloadingDataEntryTy() {
         tgt_ptr = nullptr;
@@ -120,18 +158,14 @@ struct OffloadingDataEntryTy {
         size = p_size;
         ref_count = 1;
     }
-    // ~OffloadingDataEntryTy() {
-    //     tgt_ptr = nullptr;
-    //     hst_ptr = nullptr;
-    //     size = 0;
-    //     ref_count = 1;
-    // }
 };
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+// ================================================================================
+// External functions (that can be called from source code or libomptarget)
+// ================================================================================
 int32_t chameleon_init();
 
 int32_t chameleon_finalize();
@@ -140,7 +174,9 @@ int32_t chameleon_distributed_taskwait();
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
 
-int32_t chameleon_add_task(OffloadingTaskEntryTy task);
+int32_t chameleon_add_task(TargetTaskEntryTy *task);
+
+TargetTaskEntryTy* chameleon_pop_task();
 
 #ifdef __cplusplus
 }

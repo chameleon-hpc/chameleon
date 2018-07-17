@@ -1,5 +1,6 @@
 #include <ffi.h>
 #include <mpi.h>
+#include <stdexcept>
 
 #include "chameleon.h"
 #include "commthread.h"
@@ -7,6 +8,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// ================================================================================
+// Forward declartion of internal functions (just called inside shared library)
+// ================================================================================
+int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
+int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
+int32_t execute_target_task(TargetTaskEntryTy *task);
+int32_t process_remote_task();
+
+int32_t ch_is_initialized = 0;
+
+inline void verify_initialized() {
+    if(!ch_is_initialized)
+        throw std::runtime_error("Chameleon has not been initilized before.");
+}
 
 int32_t chameleon_init() {
     // check whether MPI is initialized, otherwise do so
@@ -22,7 +38,19 @@ int32_t chameleon_init() {
     MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
     MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
 
-    printf("Chameleon: Hello from rank %d of %d\n", chameleon_comm_rank, chameleon_comm_size);
+    printf("ChameleonInit from rank %d of %d\n", chameleon_comm_rank, chameleon_comm_size);
+
+    _mtx_local_load_info.lock();
+    _local_load_info = 0;
+    _mtx_local_load_info.unlock();
+
+    _mtx_complete_load_info.lock();
+    _complete_load_info = (int32_t *) malloc(sizeof(int32_t) * chameleon_comm_size);
+    for(int i = 0; i < chameleon_comm_size; i++) {
+        _complete_load_info[i] = 0;
+    }
+    _sum_complete_load_info = 0;
+    _mtx_complete_load_info.unlock();
 
     // dummy target region to force binary loading, use host offloading for that purpose
     // #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
@@ -32,112 +60,97 @@ int32_t chameleon_init() {
 
     // TODO: create communication thread (maybe start later?)
 
+    ch_is_initialized = 1;
     return CHAM_SUCCESS;
 }
 
 int32_t chameleon_finalize() {
+    verify_initialized();
     return CHAM_SUCCESS;
 }
 
 int32_t chameleon_distributed_taskwait() {
-    // first shot is to execute the tasks in place
+    verify_initialized();
+    
+    // as long as there are local tasks run this loop
     while(true) {
-        // DEBUG info
-        bool test1 = _tasks.empty();
-        size_t test2 = _tasks.size();
-
-        if(_tasks.empty())
-            break;
-        
-        // get first task
-        OffloadingTaskEntryTy cur_task = _tasks.front();
-        _tasks.pop_front();
-
-        offload_task_to_rank(cur_task, 1);
-
-        // // Use libffi to launch execution.
-        // ffi_cif cif;
-
-        // // All args are references.
-        // std::vector<ffi_type *> args_types(cur_task.arg_num, &ffi_type_pointer);
-        // std::vector<void *> args(cur_task.arg_num);
-        // std::vector<void *> ptrs(cur_task.arg_num);
-
-        // //printf("New OffloadingTaskEntryTy\n");
-        // for (int32_t i = 0; i < cur_task.arg_num; ++i) {
-        //     printf("- adding parameter address (" DPxMOD ") with offset = %td\n", DPxPTR(cur_task.tgt_args[i]), cur_task.tgt_offsets[i]);
-
-        //     int64_t tmp_type        = cur_task.tgt_arg_types[i];
-        //     int64_t is_literal      = (tmp_type & CH_OMP_TGT_MAPTYPE_LITERAL);
-        //     int64_t is_implicit     = (tmp_type & CH_OMP_TGT_MAPTYPE_IMPLICIT);
-        //     int64_t is_to           = (tmp_type & CH_OMP_TGT_MAPTYPE_TO);
-        //     int64_t is_from         = (tmp_type & CH_OMP_TGT_MAPTYPE_FROM);
-        //     int64_t is_prt_obj      = (tmp_type & CH_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
-
-        //     ptrs[i] = (void *)((intptr_t)cur_task.tgt_args[i] + cur_task.tgt_offsets[i]);
-
-        //     if(cur_task.tgt_arg_types[i] & CH_OMP_TGT_MAPTYPE_LITERAL) {
-        //         // no need to do anything because it is by value
-        //         args[i] = &ptrs[i];
+        int32_t res = CHAM_SUCCESS;
+        // // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
+        // if(!_stolen_remote_tasks.empty()) {
+        //     res = process_remote_task();
+        //     // if task has been executed successfully start from beginning
+        //     if(res == CHAM_REMOTE_TASK_SUCCESS)
         //         continue;
-        //     }
-
-        //     // here we need to perform a pointer mapping to source pointers 
-        //     // because target pointers have already been deleted
-        //     int found = 0;
-        //     void *tmp_ptr = ptrs[i];
-        //     for(auto &entry : _data_entries) {
-        //         printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
-        //         if(entry.tgt_ptr == tmp_ptr) {
-        //             // increase reference count
-        //             ptrs[i] = entry.hst_ptr;
-        //             found = 1;
-        //             break;
-        //         }
-        //     }
-        //     if(!found) {
-        //         // something went wrong here
-        //         printf("Error: No mapping entry found for address (" DPxMOD ")\n", DPxPTR(ptrs[i]));
-        //         //throw std::runtime_error("Error: Could not find host pointer entry for target pointer...");
-        //     }
-        //     args[i] = &ptrs[i];
         // }
 
-        // ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, cur_task.arg_num,
-        //                                 &ffi_type_void, &args_types[0]);
-
-        // if(status != FFI_OK) {
-        //     //assert(status == FFI_OK && "Unable to prepare target launch!");
-        //     return CHAM_FAILURE;
+        // ========== Prio 2: work on local tasks
+        if(_local_tasks.empty()) {
+            // indicate that all stuff is done
+            _mtx_local_tasks.lock();
+            _all_local_tasks_done = 1;
+            _mtx_local_tasks.unlock();
+            break;
+        }
+        
+        TargetTaskEntryTy *cur_task = chameleon_pop_task();
+        if(cur_task == nullptr)
+        {
+            break;
+        }
+        // if(cur_task) {
+        //     // perform lookup in both cases (local execution & offload)
+        //     lookup_hst_pointers(cur_task);
+        //     // execute region now
+        //     res = execute_target_task(cur_task);
         // }
 
-        // void (*entry)(void);
-        // *((void**) &entry) = cur_task.tgt_entry_ptr;
-        // ffi_call(&cif, entry, NULL, &args[0]);
+        // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
+        if(cur_task) {
+            // perform lookup in both cases (local execution & offload)
+            lookup_hst_pointers(cur_task);
+
+            // create temp entry and offload
+            OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+            res = offload_task_to_rank(off_entry);
+        }
     }
 
-    // TODO: Send around information that this rank does not have any tasks left
+    // only execute stolen tasks from here on until all tasks for all ranks are done
+    while(true) {
+        int32_t res = CHAM_SUCCESS;
+        if(!_stolen_remote_tasks.empty()) {
+            res = process_remote_task();
+            // if task has been executed successfully start from beginning
+            if(res == CHAM_REMOTE_TASK_SUCCESS){
+                // DEBUG: for testing there will just be one task
+                break;
+                //continue;
+            }
+        }
 
-    // Try to get incoming requests from other ranks
+        // TODO: check wether there are still global tasks to be processed
+        // TODO: maybe wait for a certain time here
+    }
 
     return CHAM_SUCCESS;
 }
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
+    verify_initialized();
     // check list if already in
     _mtx_data_entry.lock();
     int found = 0;
     for(auto &entry : _data_entries) {
-        if(entry.tgt_ptr == tgt_ptr && entry.hst_ptr == hst_ptr && entry.size == size) {
+        if(entry->tgt_ptr == tgt_ptr && entry->hst_ptr == hst_ptr && entry->size == size) {
             // increase reference count
-            entry.ref_count++;
+            entry->ref_count++;
             found = 1;
             break;
         }
     }
     if(!found) {
         // add it to list
-        OffloadingDataEntryTy new_entry(tgt_ptr, hst_ptr, size);
+        OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
         // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
         _data_entries.push_back(new_entry);
     }
@@ -145,14 +158,165 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     return CHAM_SUCCESS;
 }
 
-int32_t chameleon_add_task(OffloadingTaskEntryTy task) {
-    _mtx_tasks.lock();
-    _tasks.push_back(task);
+int32_t chameleon_add_task(TargetTaskEntryTy *task) {
+    verify_initialized();
 
-    bool test1 = _tasks.empty();
-    size_t test2 = _tasks.size();
-    _mtx_tasks.unlock();
+    _mtx_local_tasks.lock();
+    // add to queue
+    _local_tasks.push_back(task);
+    // increase counter for number of tasks here
+    _mtx_local_load_info.lock();
+    _local_load_info++;
+    _mtx_local_load_info.unlock();
+
+    _all_local_tasks_done = 0;
+    _mtx_local_tasks.unlock();
+
     return CHAM_SUCCESS;
+}
+
+TargetTaskEntryTy* chameleon_pop_task() {
+    TargetTaskEntryTy* task = nullptr;
+
+    // we do not necessarily need the lock here
+    if(_local_tasks.empty())
+        return task;
+
+    // get first task in queue
+    _mtx_local_tasks.lock();
+    if(!_local_tasks.empty()) {
+        task = _local_tasks.front();
+        _local_tasks.pop_front();
+
+        // decrease local load counter
+        _mtx_local_load_info.lock();
+        _local_load_info--;
+        _mtx_local_load_info.unlock();
+    }
+    _mtx_local_tasks.unlock();
+    return task;
+}
+
+int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
+    for(int i = 0; i < task->arg_num; i++) {
+        // get type and pointer
+        int64_t tmp_type    = task->arg_types[i];
+        void * tmp_tgt_ptr  = task->arg_tgt_converted_pointers[i];
+
+        if(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
+            // pointer represents numerical value that is implicitly mapped
+            task->arg_hst_pointers[i] = tmp_tgt_ptr;
+            task->arg_sizes[i] = sizeof(void *);
+        } else {
+            // here we need to perform a pointer mapping to host pointer
+            // because target pointers have already been freed and deleted
+            int found = 0;
+            for(auto &entry : _data_entries) {
+                // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
+                if(entry->tgt_ptr == tmp_tgt_ptr) {
+                    task->arg_sizes[i] = entry->size;
+                    task->arg_hst_pointers[i] = entry->hst_ptr;
+                    found = 1;
+                    break;
+                }
+            }
+            if(!found) {
+                // something went wrong here
+                printf("Error: No mapping entry found for address (" DPxMOD ")\n", DPxPTR(tmp_tgt_ptr));
+                return CHAM_FAILURE;
+            }
+        }
+    }
+    return CHAM_SUCCESS;
+}
+
+int32_t add_offload_entry(TargetTaskEntryTy *task, int rank) {
+    // create new entry
+    OffloadEntryTy *new_entry = new OffloadEntryTy(task, rank);
+
+    // save in list
+    _mtx_offload_entries.lock();
+    _offload_entries.push_back(new_entry);
+    _mtx_offload_entries.unlock();
+
+    return CHAM_SUCCESS;
+}
+
+int32_t execute_target_task(TargetTaskEntryTy *task) {
+    // Use libffi to launch execution.
+    ffi_cif cif;
+
+    // All args are references.
+    std::vector<ffi_type *> args_types(task->arg_num, &ffi_type_pointer);
+
+    std::vector<void *> args(task->arg_num);
+    std::vector<void *> ptrs(task->arg_num);
+
+    for (int32_t i = 0; i < task->arg_num; ++i) {
+        int64_t tmp_type        = task->arg_types[i];
+        int64_t is_literal      = (tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL);
+        int64_t is_implicit     = (tmp_type & CHAM_OMP_TGT_MAPTYPE_IMPLICIT);
+        int64_t is_to           = (tmp_type & CHAM_OMP_TGT_MAPTYPE_TO);
+        int64_t is_from         = (tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM);
+        int64_t is_prt_obj      = (tmp_type & CHAM_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
+
+        ptrs[i] = task->arg_tgt_converted_pointers[i];
+
+        if(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
+            // no need to do anything because it is by value
+            args[i] = &ptrs[i];
+            continue;
+        } else {
+            ptrs[i] = task->arg_hst_pointers[i];
+            args[i] = &ptrs[i];
+        }
+    }
+    
+    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, task->arg_num, &ffi_type_void, &args_types[0]);
+
+    if(status != FFI_OK) {
+        printf("Unable to prepare target launch!\n");
+        return CHAM_FAILURE;
+    }
+
+    void (*entry)(void);
+    *((void**) &entry) = ((void*) task->tgt_entry_ptr);
+    // use host pointers here
+    ffi_call(&cif, entry, NULL, &args[0]);
+
+    return CHAM_SUCCESS;
+}
+
+inline int32_t process_remote_task() {
+    TargetTaskEntryTy *remote_task = nullptr;
+    
+    _mtx_stolen_remote_tasks.lock();
+    std::list<TargetTaskEntryTy*>::iterator it;
+    for (it = _stolen_remote_tasks.begin(); it != _stolen_remote_tasks.end(); ++it) {
+        remote_task = *it;
+        if(remote_task->status == CHAM_TASK_STATUS_OPEN) {
+            // mark task to be processed
+            remote_task->status = CHAM_TASK_STATUS_PROCESSING;
+            break;
+        }
+        remote_task = nullptr;
+    }
+    _mtx_stolen_remote_tasks.unlock();
+
+    // currently no free task to be processed
+    if(!remote_task)
+        return CHAM_REMOTE_TASK_NONE;
+
+    // execute region now
+    int32_t res = execute_target_task(remote_task);
+    if(res != CHAM_SUCCESS)
+        return res;
+            
+    // mark as done; communication thread can now send data back to sender if there is any
+    _mtx_stolen_remote_tasks.lock();
+    remote_task->status = CHAM_TASK_STATUS_DONE;
+    _mtx_stolen_remote_tasks.unlock();
+    return CHAM_REMOTE_TASK_SUCCESS;
 }
 
 #ifdef __cplusplus

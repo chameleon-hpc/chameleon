@@ -10,16 +10,38 @@ extern MPI_Comm chameleon_comm;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
+// list with data that has been mapped in map clauses
 extern std::mutex _mtx_data_entry;
-extern std::list<OffloadingDataEntryTy> _data_entries;
-extern std::mutex _mtx_tasks;
-extern std::list<OffloadingTaskEntryTy> _tasks;
+extern std::list<OffloadingDataEntryTy*> _data_entries;
+
+// list with local task entries
+// these can either be executed here or offloaded to a different rank
+extern std::mutex _mtx_local_tasks;
+extern std::list<TargetTaskEntryTy*> _local_tasks;
+
+extern int32_t _all_local_tasks_done;
+
+// list with stolen task entries that should be executed
+extern std::mutex _mtx_stolen_remote_tasks;
+extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+
+// entries that should be offloaded to specific ranks
+extern std::mutex _mtx_offload_entries;
+extern std::list<OffloadEntryTy*> _offload_entries;
+
+// Load Information (temporary here: number of tasks)
+extern std::mutex _mtx_local_load_info;
+extern int32_t _local_load_info;
+
+extern std::mutex _mtx_complete_load_info;
+extern int32_t *_complete_load_info;
+extern int32_t _sum_complete_load_info;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int32_t offload_task_to_rank(OffloadingTaskEntryTy task, int rank);
+int32_t offload_task_to_rank(OffloadEntryTy *entry);
 
 #ifdef __cplusplus
 }

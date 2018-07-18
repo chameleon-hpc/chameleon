@@ -10,6 +10,8 @@ extern MPI_Comm chameleon_comm;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
+extern std::vector<intptr_t> _image_base_addresses;
+
 // list with data that has been mapped in map clauses
 extern std::mutex _mtx_data_entry;
 extern std::list<OffloadingDataEntryTy*> _data_entries;
@@ -42,6 +44,10 @@ extern "C" {
 #endif
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
+
+int32_t receive_remote_tasks();
+
+int32_t send_back_remote_task_data();
 
 #ifdef __cplusplus
 }

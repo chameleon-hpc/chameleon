@@ -21,6 +21,21 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+#ifndef DBP
+#ifdef CHAM_DEBUG
+#define DBP( ... )                                                      \
+  {                                                                     \
+    fprintf(stderr, "ChameleonLib T#%d: --> ", chameleon_comm_rank);    \
+    fprintf(stderr, __VA_ARGS__);                                       \
+  }
+#else
+#define DBP( ... ) { }
+#endif
+#endif
+
+extern int chameleon_comm_rank;
+extern int chameleon_comm_size;
+
 // TODO: fix that to have only one place where that is defined
 // copy of OpenMP target argument types
 enum chameleon_tgt_map_type {
@@ -67,7 +82,10 @@ enum chameleon_task_status {
 
 struct TargetTaskEntryTy {
     intptr_t tgt_entry_ptr;
-    // TODO: maybe we need index inside image here as well in case pointers are not matching for other ranks
+    
+    // we need index of image here as well since pointers are not matching for other ranks
+    int32_t idx_image = 0;
+    ptrdiff_t entry_image_offset = 0;
 
     // number of arguments that should be passed to "function call" for target region
     int32_t arg_num;
@@ -83,9 +101,10 @@ struct TargetTaskEntryTy {
     std::vector<ptrdiff_t> arg_tgt_offsets;
     std::vector<void *> arg_tgt_converted_pointers;
 
-    // Some special flags for stolen tasks
-    // int32_t is_remote_task = 0;
+    // Some special settings for stolen tasks
     int32_t status = CHAM_TASK_STATUS_OPEN;
+    int32_t source_mpi_rank = 0;
+    int32_t source_mpi_tag = 0;
 
     // Constructor 1: Called when creating new task during decoding
     TargetTaskEntryTy() {
@@ -127,6 +146,8 @@ struct TargetTaskEntryTy {
         arg_sizes.resize(num_args);
         arg_types.resize(num_args);
     }
+
+    int HasAtLeastOneOutput();
 };
 
 struct OffloadEntryTy {
@@ -167,6 +188,8 @@ extern "C" {
 // External functions (that can be called from source code or libomptarget)
 // ================================================================================
 int32_t chameleon_init();
+
+int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address);
 
 int32_t chameleon_finalize();
 

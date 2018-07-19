@@ -42,6 +42,8 @@ int32_t _sum_complete_load_info;
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
 // ============== Thread Section ===========
+int abort_threads = 0;
+
 pthread_t           th_receive_remote_tasks;
 int                 th_receive_remote_tasks_created = 0;
 pthread_cond_t      th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
@@ -60,8 +62,16 @@ short pin_thread_to_last_core();
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
     DBP("start_communication_threads (enter)\n");
+    // set flag to avoid that threads are directly aborting
+    abort_threads = 0;
+
+    // explicitly make joinable to be portable
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
     int err;
-    err = pthread_create(&th_receive_remote_tasks, NULL, receive_remote_tasks, NULL);
+    err = pthread_create(&th_receive_remote_tasks, &attr, receive_remote_tasks, NULL);
     if(err != 0)
         handle_error_en(err, "pthread_create - th_receive_remote_tasks");
     
@@ -77,12 +87,14 @@ int32_t start_communication_threads() {
 
 int32_t stop_communication_threads() {
     DBP("stop_communication_threads (enter)\n");
-    int err;
+    int err = 0;
     // first kill all threads
-    err = pthread_cancel(th_receive_remote_tasks);
+    // err = pthread_cancel(th_receive_remote_tasks);
     // err = pthread_kill(th_receive_remote_tasks, SIGKILL);
+    abort_threads = 1;
     // then wait for all threads to finish
     err = pthread_join(th_receive_remote_tasks, NULL);
+    DBP("stop_communication_threads - join err: %d\n", err);
     return CHAM_SUCCESS;
 }
 
@@ -368,8 +380,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 
 // should run in a single thread that is always waiting for incoming requests
 void* receive_remote_tasks(void* arg) {
-    pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
-    pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
+    // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     pin_thread_to_last_core();
     
     // trigger signal to tell that thread is running now
@@ -389,7 +401,19 @@ void* receive_remote_tasks(void* arg) {
     while(true) {
         // first check transmission and make sure that buffer has enough memory
         MPI_Status cur_status;
-        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &cur_status);
+        int flag_open_request = 0;
+        while(!flag_open_request) {
+            // check whether thread should be aborted
+            if(abort_threads) {
+                DBP("receive_remote_tasks (abort)\n");
+                free(buffer);
+                int ret_val = 0;
+                pthread_exit(&ret_val);
+            }
+            // DBP("receive_remote_tasks - starting iprobe\n");
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request, &cur_status);
+            // DBP("receive_remote_tasks - ending iprobe\n");
+        }
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
         if(recv_buff_size > cur_max_buff_size) {
             // allocate more memory
@@ -454,7 +478,6 @@ int32_t send_back_remote_task_data() {
         // initiate blocking send
         DBP("send_back_remote_task_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
         MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
-        // free again
         free(buff);
     }
     // }

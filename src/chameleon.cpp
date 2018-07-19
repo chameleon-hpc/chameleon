@@ -10,7 +10,7 @@ int TargetTaskEntryTy::HasAtLeastOneOutput() {
         if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
             return 1;
     }
-    return 0;    
+    return 0;
 }
 
 #ifdef __cplusplus
@@ -39,20 +39,19 @@ int32_t chameleon_init() {
     err = MPI_Initialized(&initialized);
     if(!initialized) {
         // MPI_Init(NULL, NULL);
-        // for now use funneled
-        int provided;        
-        MPI_Init_thread(NULL, NULL, MPI_THREAD_FUNNELED, &provided);
+        int provided;
+        MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided);
     }
 
     // create separate communicator for chameleon
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm);
     if(err != 0)
         handle_error_en(err, "MPI_Comm_dup - chameleon_comm");
+    MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
+    MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_mapped);
     if(err != 0)
         handle_error_en(err, "MPI_Comm_dup - chameleon_comm_mapped");
-    MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
-    MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
 
     DBP("chameleon_init\n");
 

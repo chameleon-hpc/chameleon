@@ -1,6 +1,12 @@
 #include "commthread.h"
+#include <pthread.h>
+#include <signal.h>
+
+#include <sched.h>
+#include <hwloc.h>
 
 MPI_Comm chameleon_comm;
+MPI_Comm chameleon_comm_mapped;
 int chameleon_comm_rank;
 int chameleon_comm_size;
 
@@ -35,6 +41,12 @@ int32_t _sum_complete_load_info;
 
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
+// ============== Thread Section ===========
+pthread_t           th_receive_remote_tasks;
+int                 th_receive_remote_tasks_created = 0;
+pthread_cond_t      th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t     th_receive_remote_tasks_mutex   = PTHREAD_MUTEX_INITIALIZER;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,6 +55,110 @@ extern "C" {
 // ================================================================================
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
 TargetTaskEntryTy* decode_send_buffer(void * buffer);
+short pin_thread_to_last_core();
+
+#pragma region Start/Stop/Pin Communication Threads
+int32_t start_communication_threads() {
+    DBP("start_communication_threads (enter)\n");
+    int err;
+    err = pthread_create(&th_receive_remote_tasks, NULL, receive_remote_tasks, NULL);
+    if(err != 0)
+        handle_error_en(err, "pthread_create - th_receive_remote_tasks");
+    
+    // wait for finished thread creation??? Is that a good idea?
+    pthread_mutex_lock(&th_receive_remote_tasks_mutex);
+    while (th_receive_remote_tasks_created == 0) {
+        pthread_cond_wait(&th_receive_remote_tasks_cond, &th_receive_remote_tasks_mutex);
+    }
+    pthread_mutex_unlock(&th_receive_remote_tasks_mutex);
+
+    return CHAM_SUCCESS;
+}
+
+int32_t stop_communication_threads() {
+    DBP("stop_communication_threads (enter)\n");
+    int err;
+    // first kill all threads
+    err = pthread_cancel(th_receive_remote_tasks);
+    // err = pthread_kill(th_receive_remote_tasks, SIGKILL);
+    // then wait for all threads to finish
+    err = pthread_join(th_receive_remote_tasks, NULL);
+    return CHAM_SUCCESS;
+}
+
+short pin_thread_to_last_core() {
+    int err;
+    int s, j;
+    pthread_t thread;
+    cpu_set_t current_cpuset;
+    cpu_set_t new_cpu_set;
+    cpu_set_t final_cpu_set;
+
+    // get current thread to set affinity for    
+    thread = pthread_self();
+    // get cpuset of complete process
+    err = sched_getaffinity(getpid(), sizeof(cpu_set_t), &current_cpuset);
+    if(err != 0)
+        handle_error_en(err, "sched_getaffinity");
+    // also get the number of processing units (here)
+    hwloc_topology_t topology;
+    hwloc_topology_init(&topology);
+    hwloc_topology_load(topology);
+    int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
+    if(depth == HWLOC_TYPE_DEPTH_UNKNOWN) {
+        handle_error_en(1001, "hwloc_get_type_depth");
+    }
+    const long n_physical_cores = hwloc_get_nbobjs_by_depth(topology, depth);
+    const long n_logical_cores = sysconf( _SC_NPROCESSORS_ONLN );
+    
+    // get last hw thread of current cpuset
+    long max_core_set = -1;
+    for (long i = n_logical_cores; i >= 0; i--) {
+        if (CPU_ISSET(i, &current_cpuset)) {
+            DBP("Last core/hw thread in cpuset is %ld\n", i);
+            max_core_set = i;
+            break;
+        }
+    }
+
+    // set affinity mask to last core or all hw threads on specific core 
+    CPU_ZERO(&new_cpu_set);
+    if(max_core_set < n_physical_cores) {
+        // Case: there are no hyper threads
+        DBP("Setting thread affinity to core %ld\n", max_core_set);
+        CPU_SET(max_core_set, &new_cpu_set);
+    } else {
+        // Case: there are at least 2 HT per core
+        std::string cores(std::to_string(max_core_set));
+        CPU_SET(max_core_set, &new_cpu_set);
+        for(long i = max_core_set-n_physical_cores; i >= 0; i-=n_physical_cores) {
+            cores = std::to_string(i)  + "," + cores;
+            CPU_SET(i, &new_cpu_set);
+        }
+        DBP("Setting thread affinity to cores %s\n", cores.c_str());
+    }
+    err = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &new_cpu_set);
+    if (err != 0)
+        handle_error_en(err, "pthread_setaffinity_np");
+
+    // ===== DEBUG
+    // verify that pinning worked
+    err = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &final_cpu_set);
+    if (err != 0)
+        handle_error_en(err, "pthread_getaffinity_np");
+
+    std::string final_cores("");
+    for (int j = 0; j < n_logical_cores; j++)
+        if (CPU_ISSET(j, &final_cpu_set))
+            final_cores += std::to_string(j) + ",";
+
+    final_cores.pop_back();
+    DBP("Verifying thread affinity: pinned to cores %s\n", final_cores.c_str());
+    // ===== DEBUG
+
+    return CHAM_SUCCESS;
+}
+#pragma endregion Start/Stop/Pin Communication Threads
 
 // This should run in a single pthread because it should be blocking
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
@@ -58,21 +174,23 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     int tmp_tag = 0;
     
     // send data to target rank
-    DBP("offload_task_to_rank - sending data to target rank with tag: %d\n", tmp_tag);
-    MPI_Request request = MPI_REQUEST_NULL;
-    MPI_Status status;
-    MPI_Isend(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm, &request);
-    
-    // wait until communication is finished
-    MPI_Wait(&request, &status);
+    DBP("offload_task_to_rank - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
+    // MPI_Request request = MPI_REQUEST_NULL;
+    // MPI_Status status;
+    // MPI_Isend(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm, &request);
+    // // wait until communication is finished
+    // MPI_Wait(&request, &status);
+    MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
     free(buffer);
 
     if(has_outputs) {
+        DBP("offload_task_to_rank - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
         // temp buffer to retreive output data from target rank to be able to update host pointers again
         void * temp_buffer = malloc(MAX_BUFFER_SIZE_OFFLOAD_ENTRY);
-        MPI_Recv(temp_buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm, MPI_STATUS_IGNORE);
+        MPI_Status cur_status;
+        MPI_Recv(temp_buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, &cur_status);
 
-        DBP("offload_task_to_rank - receiving output data for tag: %d\n", tmp_tag);
+        DBP("offload_task_to_rank - receiving output data from rank %d for tag: %d\n", cur_status.MPI_SOURCE, cur_status.MPI_TAG);
         // copy results back to source pointers with memcpy
         char * cur_ptr = (char*) temp_buffer;
         for(int i = 0; i < entry->task_entry->arg_num; i++) {
@@ -249,30 +367,55 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 }
 
 // should run in a single thread that is always waiting for incoming requests
-int32_t receive_remote_tasks() {
+void* receive_remote_tasks(void* arg) {
+    pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
+    pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    pin_thread_to_last_core();
+    
+    // trigger signal to tell that thread is running now
+    pthread_mutex_lock( &th_receive_remote_tasks_mutex );
+    th_receive_remote_tasks_created = 1; 
+    pthread_cond_signal( &th_receive_remote_tasks_cond );
+    pthread_mutex_unlock( &th_receive_remote_tasks_mutex );
+
     DBP("receive_remote_tasks (enter)\n");
+
     int32_t res;
+    // intention to reuse buffer over and over again
+    int cur_max_buff_size = MAX_BUFFER_SIZE_OFFLOAD_ENTRY;
     void * buffer = malloc(MAX_BUFFER_SIZE_OFFLOAD_ENTRY);
+    int recv_buff_size = 0;
+    
+    while(true) {
+        // first check transmission and make sure that buffer has enough memory
+        MPI_Status cur_status;
+        MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &cur_status);
+        MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
+        if(recv_buff_size > cur_max_buff_size) {
+            // allocate more memory
+            free(buffer);
+            cur_max_buff_size = recv_buff_size;
+            buffer = malloc(recv_buff_size);
+        }
 
-    // while(true) {
-    MPI_Status cur_status;
-    res = MPI_Recv(buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &cur_status);
+        // now receive the data
+        res = MPI_Recv(buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
 
-    // decode task entry
-    TargetTaskEntryTy *task = decode_send_buffer(buffer);
-    // free buffer again
-    free(buffer);
-    // set information for sending back results/updates if necessary
-    task->source_mpi_rank   = cur_status.MPI_SOURCE;
-    task->source_mpi_tag    = cur_status.MPI_TAG;
+        // decode task entry
+        TargetTaskEntryTy *task = decode_send_buffer(buffer);
+        // set information for sending back results/updates if necessary
+        task->source_mpi_rank   = cur_status.MPI_SOURCE;
+        task->source_mpi_tag    = cur_status.MPI_TAG;
 
-    // add task to stolen list
-    _mtx_stolen_remote_tasks.lock();
-    _stolen_remote_tasks.push_back(task);
-    _mtx_stolen_remote_tasks.unlock();
-    // }
+        // add task to stolen list
+        _mtx_stolen_remote_tasks.lock();
+        _stolen_remote_tasks.push_back(task);
+        _mtx_stolen_remote_tasks.unlock();
+    }
 
-    return CHAM_SUCCESS;
+    // free buffer again; currently unreachable code since thread will be canceled
+    // free(buffer);
+    return nullptr;
 }
 
 int32_t send_back_remote_task_data() {
@@ -309,7 +452,10 @@ int32_t send_back_remote_task_data() {
             }
         }
         // initiate blocking send
-        MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm);
+        DBP("send_back_remote_task_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
+        MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
+        // free again
+        free(buff);
     }
     // }
     return CHAM_SUCCESS;

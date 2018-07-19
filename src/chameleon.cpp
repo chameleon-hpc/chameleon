@@ -38,11 +38,19 @@ int32_t chameleon_init() {
     initialized = 0;
     err = MPI_Initialized(&initialized);
     if(!initialized) {
-        MPI_Init(NULL, NULL);
+        // MPI_Init(NULL, NULL);
+        // for now use funneled
+        int provided;        
+        MPI_Init_thread(NULL, NULL, MPI_THREAD_FUNNELED, &provided);
     }
 
     // create separate communicator for chameleon
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm);
+    if(err != 0)
+        handle_error_en(err, "MPI_Comm_dup - chameleon_comm");
+    err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_mapped);
+    if(err != 0)
+        handle_error_en(err, "MPI_Comm_dup - chameleon_comm_mapped");
     MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
     MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
 
@@ -65,8 +73,6 @@ int32_t chameleon_init() {
     // {
     //     DBP("chameleon_init - dummy region\n");
     // }
-
-    // TODO: create communication thread (maybe start later?)
 
     ch_is_initialized = 1;
     return CHAM_SUCCESS;
@@ -91,6 +97,9 @@ int32_t chameleon_finalize() {
 int32_t chameleon_distributed_taskwait() {
     DBP("chameleon_distributed_taskwait (enter)\n");
     verify_initialized();
+
+    // start communication threads here
+    start_communication_threads();
     
     // as long as there are local tasks run this loop
     while(true) {
@@ -134,6 +143,7 @@ int32_t chameleon_distributed_taskwait() {
             res = offload_task_to_rank(off_entry);
             // ===== DEBUG
             // P0: for now return after first offload
+            stop_communication_threads();
             return CHAM_SUCCESS;
             // ===== DEBUG
         }
@@ -141,11 +151,18 @@ int32_t chameleon_distributed_taskwait() {
 
     // ===== DEBUG
     // P1: call function to recieve remote tasks
-    receive_remote_tasks();
+    // receive_remote_tasks();
+    while(_stolen_remote_tasks.empty()){
+        // sleep for 20 ms
+        usleep(1000*20);
+    }
+
     if(!_stolen_remote_tasks.empty()) {
         int32_t res = process_remote_task();
         res = send_back_remote_task_data();
     }
+    stop_communication_threads();
+
     // ===== DEBUG
 
     // // only execute stolen tasks from here on until all tasks for all ranks are done

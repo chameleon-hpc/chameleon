@@ -2,7 +2,12 @@
 #ifndef _CHAMELEON_H_
 #define _CHAMELEON_H_
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <cstdint>
+#include <errno.h>
 #include <inttypes.h>
 #include <list>
 #include <mutex>
@@ -11,6 +16,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <vector>
 
 #ifndef DPxMOD
@@ -21,17 +29,28 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+#ifndef RELP
+#define RELP( ... )                                                                                         \
+  {                                                                                                         \
+    fprintf(stderr, "ChameleonLib R#%d (OS_TID:%ld): --> ", chameleon_comm_rank, syscall(SYS_gettid));      \
+    fprintf(stderr, __VA_ARGS__);                                                                           \
+  }
+#endif
+
 #ifndef DBP
 #ifdef CHAM_DEBUG
-#define DBP( ... )                                                      \
-  {                                                                     \
-    fprintf(stderr, "ChameleonLib T#%d: --> ", chameleon_comm_rank);    \
-    fprintf(stderr, __VA_ARGS__);                                       \
+#define DBP( ... )                                                                                          \
+  {                                                                                                         \
+    fprintf(stderr, "ChameleonLib R#%d (OS_TID:%ld): --> ", chameleon_comm_rank, syscall(SYS_gettid));      \
+    fprintf(stderr, __VA_ARGS__);                                                                           \
   }
 #else
 #define DBP( ... ) { }
 #endif
 #endif
+
+#define handle_error_en(en, msg) \
+           do { errno = en; RELP("ERROR: %s : %s\n", msg, strerror(en)); exit(EXIT_FAILURE); } while (0)
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;

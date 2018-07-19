@@ -6,7 +6,10 @@
 
 #include "chameleon.h"
 
+// communicator for remote task requests
 extern MPI_Comm chameleon_comm;
+// communicator for sending back mapped values
+extern MPI_Comm chameleon_comm_mapped;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
@@ -45,9 +48,13 @@ extern "C" {
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
 
-int32_t receive_remote_tasks();
+void* receive_remote_tasks(void* arg);
 
 int32_t send_back_remote_task_data();
+
+int32_t start_communication_threads();
+
+int32_t stop_communication_threads();
 
 #ifdef __cplusplus
 }

@@ -10,6 +10,9 @@
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
 extern MPI_Comm chameleon_comm_mapped;
+// communicator for load information
+extern MPI_Comm chameleon_comm_load;
+
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
@@ -47,7 +50,6 @@ extern int32_t _outstanding_local_jobs;
 extern std::mutex _mtx_complete_load_info;
 extern int32_t *_complete_load_info;
 extern int32_t _sum_complete_load_info;
-
 // Threading section
 extern int _comm_thread_load_exchange_happend;
 

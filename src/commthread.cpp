@@ -6,8 +6,13 @@
 #include <hwloc.h>
 #include <omp.h>
 
+// communicator for remote task requests
 MPI_Comm chameleon_comm;
+// communicator for sending back mapped values
 MPI_Comm chameleon_comm_mapped;
+// communicator for load information
+MPI_Comm chameleon_comm_load;
+
 int chameleon_comm_rank;
 int chameleon_comm_size;
 
@@ -44,7 +49,7 @@ int32_t _outstanding_local_jobs = 0;
 
 std::mutex _mtx_complete_load_info;
 int32_t *_complete_load_info;
-int32_t _sum_complete_load_info;
+int32_t _sum_complete_load_info = 0;
 
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
@@ -301,10 +306,12 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 
     // FORMAT:
     //      1. target function pointer = address (intptr_t)
-    //      2. number of arguments = int32_t
-    //      3. array with argument types = n_args * int64_t
-    //      4. array with length of argument pointers = n_args * int64_t
-    //      5. array with values
+    //      2. image index
+    //      3. offset of entry point inside image
+    //      4. number of arguments = int32_t
+    //      5. array with argument types = n_args * int64_t
+    //      6. array with length of argument pointers = n_args * int64_t
+    //      7. array with values
 
     // TODO: Is it worth while to consider MPI packed data types??
 
@@ -347,7 +354,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
     cur_ptr += task->arg_num * sizeof(int64_t);
 
-    // 5. loop through arguments and copy values
+    // 7. loop through arguments and copy values
     for(int32_t i = 0; i < task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
@@ -517,9 +524,45 @@ void* send_back_mapped_data(void *arg) {
     pthread_cond_signal( &_th_send_back_mapped_data_cond );
     pthread_mutex_unlock( &_th_send_back_mapped_data_mutex );
 
+    int err;
+    MPI_Request request_out;
+    MPI_Status status_out;
+    int request_created = 0;
+
     DBP("send_back_mapped_data (enter)\n");
     while(true) {
         TargetTaskEntryTy* cur_task = nullptr;
+        // exchange work load here before reaching the abort section
+        // this is a collective call and needs to be performed at least once
+
+        // avoid overwriting request or keep it up to date?
+        // not 100% sure if overwriting a request is a bad idea or makes any problems in MPI
+        if(!request_created) {
+            _mtx_outstanding_local_jobs.lock();
+            int tmp_outstanding = _outstanding_local_jobs;
+            _mtx_outstanding_local_jobs.unlock();
+            MPI_Iallgather(&tmp_outstanding, 1, MPI_INT, _complete_load_info, 1, MPI_INT, chameleon_comm_load, &request_out);
+            request_created = 1;
+        }
+
+        int flag_request_avail;
+        MPI_Test(&request_out, &flag_request_avail, &status_out);
+        if(flag_request_avail) {
+            // sum up that stuff
+            // DBP("send_back_mapped_data - gathered new load info\n");
+            int32_t sum = 0;
+            for(int j = 0; j < chameleon_comm_size; j++) {
+                // DBP("load info from rank %d = %d\n", j, _complete_load_info[j]);
+                sum += _complete_load_info[j];
+            }
+            _sum_complete_load_info = sum;
+            // DBP("complete summed load = %d\n", _sum_complete_load_info);
+            // set flag that exchange has happend
+            if(!_comm_thread_load_exchange_happend)
+                _comm_thread_load_exchange_happend = 1;
+            // reset flag
+            request_created = 0;
+        }
 
         // check whether to abort thread
         if(_flag_abort_threads) {

@@ -45,13 +45,13 @@ int32_t chameleon_init() {
 
     // create separate communicator for chameleon
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm);
-    if(err != 0)
-        handle_error_en(err, "MPI_Comm_dup - chameleon_comm");
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm");
     MPI_Comm_size(chameleon_comm, &chameleon_comm_size);
     MPI_Comm_rank(chameleon_comm, &chameleon_comm_rank);
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_mapped);
-    if(err != 0)
-        handle_error_en(err, "MPI_Comm_dup - chameleon_comm_mapped");
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_mapped");
+    err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_load);
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_load");
 
     DBP("chameleon_init\n");
 

@@ -55,10 +55,6 @@ int32_t chameleon_init() {
 
     DBP("chameleon_init\n");
 
-    _mtx_local_load_info.lock();
-    _local_load_info = 0;
-    _mtx_local_load_info.unlock();
-
     _mtx_complete_load_info.lock();
     _complete_load_info = (int32_t *) malloc(sizeof(int32_t) * chameleon_comm_size);
     for(int i = 0; i < chameleon_comm_size; i++) {
@@ -113,7 +109,7 @@ int32_t chameleon_distributed_taskwait() {
 
         // ========== Prio 2: work on local tasks
         if(_local_tasks.empty()) {
-            // indicate that all stuff is done
+            // indicate that all local stuff is done since currently standard does not allow nested target regions
             _mtx_local_tasks.lock();
             _all_local_tasks_done = 1;
             _mtx_local_tasks.unlock();
@@ -152,13 +148,18 @@ int32_t chameleon_distributed_taskwait() {
     // P1: call function to recieve remote tasks
     // receive_remote_tasks();
     while(_stolen_remote_tasks.empty()){
-        // sleep for 20 ms
-        usleep(1000*20);
+        // sleep for 1 ms
+        usleep(1000);
     }
 
     if(!_stolen_remote_tasks.empty()) {
         int32_t res = process_remote_task();
-        res = send_back_remote_task_data();
+        // wait until remote task has been send back
+        while(_num_stolen_tasks != 0){
+            // sleep for 1 ms
+            usleep(1000);
+        }
+        // res = send_back_mapped_data();
     }
     stop_communication_threads();
 
@@ -181,10 +182,12 @@ int32_t chameleon_distributed_taskwait() {
     //     // ===== DEBUG
     //     break;
     //     // ===== DEBUG
-
+    //     // TODO: need to wait until the load excange has happend at least once
     //     // TODO: check wether there are still global tasks to be processed
     //     // TODO: maybe wait for a certain time here
     // }
+
+    // TODO: need an implicit OpenMP or MPI barrier here?
 
     return CHAM_SUCCESS;
 }
@@ -219,11 +222,8 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     _mtx_local_tasks.lock();
     // add to queue
     _local_tasks.push_back(task);
-    // increase counter for number of tasks here
-    _mtx_local_load_info.lock();
-    _local_load_info++;
-    _mtx_local_load_info.unlock();
-
+    _num_local_tasks++;
+    trigger_local_load_update();
     _all_local_tasks_done = 0;
     _mtx_local_tasks.unlock();
 
@@ -243,11 +243,6 @@ TargetTaskEntryTy* chameleon_pop_task() {
     if(!_local_tasks.empty()) {
         task = _local_tasks.front();
         _local_tasks.pop_front();
-
-        // decrease local load counter
-        _mtx_local_load_info.lock();
-        _local_load_info--;
-        _mtx_local_load_info.unlock();
     }
     _mtx_local_tasks.unlock();
     return task;
@@ -351,33 +346,37 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
 inline int32_t process_remote_task() {
     DBP("process_remote_task (enter)\n");
     TargetTaskEntryTy *remote_task = nullptr;
-    
-    _mtx_stolen_remote_tasks.lock();
-    std::list<TargetTaskEntryTy*>::iterator it;
-    for (it = _stolen_remote_tasks.begin(); it != _stolen_remote_tasks.end(); ++it) {
-        remote_task = *it;
-        if(remote_task->status == CHAM_TASK_STATUS_OPEN) {
-            // mark task to be processed
-            remote_task->status = CHAM_TASK_STATUS_PROCESSING;
-            break;
-        }
-        remote_task = nullptr;
-    }
-    _mtx_stolen_remote_tasks.unlock();
 
-    // currently no free task to be processed
-    if(!remote_task)
+    if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
+        
+    _mtx_stolen_remote_tasks.lock();
+    // for safety need to check again after lock is aquired
+    if(_stolen_remote_tasks.empty())
+        return CHAM_REMOTE_TASK_NONE;
+    
+    remote_task = _stolen_remote_tasks.front();
+    _stolen_remote_tasks.pop_front();
+    _mtx_stolen_remote_tasks.unlock();
 
     // execute region now
     int32_t res = execute_target_task(remote_task);
     if(res != CHAM_SUCCESS)
-        return res;
+        handle_error_en(1, "execute_target_task - remote");
             
-    // mark as done; communication thread can now send data back to sender if there is any
-    _mtx_stolen_remote_tasks.lock();
-    remote_task->status = CHAM_TASK_STATUS_DONE;
-    _mtx_stolen_remote_tasks.unlock();
+    // just schedule it for sending back results if there is at least 1 output
+    if(remote_task->HasAtLeastOneOutput()) {
+        _mtx_stolen_remote_tasks_send_back.lock();
+        _stolen_remote_tasks_send_back.push_back(remote_task);
+        _mtx_stolen_remote_tasks_send_back.unlock();
+    } else {
+        // we can now decrement the counter
+        _mtx_stolen_remote_tasks.lock();
+        _num_stolen_tasks--;
+        trigger_local_load_update();
+        _mtx_stolen_remote_tasks.unlock();
+    }
+
     return CHAM_REMOTE_TASK_SUCCESS;
 }
 

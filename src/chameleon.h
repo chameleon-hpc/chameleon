@@ -11,6 +11,7 @@
 #include <inttypes.h>
 #include <list>
 #include <mutex>
+#include <omp.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,18 +33,14 @@
 #ifndef RELP
 #define RELP( ... )                                                                                         \
   {                                                                                                         \
-    fprintf(stderr, "ChameleonLib R#%d (OS_TID:%ld): --> ", chameleon_comm_rank, syscall(SYS_gettid));      \
+    fprintf(stderr, "ChameleonLib R#%d T#%d (OS_TID:%ld): --> ", chameleon_comm_rank, omp_get_thread_num(), syscall(SYS_gettid));      \
     fprintf(stderr, __VA_ARGS__);                                                                           \
   }
 #endif
 
 #ifndef DBP
 #ifdef CHAM_DEBUG
-#define DBP( ... )                                                                                          \
-  {                                                                                                         \
-    fprintf(stderr, "ChameleonLib R#%d (OS_TID:%ld): --> ", chameleon_comm_rank, syscall(SYS_gettid));      \
-    fprintf(stderr, __VA_ARGS__);                                                                           \
-  }
+#define DBP( ... ) { RELP(__VA_ARGS__); }
 #else
 #define DBP( ... ) { }
 #endif
@@ -121,7 +118,6 @@ struct TargetTaskEntryTy {
     std::vector<void *> arg_tgt_converted_pointers;
 
     // Some special settings for stolen tasks
-    int32_t status = CHAM_TASK_STATUS_OPEN;
     int32_t source_mpi_rank = 0;
     int32_t source_mpi_tag = 0;
 

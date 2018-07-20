@@ -4,6 +4,7 @@
 
 #include <sched.h>
 #include <hwloc.h>
+#include <omp.h>
 
 MPI_Comm chameleon_comm;
 MPI_Comm chameleon_comm_mapped;
@@ -20,20 +21,26 @@ std::list<OffloadingDataEntryTy*> _data_entries;
 // these can either be executed here or offloaded to a different rank
 std::mutex _mtx_local_tasks;
 std::list<TargetTaskEntryTy*> _local_tasks;
+int32_t _num_local_tasks = 0;
 
 int32_t _all_local_tasks_done = 0;
 
 // list with stolen task entries that should be executed
 std::mutex _mtx_stolen_remote_tasks;
 std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+int32_t _num_stolen_tasks = 0;
+
+// list with stolen task entries that need output data transfer
+std::mutex _mtx_stolen_remote_tasks_send_back;
+std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 
 // entries that should be offloaded to specific ranks
 std::mutex _mtx_offload_entries;
 std::list<OffloadEntryTy*> _offload_entries;
 
-// Load Information (temporary here: number of tasks)
-std::mutex _mtx_local_load_info;
-int32_t _local_load_info;
+// Counter what needs to be done locally
+std::mutex _mtx_outstanding_local_jobs;
+int32_t _outstanding_local_jobs = 0;
 
 std::mutex _mtx_complete_load_info;
 int32_t *_complete_load_info;
@@ -42,12 +49,25 @@ int32_t _sum_complete_load_info;
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
 // ============== Thread Section ===========
-int abort_threads = 0;
+std::mutex _mtx_comm_threads_started;
+int _comm_threads_started               = 0;
+int _comm_thread_load_exchange_happend  = 0;
 
-pthread_t           th_receive_remote_tasks;
-int                 th_receive_remote_tasks_created = 0;
-pthread_cond_t      th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
-pthread_mutex_t     th_receive_remote_tasks_mutex   = PTHREAD_MUTEX_INITIALIZER;
+std::mutex _mtx_comm_threads_ended;
+int _comm_threads_ended_count           = 0;
+
+// flag that signalizes comm threads to abort their work
+int _flag_abort_threads         = 0;
+
+pthread_t           _th_receive_remote_tasks;
+int                 _th_receive_remote_tasks_created = 0;
+pthread_cond_t      _th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t     _th_receive_remote_tasks_mutex   = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_t           _th_send_back_mapped_data;
+int                 _th_send_back_mapped_data_created = 0;
+pthread_cond_t      _th_send_back_mapped_data_cond    = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t     _th_send_back_mapped_data_mutex   = PTHREAD_MUTEX_INITIALIZER;
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,40 +81,85 @@ short pin_thread_to_last_core();
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
+    if(_comm_threads_started)
+        return CHAM_SUCCESS;
+    
+    _mtx_comm_threads_started.lock();
+    // need to check again
+    if(_comm_threads_started) {
+        _mtx_comm_threads_started.unlock();
+        return CHAM_SUCCESS;
+    }
+
     DBP("start_communication_threads (enter)\n");
     // set flag to avoid that threads are directly aborting
-    abort_threads = 0;
+    _flag_abort_threads = 0;
+    _comm_thread_load_exchange_happend = 0;
 
-    // explicitly make joinable to be portable
+    // explicitly make threads joinable to be portable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
     int err;
-    err = pthread_create(&th_receive_remote_tasks, &attr, receive_remote_tasks, NULL);
+    err = pthread_create(&_th_receive_remote_tasks, &attr, receive_remote_tasks, NULL);
     if(err != 0)
-        handle_error_en(err, "pthread_create - th_receive_remote_tasks");
+        handle_error_en(err, "pthread_create - _th_receive_remote_tasks");
+    err = pthread_create(&_th_send_back_mapped_data, &attr, send_back_mapped_data, NULL);
+    if(err != 0)
+        handle_error_en(err, "pthread_create - _th_send_back_mapped_data");
     
     // wait for finished thread creation??? Is that a good idea?
-    pthread_mutex_lock(&th_receive_remote_tasks_mutex);
-    while (th_receive_remote_tasks_created == 0) {
-        pthread_cond_wait(&th_receive_remote_tasks_cond, &th_receive_remote_tasks_mutex);
+    pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
+    while (_th_receive_remote_tasks_created == 0) {
+        pthread_cond_wait(&_th_receive_remote_tasks_cond, &_th_receive_remote_tasks_mutex);
     }
-    pthread_mutex_unlock(&th_receive_remote_tasks_mutex);
+    pthread_mutex_unlock(&_th_receive_remote_tasks_mutex);
 
+    pthread_mutex_lock(&_th_send_back_mapped_data_mutex);
+    while (_th_send_back_mapped_data_created == 0) {
+        pthread_cond_wait(&_th_send_back_mapped_data_cond, &_th_send_back_mapped_data_mutex);
+    }
+    pthread_mutex_unlock(&_th_send_back_mapped_data_mutex);
+
+    // set flag to ensure that only a single thread is creating communication threads
+    _comm_threads_started = 1;
+    _mtx_comm_threads_started.unlock();
+    DBP("start_communication_threads (exit)\n");
     return CHAM_SUCCESS;
 }
 
+// only last openmp thread should be able to stop threads
 int32_t stop_communication_threads() {
+    _mtx_comm_threads_ended.lock();
+    // increment counter
+    _comm_threads_ended_count++;
+
+    // check whether it is the last thread that comes along here
+    // TODO: omp_get_num_threads might not be the correct choice in all cases.. need to check
+    if(_comm_threads_ended_count < omp_get_num_threads()) {
+        _mtx_comm_threads_ended.unlock();
+        return CHAM_SUCCESS;
+    }
+
     DBP("stop_communication_threads (enter)\n");
     int err = 0;
     // first kill all threads
-    // err = pthread_cancel(th_receive_remote_tasks);
-    // err = pthread_kill(th_receive_remote_tasks, SIGKILL);
-    abort_threads = 1;
+    // err = pthread_cancel(_th_receive_remote_tasks);
+    // err = pthread_kill(_th_receive_remote_tasks, SIGKILL);
+    _flag_abort_threads = 1;
     // then wait for all threads to finish
-    err = pthread_join(th_receive_remote_tasks, NULL);
-    DBP("stop_communication_threads - join err: %d\n", err);
+    err = pthread_join(_th_receive_remote_tasks, NULL);
+    if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_receive_remote_tasks");
+    err = pthread_join(_th_send_back_mapped_data, NULL);
+    if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_send_back_mapped_data");
+
+    // should be save to reset flags and counters here
+    _comm_threads_started = 0;
+    _comm_thread_load_exchange_happend = 0;
+    _comm_threads_ended_count = 0;
+    DBP("stop_communication_threads (exit)\n");
+    _mtx_comm_threads_ended.unlock();    
     return CHAM_SUCCESS;
 }
 
@@ -187,11 +252,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     
     // send data to target rank
     DBP("offload_task_to_rank - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
-    // MPI_Request request = MPI_REQUEST_NULL;
-    // MPI_Status status;
-    // MPI_Isend(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm, &request);
-    // // wait until communication is finished
-    // MPI_Wait(&request, &status);
+
     MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
     free(buffer);
 
@@ -225,6 +286,12 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
         // free buffer again
         free(temp_buffer);
     }
+
+    // decrement counter if offloading + receiving results finished
+    _mtx_local_tasks.lock();
+    _num_local_tasks--;
+    trigger_local_load_update();
+    _mtx_local_tasks.unlock();
 
     return CHAM_SUCCESS;
 }
@@ -385,10 +452,10 @@ void* receive_remote_tasks(void* arg) {
     pin_thread_to_last_core();
     
     // trigger signal to tell that thread is running now
-    pthread_mutex_lock( &th_receive_remote_tasks_mutex );
-    th_receive_remote_tasks_created = 1; 
-    pthread_cond_signal( &th_receive_remote_tasks_cond );
-    pthread_mutex_unlock( &th_receive_remote_tasks_mutex );
+    pthread_mutex_lock( &_th_receive_remote_tasks_mutex );
+    _th_receive_remote_tasks_created = 1; 
+    pthread_cond_signal( &_th_receive_remote_tasks_cond );
+    pthread_mutex_unlock( &_th_receive_remote_tasks_mutex );
 
     DBP("receive_remote_tasks (enter)\n");
 
@@ -402,18 +469,19 @@ void* receive_remote_tasks(void* arg) {
         // first check transmission and make sure that buffer has enough memory
         MPI_Status cur_status;
         int flag_open_request = 0;
+        
         while(!flag_open_request) {
+            usleep(10);
             // check whether thread should be aborted
-            if(abort_threads) {
+            if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
                 free(buffer);
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
-            // DBP("receive_remote_tasks - starting iprobe\n");
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request, &cur_status);
-            // DBP("receive_remote_tasks - ending iprobe\n");
         }
+
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
         if(recv_buff_size > cur_max_buff_size) {
             // allocate more memory
@@ -431,35 +499,49 @@ void* receive_remote_tasks(void* arg) {
         task->source_mpi_rank   = cur_status.MPI_SOURCE;
         task->source_mpi_tag    = cur_status.MPI_TAG;
 
-        // add task to stolen list
+        // add task to stolen list and increment counter
         _mtx_stolen_remote_tasks.lock();
         _stolen_remote_tasks.push_back(task);
+        _num_stolen_tasks++;
+        trigger_local_load_update();
         _mtx_stolen_remote_tasks.unlock();
     }
-
-    // free buffer again; currently unreachable code since thread will be canceled
-    // free(buffer);
-    return nullptr;
 }
 
-int32_t send_back_remote_task_data() {
-    DBP("send_back_remote_task_data (enter)\n");
-    // while(true) {
-    TargetTaskEntryTy* cur_task = nullptr;
-    _mtx_stolen_remote_tasks.lock();
-    std::list<TargetTaskEntryTy*>::iterator it;
-    for (it = _stolen_remote_tasks.begin(); it != _stolen_remote_tasks.end(); ++it) {
-        if((*it)->status == CHAM_TASK_STATUS_DONE) {
-            // get and remove task here
-            cur_task = *it;
-            _stolen_remote_tasks.erase(it++);
-            break;
-        }
-    }
-    _mtx_stolen_remote_tasks.unlock();
+void* send_back_mapped_data(void *arg) {
+    pin_thread_to_last_core();
+    
+    // trigger signal to tell that thread is running now
+    pthread_mutex_lock( &_th_send_back_mapped_data_mutex );
+    _th_send_back_mapped_data_created = 1; 
+    pthread_cond_signal( &_th_send_back_mapped_data_cond );
+    pthread_mutex_unlock( &_th_send_back_mapped_data_mutex );
 
-    // only send data if there is at least one output, otherwise we can skip transfer
-    if(cur_task && cur_task->HasAtLeastOneOutput()) {
+    DBP("send_back_mapped_data (enter)\n");
+    while(true) {
+        TargetTaskEntryTy* cur_task = nullptr;
+
+        // check whether to abort thread
+        if(_flag_abort_threads) {
+            DBP("send_back_mapped_data (abort)\n");
+            int ret_val = 0;
+            pthread_exit(&ret_val);
+        }
+
+        if(_stolen_remote_tasks_send_back.empty()) {
+            usleep(10);
+            continue;
+        }
+
+        _mtx_stolen_remote_tasks_send_back.lock();
+        // need to check again
+        if(_stolen_remote_tasks_send_back.empty()) {
+            continue;
+        }
+        cur_task = _stolen_remote_tasks_send_back.front();
+        _stolen_remote_tasks_send_back.pop_front();
+        _mtx_stolen_remote_tasks_send_back.unlock();
+
         int32_t tmp_size_buff = 0;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
@@ -476,12 +558,22 @@ int32_t send_back_remote_task_data() {
             }
         }
         // initiate blocking send
-        DBP("send_back_remote_task_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
+        DBP("send_back_mapped_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
         MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
         free(buff);
+
+        _mtx_stolen_remote_tasks.lock();
+        _num_stolen_tasks--;
+        trigger_local_load_update();
+        _mtx_stolen_remote_tasks.unlock();
     }
-    // }
-    return CHAM_SUCCESS;
+}
+
+void trigger_local_load_update() {
+    _mtx_outstanding_local_jobs.lock();        
+    _outstanding_local_jobs = _num_local_tasks + _num_stolen_tasks;
+    DBP("trigger_local_load_update - current oustanding tasks: %d\n", _outstanding_local_jobs);
+    _mtx_outstanding_local_jobs.unlock();
 }
 
 #ifdef __cplusplus

@@ -23,24 +23,33 @@ extern std::list<OffloadingDataEntryTy*> _data_entries;
 // these can either be executed here or offloaded to a different rank
 extern std::mutex _mtx_local_tasks;
 extern std::list<TargetTaskEntryTy*> _local_tasks;
+extern int32_t _num_local_tasks;
 
 extern int32_t _all_local_tasks_done;
 
 // list with stolen task entries that should be executed
 extern std::mutex _mtx_stolen_remote_tasks;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+extern int32_t _num_stolen_tasks;
+
+// list with stolen task entries that need output data transfer
+extern std::mutex _mtx_stolen_remote_tasks_send_back;
+extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 
 // entries that should be offloaded to specific ranks
 extern std::mutex _mtx_offload_entries;
 extern std::list<OffloadEntryTy*> _offload_entries;
 
-// Load Information (temporary here: number of tasks)
-extern std::mutex _mtx_local_load_info;
-extern int32_t _local_load_info;
+// counter what needs to be done locally
+extern std::mutex _mtx_outstanding_local_jobs;
+extern int32_t _outstanding_local_jobs;
 
 extern std::mutex _mtx_complete_load_info;
 extern int32_t *_complete_load_info;
 extern int32_t _sum_complete_load_info;
+
+// Threading section
+extern int _comm_thread_load_exchange_happend;
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,13 +57,15 @@ extern "C" {
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
 
-void* receive_remote_tasks(void* arg);
+void* receive_remote_tasks(void *arg);
 
-int32_t send_back_remote_task_data();
+void* send_back_mapped_data(void *arg);
 
 int32_t start_communication_threads();
 
 int32_t stop_communication_threads();
+
+void trigger_local_load_update();
 
 #ifdef __cplusplus
 }

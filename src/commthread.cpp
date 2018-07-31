@@ -13,8 +13,8 @@ MPI_Comm chameleon_comm_mapped;
 // communicator for load information
 MPI_Comm chameleon_comm_load;
 
-int chameleon_comm_rank;
-int chameleon_comm_size;
+int chameleon_comm_rank = -1;
+int chameleon_comm_size = -1;
 
 std::vector<intptr_t> _image_base_addresses;
 
@@ -74,6 +74,12 @@ int                 _th_send_back_mapped_data_created = 0;
 pthread_cond_t      _th_send_back_mapped_data_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_send_back_mapped_data_mutex   = PTHREAD_MUTEX_INITIALIZER;
 
+// std::mutex _mtx_th_threads_offload;
+// std::vector<pthread_t*> _th_threads_offload;
+// std::vector<int*> _th_threads_offload_created;
+// std::vector<pthread_cond_t*> _th_threads_offload_cond;
+// std::vector<pthread_mutex_t*> _th_threads_offload_mutex;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,6 +89,7 @@ extern "C" {
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
 TargetTaskEntryTy* decode_send_buffer(void * buffer);
 short pin_thread_to_last_core();
+void* thread_offload_action(void *arg);
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
@@ -114,7 +121,7 @@ int32_t start_communication_threads() {
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_send_back_mapped_data");
     
-    // wait for finished thread creation??? Is that a good idea?
+    // wait for finished thread creation
     pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
     while (_th_receive_remote_tasks_created == 0) {
         pthread_cond_wait(&_th_receive_remote_tasks_cond, &_th_receive_remote_tasks_mutex);
@@ -163,6 +170,9 @@ int32_t stop_communication_threads() {
     _comm_threads_started = 0;
     _comm_thread_load_exchange_happend = 0;
     _comm_threads_ended_count = 0;
+
+    _th_receive_remote_tasks_created = 0;
+    _th_send_back_mapped_data_created = 0;
     DBP("stop_communication_threads (exit)\n");
     _mtx_comm_threads_ended.unlock();    
     return CHAM_SUCCESS;
@@ -244,8 +254,75 @@ short pin_thread_to_last_core() {
 
 // This should run in a single pthread because it should be blocking
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
+    // explicitly make threads joinable to be portable
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+    // !!!!! This part should not be necessary since we have the counter for local tasks that anyway indicates oustanding stuff !!!!
+    // get lock and add a new thread for performing the communication & back transfer
+    // TODO: maybe just do that if not transfer back required
+    // _mtx_th_threads_offload.lock();
+    pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
+    // int* tmp_created = (int*)malloc(sizeof(int));
+    // *tmp_created = 0;
+    // pthread_cond_t* tmp_cond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
+    // pthread_mutex_t* tmp_mtx = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    // _th_threads_offload.push_back(tmp_new_thread);
+    // _th_threads_offload_created.push_back(tmp_created);
+    // _th_threads_offload_cond.push_back(tmp_cond);
+    // _th_threads_offload_mutex.push_back(tmp_mtx);
+    // _mtx_th_threads_offload.unlock();
+
+    // TODO: init mutex and condition
+    int err;
+    // err = pthread_cond_init(tmp_cond, NULL);
+    // if(err != 0)
+    //     handle_error_en(err, "offload_task_to_rank - pthread_cond_init");
+    // err = pthread_mutex_init(tmp_mtx, NULL);
+    // if(err != 0)
+    //     handle_error_en(err, "offload_task_to_rank - pthread_mutex_init");
+    
+    err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
+    if(err != 0)
+        handle_error_en(err, "offload_task_to_rank - pthread_create");
+    
+    // // wait for finished thread creation
+    // pthread_mutex_lock(tmp_mtx);
+    // while (tmp_created == 0) {
+    //     pthread_cond_wait(tmp_cond, tmp_mtx);
+    // }
+    // pthread_mutex_unlock(tmp_mtx);
+    return CHAM_SUCCESS;
+}
+
+void* thread_offload_action(void *arg) {
+    pin_thread_to_last_core();
+
+    // get index of current thread
+    pthread_t current_thread = pthread_self();
+    // int idx = -1;
+    // _mtx_th_threads_offload.lock();
+    // std::vector<pthread_t*>::iterator found = std::find(_th_threads_offload.begin(), _th_threads_offload.end(), &current_thread);
+    // if(found != _th_threads_offload.end())
+    // {
+    //     idx = found - _th_threads_offload.begin();
+    // }
+    // // get flag, condition and mutex by index
+    // int* tmp_flag = _th_threads_offload_created[idx];
+    // pthread_cond_t tmp_cond = _th_threads_offload_cond[idx];
+    // pthread_mutex_t tmp_mtx = _th_threads_offload_mutex[idx];
+    // _mtx_th_threads_offload.unlock();
+    
+    // // trigger signal to tell that thread is running now
+    // pthread_mutex_lock( tmp_mtx );
+    // *tmp_flag = 1; 
+    // pthread_cond_signal( tmp_cond );
+    // pthread_mutex_unlock( tmp_mtx );
+
+    OffloadEntryTy *entry = (OffloadEntryTy *) arg;
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
-    DBP("offload_task_to_rank (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
+    DBP("thread_offload_action (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
 
     // encode buffer
     int32_t buffer_size = 0;
@@ -256,19 +333,19 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     int tmp_tag = 0;
     
     // send data to target rank
-    DBP("offload_task_to_rank - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
+    DBP("thread_offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
 
     MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
     free(buffer);
 
     if(has_outputs) {
-        DBP("offload_task_to_rank - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
+        DBP("thread_offload_action - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
         // temp buffer to retreive output data from target rank to be able to update host pointers again
         void * temp_buffer = malloc(MAX_BUFFER_SIZE_OFFLOAD_ENTRY);
         MPI_Status cur_status;
         MPI_Recv(temp_buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, &cur_status);
 
-        DBP("offload_task_to_rank - receiving output data from rank %d for tag: %d\n", cur_status.MPI_SOURCE, cur_status.MPI_TAG);
+        DBP("thread_offload_action - receiving output data from rank %d for tag: %d\n", cur_status.MPI_SOURCE, cur_status.MPI_TAG);
         // copy results back to source pointers with memcpy
         char * cur_ptr = (char*) temp_buffer;
         for(int i = 0; i < entry->task_entry->arg_num; i++) {
@@ -276,7 +353,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
             int is_from     = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
             if(entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                DBP("offload_task_to_rank - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
+                DBP("thread_offload_action - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
                     DPxPTR(entry->task_entry->arg_hst_pointers[i]), 
                     entry->task_entry->arg_sizes[i],
                     entry->task_entry->arg_types[i],
@@ -298,7 +375,10 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     trigger_local_load_update();
     _mtx_local_tasks.unlock();
 
-    return CHAM_SUCCESS;
+    DBP("thread_offload_action (exit)\n");
+
+    int ret_val = 0;
+    pthread_exit(&ret_val);
 }
 
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {

@@ -136,6 +136,11 @@ int32_t chameleon_distributed_taskwait() {
             // create temp entry and offload
             OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
             res = offload_task_to_rank(off_entry);
+            while(_num_local_tasks > 0)
+            {
+                DBP("Waiting for local tasks to finish\n");
+                usleep(1000);
+            }
             // ===== DEBUG
             // P0: for now return after first offload
             stop_communication_threads();
@@ -363,14 +368,14 @@ inline int32_t process_remote_task() {
     int32_t res = execute_target_task(remote_task);
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - remote");
-            
-    // just schedule it for sending back results if there is at least 1 output
+
     if(remote_task->HasAtLeastOneOutput()) {
+        // just schedule it for sending back results if there is at least 1 output
         _mtx_stolen_remote_tasks_send_back.lock();
         _stolen_remote_tasks_send_back.push_back(remote_task);
         _mtx_stolen_remote_tasks_send_back.unlock();
     } else {
-        // we can now decrement the counter
+        // we can now decrement the counter because there is nothing to send back
         _mtx_stolen_remote_tasks.lock();
         _num_stolen_tasks--;
         trigger_local_load_update();

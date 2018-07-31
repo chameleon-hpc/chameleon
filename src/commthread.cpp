@@ -28,8 +28,6 @@ std::mutex _mtx_local_tasks;
 std::list<TargetTaskEntryTy*> _local_tasks;
 int32_t _num_local_tasks = 0;
 
-int32_t _all_local_tasks_done = 0;
-
 // list with stolen task entries that should be executed
 std::mutex _mtx_stolen_remote_tasks;
 std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
@@ -73,12 +71,6 @@ pthread_t           _th_send_back_mapped_data;
 int                 _th_send_back_mapped_data_created = 0;
 pthread_cond_t      _th_send_back_mapped_data_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_send_back_mapped_data_mutex   = PTHREAD_MUTEX_INITIALIZER;
-
-// std::mutex _mtx_th_threads_offload;
-// std::vector<pthread_t*> _th_threads_offload;
-// std::vector<int*> _th_threads_offload_created;
-// std::vector<pthread_cond_t*> _th_threads_offload_cond;
-// std::vector<pthread_mutex_t*> _th_threads_offload_mutex;
 
 #ifdef __cplusplus
 extern "C" {
@@ -252,73 +244,26 @@ short pin_thread_to_last_core() {
 }
 #pragma endregion Start/Stop/Pin Communication Threads
 
-// This should run in a single pthread because it should be blocking
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     // explicitly make threads joinable to be portable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    // !!!!! This part should not be necessary since we have the counter for local tasks that anyway indicates oustanding stuff !!!!
-    // get lock and add a new thread for performing the communication & back transfer
-    // TODO: maybe just do that if not transfer back required
-    // _mtx_th_threads_offload.lock();
-    pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
-    // int* tmp_created = (int*)malloc(sizeof(int));
-    // *tmp_created = 0;
-    // pthread_cond_t* tmp_cond = (pthread_cond_t*)malloc(sizeof(pthread_cond_t));
-    // pthread_mutex_t* tmp_mtx = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
-    // _th_threads_offload.push_back(tmp_new_thread);
-    // _th_threads_offload_created.push_back(tmp_created);
-    // _th_threads_offload_cond.push_back(tmp_cond);
-    // _th_threads_offload_mutex.push_back(tmp_mtx);
-    // _mtx_th_threads_offload.unlock();
+    // TODO: might be better to not create additional thread if there are output variables
 
-    // TODO: init mutex and condition
+    pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
+
     int err;
-    // err = pthread_cond_init(tmp_cond, NULL);
-    // if(err != 0)
-    //     handle_error_en(err, "offload_task_to_rank - pthread_cond_init");
-    // err = pthread_mutex_init(tmp_mtx, NULL);
-    // if(err != 0)
-    //     handle_error_en(err, "offload_task_to_rank - pthread_mutex_init");
-    
     err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
     if(err != 0)
         handle_error_en(err, "offload_task_to_rank - pthread_create");
-    
-    // // wait for finished thread creation
-    // pthread_mutex_lock(tmp_mtx);
-    // while (tmp_created == 0) {
-    //     pthread_cond_wait(tmp_cond, tmp_mtx);
-    // }
-    // pthread_mutex_unlock(tmp_mtx);
     return CHAM_SUCCESS;
 }
 
+// This should run in a single pthread because it should be blocking
 void* thread_offload_action(void *arg) {
     pin_thread_to_last_core();
-
-    // get index of current thread
-    pthread_t current_thread = pthread_self();
-    // int idx = -1;
-    // _mtx_th_threads_offload.lock();
-    // std::vector<pthread_t*>::iterator found = std::find(_th_threads_offload.begin(), _th_threads_offload.end(), &current_thread);
-    // if(found != _th_threads_offload.end())
-    // {
-    //     idx = found - _th_threads_offload.begin();
-    // }
-    // // get flag, condition and mutex by index
-    // int* tmp_flag = _th_threads_offload_created[idx];
-    // pthread_cond_t tmp_cond = _th_threads_offload_cond[idx];
-    // pthread_mutex_t tmp_mtx = _th_threads_offload_mutex[idx];
-    // _mtx_th_threads_offload.unlock();
-    
-    // // trigger signal to tell that thread is running now
-    // pthread_mutex_lock( tmp_mtx );
-    // *tmp_flag = 1; 
-    // pthread_cond_signal( tmp_cond );
-    // pthread_mutex_unlock( tmp_mtx );
 
     OffloadEntryTy *entry = (OffloadEntryTy *) arg;
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
@@ -377,8 +322,9 @@ void* thread_offload_action(void *arg) {
 
     DBP("thread_offload_action (exit)\n");
 
-    int ret_val = 0;
-    pthread_exit(&ret_val);
+    return nullptr;
+    // int ret_val = 0;
+    // pthread_exit(&ret_val);
 }
 
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {

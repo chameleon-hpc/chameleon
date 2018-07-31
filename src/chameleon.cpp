@@ -25,14 +25,25 @@ int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
 int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_remote_task();
 
-int32_t ch_is_initialized = 0;
+std::mutex _mtx_ch_is_initialized;
+int32_t _ch_is_initialized = 0;
 
 inline void verify_initialized() {
-    if(!ch_is_initialized)
+    if(!_ch_is_initialized)
         throw std::runtime_error("Chameleon has not been initilized before.");
 }
 
 int32_t chameleon_init() {
+    if(_ch_is_initialized)
+        return CHAM_SUCCESS;
+    
+    _mtx_ch_is_initialized.lock();
+    // need to check again
+    if(_ch_is_initialized) {
+        _mtx_ch_is_initialized.unlock();
+        return CHAM_SUCCESS;
+    }
+
     // check whether MPI is initialized, otherwise do so
     int initialized, err;
     initialized = 0;
@@ -68,8 +79,10 @@ int32_t chameleon_init() {
     // {
     //     DBP("chameleon_init - dummy region\n");
     // }
-
-    ch_is_initialized = 1;
+        
+    // set flag to ensure that only a single thread is initializing
+    _ch_is_initialized = 1;
+    _mtx_ch_is_initialized.unlock();
     return CHAM_SUCCESS;
 }
 
@@ -109,10 +122,6 @@ int32_t chameleon_distributed_taskwait() {
 
         // ========== Prio 2: work on local tasks
         if(_local_tasks.empty()) {
-            // indicate that all local stuff is done since currently standard does not allow nested target regions
-            _mtx_local_tasks.lock();
-            _all_local_tasks_done = 1;
-            _mtx_local_tasks.unlock();
             break;
         }
         
@@ -138,7 +147,7 @@ int32_t chameleon_distributed_taskwait() {
             res = offload_task_to_rank(off_entry);
             while(_num_local_tasks > 0)
             {
-                DBP("Waiting for local tasks to finish\n");
+                // DBP("Waiting for local tasks to finish\n");
                 usleep(1000);
             }
             // ===== DEBUG
@@ -229,7 +238,6 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     _local_tasks.push_back(task);
     _num_local_tasks++;
     trigger_local_load_update();
-    _all_local_tasks_done = 0;
     _mtx_local_tasks.unlock();
 
     return CHAM_SUCCESS;

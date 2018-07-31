@@ -28,8 +28,6 @@ extern std::mutex _mtx_local_tasks;
 extern std::list<TargetTaskEntryTy*> _local_tasks;
 extern int32_t _num_local_tasks;
 
-extern int32_t _all_local_tasks_done;
-
 // list with stolen task entries that should be executed
 extern std::mutex _mtx_stolen_remote_tasks;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;

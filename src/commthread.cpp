@@ -16,6 +16,10 @@ MPI_Comm chameleon_comm_load;
 int chameleon_comm_rank = -1;
 int chameleon_comm_size = -1;
 
+// global counter for offloads used for generating unique tag id
+std::mutex _mtx_global_offload_counter;
+int _global_offload_counter = 0;
+
 std::vector<intptr_t> _image_base_addresses;
 
 // list with data that has been mapped in map clauses
@@ -99,6 +103,7 @@ int32_t start_communication_threads() {
     // set flag to avoid that threads are directly aborting
     _flag_abort_threads = 0;
     _comm_thread_load_exchange_happend = 0;
+    _global_offload_counter = 0;
 
     // explicitly make threads joinable to be portable
     pthread_attr_t attr;
@@ -151,6 +156,8 @@ int32_t stop_communication_threads() {
     // first kill all threads
     // err = pthread_cancel(_th_receive_remote_tasks);
     // err = pthread_kill(_th_receive_remote_tasks, SIGKILL);
+    
+    // safer that way because it leads to severe problems if threads are canceled inside a MPI communication
     _flag_abort_threads = 1;
     // then wait for all threads to finish
     err = pthread_join(_th_receive_remote_tasks, NULL);
@@ -162,6 +169,7 @@ int32_t stop_communication_threads() {
     _comm_threads_started = 0;
     _comm_thread_load_exchange_happend = 0;
     _comm_threads_ended_count = 0;
+    _global_offload_counter = 0;
 
     _th_receive_remote_tasks_created = 0;
     _th_send_back_mapped_data_created = 0;
@@ -199,7 +207,7 @@ short pin_thread_to_last_core() {
     long max_core_set = -1;
     for (long i = n_logical_cores; i >= 0; i--) {
         if (CPU_ISSET(i, &current_cpuset)) {
-            DBP("Last core/hw thread in cpuset is %ld\n", i);
+            // DBP("Last core/hw thread in cpuset is %ld\n", i);
             max_core_set = i;
             break;
         }
@@ -209,7 +217,7 @@ short pin_thread_to_last_core() {
     CPU_ZERO(&new_cpu_set);
     if(max_core_set < n_physical_cores) {
         // Case: there are no hyper threads
-        DBP("Setting thread affinity to core %ld\n", max_core_set);
+        // DBP("Setting thread affinity to core %ld\n", max_core_set);
         CPU_SET(max_core_set, &new_cpu_set);
     } else {
         // Case: there are at least 2 HT per core
@@ -219,26 +227,26 @@ short pin_thread_to_last_core() {
             cores = std::to_string(i)  + "," + cores;
             CPU_SET(i, &new_cpu_set);
         }
-        DBP("Setting thread affinity to cores %s\n", cores.c_str());
+        // DBP("Setting thread affinity to cores %s\n", cores.c_str());
     }
     err = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &new_cpu_set);
     if (err != 0)
         handle_error_en(err, "pthread_setaffinity_np");
 
-    // ===== DEBUG
-    // verify that pinning worked
-    err = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &final_cpu_set);
-    if (err != 0)
-        handle_error_en(err, "pthread_getaffinity_np");
+    // // ===== DEBUG
+    // // verify that pinning worked
+    // err = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &final_cpu_set);
+    // if (err != 0)
+    //     handle_error_en(err, "pthread_getaffinity_np");
 
-    std::string final_cores("");
-    for (int j = 0; j < n_logical_cores; j++)
-        if (CPU_ISSET(j, &final_cpu_set))
-            final_cores += std::to_string(j) + ",";
+    // std::string final_cores("");
+    // for (int j = 0; j < n_logical_cores; j++)
+    //     if (CPU_ISSET(j, &final_cpu_set))
+    //         final_cores += std::to_string(j) + ",";
 
-    final_cores.pop_back();
-    DBP("Verifying thread affinity: pinned to cores %s\n", final_cores.c_str());
-    // ===== DEBUG
+    // final_cores.pop_back();
+    // DBP("Verifying thread affinity: pinned to cores %s\n", final_cores.c_str());
+    // // ===== DEBUG
 
     return CHAM_SUCCESS;
 }
@@ -251,13 +259,16 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
     // TODO: might be better to not create additional thread if there are output variables
+    // if(entry->HasAtLeastOneOutput()) {
+        pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
 
-    pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
-
-    int err;
-    err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
-    if(err != 0)
-        handle_error_en(err, "offload_task_to_rank - pthread_create");
+        int err;
+        err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
+        if(err != 0)
+            handle_error_en(err, "offload_task_to_rank - pthread_create");
+    // } else {
+        // ...
+    // }
     return CHAM_SUCCESS;
 }
 
@@ -273,9 +284,18 @@ void* thread_offload_action(void *arg) {
     int32_t buffer_size = 0;
     void * buffer = encode_send_buffer(entry->task_entry, &buffer_size);
 
-    // TODO: calculate proper tag that contains bit combination of sender as well as 
+    // calculate proper tag that contains bit combination of sender as well as 
     // "task id" (maybe global increment per process)
-    int tmp_tag = 0;
+    _mtx_global_offload_counter.lock();
+    int tmp_counter = ++_global_offload_counter;
+    _mtx_global_offload_counter.unlock();
+    int tmp_rank = chameleon_comm_rank;
+    int tmp_tag = (tmp_rank << 16) | (tmp_counter);
+
+    // // == DEBUG: Verify bit encoding
+    // int tmp_verify_count = tmp_tag & 0x0000ffff;
+    // int tmp_verify_rank = tmp_tag >> 16;
+    // // == DEBUG
     
     // send data to target rank
     DBP("thread_offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
@@ -298,12 +318,7 @@ void* thread_offload_action(void *arg) {
             int is_from     = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
             if(entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                DBP("thread_offload_action - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
-                    DPxPTR(entry->task_entry->arg_hst_pointers[i]), 
-                    entry->task_entry->arg_sizes[i],
-                    entry->task_entry->arg_types[i],
-                    is_lit,
-                    is_from);
+                print_arg_info("thread_offload_action", entry->task_entry, i);
                     
                 // we already have information about size and data type
                 memcpy(entry->task_entry->arg_hst_pointers[i], cur_ptr, entry->task_entry->arg_sizes[i]);
@@ -385,12 +400,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
-        DBP("encode_send_buffer - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
-            DPxPTR(task->arg_hst_pointers[i]), 
-            task->arg_sizes[i],
-            task->arg_types[i],
-            is_lit,
-            is_from);
+        print_arg_info("encode_send_buffer", task, i);
 
         // copy value from host pointer directly
         if(is_lit) {
@@ -465,12 +475,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
             task->arg_hst_pointers[i] = new_mem;
         }
         
-        DBP("decode_send_buffer - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
-            DPxPTR(task->arg_hst_pointers[i]), 
-            task->arg_sizes[i],
-            task->arg_types[i],
-            is_lit,
-            is_from);
+        print_arg_info("decode_send_buffer", task, i);
 
         cur_ptr += task->arg_sizes[i];
     }
@@ -622,6 +627,7 @@ void* send_back_mapped_data(void *arg) {
         char* cur_ptr = (char*)buff;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
+                // TODO: debug print for argument
                 memcpy(cur_ptr, cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i]);
                 cur_ptr += cur_task->arg_sizes[i];
             }
@@ -639,10 +645,43 @@ void* send_back_mapped_data(void *arg) {
 }
 
 void trigger_local_load_update() {
-    _mtx_outstanding_local_jobs.lock();        
+    _mtx_outstanding_local_jobs.lock();
     _outstanding_local_jobs = _num_local_tasks + _num_stolen_tasks;
     DBP("trigger_local_load_update - current oustanding tasks: %d\n", _outstanding_local_jobs);
     _mtx_outstanding_local_jobs.unlock();
+}
+
+void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {
+    int64_t tmp_type    = task->arg_types[idx];
+    int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+    int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
+
+    // DBP("%s - arg: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
+    DBP("%s - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
+            prefix.c_str(),
+            DPxPTR(task->arg_hst_pointers[idx]), 
+            task->arg_sizes[idx],
+            task->arg_types[idx],
+            // task->arg_tgt_offsets[idx],
+            is_lit,
+            is_from);
+}
+
+void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx) {
+    int64_t tmp_type    = task->arg_types[idx];
+    int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+    int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
+
+    // DBP("%s - arg_tgt: " DPxMOD ", arg_hst: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
+    DBP("%s - arg_tgt: " DPxMOD ", arg_hst: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
+            prefix.c_str(),
+            DPxPTR(task->arg_tgt_pointers[idx]), 
+            DPxPTR(task->arg_hst_pointers[idx]), 
+            task->arg_sizes[idx],
+            task->arg_types[idx],
+            // task->arg_tgt_offsets[idx],
+            is_lit,
+            is_from);
 }
 
 #ifdef __cplusplus

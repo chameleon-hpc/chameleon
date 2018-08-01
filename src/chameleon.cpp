@@ -99,6 +99,7 @@ int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address) {
 int32_t chameleon_finalize() {
     DBP("chameleon_finalize (enter)\n");
     verify_initialized();
+    DBP("chameleon_finalize (exit)\n");
     return CHAM_SUCCESS;
 }
 
@@ -108,6 +109,8 @@ int32_t chameleon_distributed_taskwait() {
 
     // start communication threads here
     start_communication_threads();
+
+    bool had_local_tasks = !_local_tasks.empty();
     
     // as long as there are local tasks run this loop
     while(true) {
@@ -120,86 +123,78 @@ int32_t chameleon_distributed_taskwait() {
         //         continue;
         // }
 
-        // ========== Prio 2: work on local tasks
-        if(_local_tasks.empty()) {
-            break;
-        }
-        
-        TargetTaskEntryTy *cur_task = chameleon_pop_task();
-        if(cur_task == nullptr)
-        {
-            break;
-        }
-        // if(cur_task) {
-        //     // perform lookup in both cases (local execution & offload)
-        //     lookup_hst_pointers(cur_task);
-        //     // execute region now
-        //     res = execute_target_task(cur_task);
+        // // ========== Prio 2: check whether to abort procedure
+        // if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
+        //     // only abort if load exchange has happened at least once
+        //     break;
         // }
 
-        // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
-        if(cur_task) {
-            // perform lookup in both cases (local execution & offload)
-            lookup_hst_pointers(cur_task);
-
-            // create temp entry and offload
-            OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
-            res = offload_task_to_rank(off_entry);
-            while(_num_local_tasks > 0)
+        // ========== Prio 3: work on local tasks
+        if(!_local_tasks.empty()) {
+            TargetTaskEntryTy *cur_task = chameleon_pop_task();
+            if(cur_task == nullptr)
             {
-                // DBP("Waiting for local tasks to finish\n");
-                usleep(1000);
+                continue;
+            }
+            
+            // if(cur_task) {
+            //     // perform lookup in both cases (local execution & offload)
+            //     lookup_hst_pointers(cur_task);
+            //     // execute region now
+            //     res = execute_target_task(cur_task);
+                
+            //     // it is save to decrement counter after local execution
+            //     _mtx_local_tasks.lock();
+            //     _num_local_tasks--;
+            //     trigger_local_load_update();
+            //     _mtx_local_tasks.unlock();
+            // }
+
+            // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
+            if(cur_task) {
+                // create temp entry and offload
+                OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+                res = offload_task_to_rank(off_entry);
             }
             // ===== DEBUG
-            // P0: for now return after first offload
-            stop_communication_threads();
-            return CHAM_SUCCESS;
-            // ===== DEBUG
+        }
+        else {
+            break;
         }
     }
+
+    // ===== DEBUG
+    if(had_local_tasks) {
+        while(_num_local_tasks > 0)
+        {
+            // DBP("Waiting for local tasks to finish\n");
+            usleep(1000);
+        }
+        // P0: for now return after first offload
+        stop_communication_threads();
+        return CHAM_SUCCESS;
+    }
+    // ===== DEBUG
+
+    // // stop threads here - actually the last thread will do that
+    // stop_communication_threads();
 
     // ===== DEBUG
     // P1: call function to recieve remote tasks
-    // receive_remote_tasks();
-    while(_stolen_remote_tasks.empty()){
+
+    while(true) {
+        if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
+            // only abort if load exchange has happened at least once
+            break;
+        }
+        if(!_stolen_remote_tasks.empty()) {
+            int32_t res = process_remote_task();
+        }
         // sleep for 1 ms
         usleep(1000);
     }
-
-    if(!_stolen_remote_tasks.empty()) {
-        int32_t res = process_remote_task();
-        // wait until remote task has been send back
-        while(_num_stolen_tasks != 0){
-            // sleep for 1 ms
-            usleep(1000);
-        }
-        // res = send_back_mapped_data();
-    }
     stop_communication_threads();
-
     // ===== DEBUG
-
-    // // only execute stolen tasks from here on until all tasks for all ranks are done
-    // while(true) {
-    //     int32_t res = CHAM_SUCCESS;
-    //     if(!_stolen_remote_tasks.empty()) {
-    //         res = process_remote_task();
-    //         // ===== DEBUG
-    //         // if task has been executed successfully start from beginning
-    //         if(res == CHAM_REMOTE_TASK_SUCCESS){
-    //             // DEBUG: for testing there will just be one task
-    //             break;
-    //         }
-    //         // ===== DEBUG
-    //     }
-
-    //     // ===== DEBUG
-    //     break;
-    //     // ===== DEBUG
-    //     // TODO: need to wait until the load excange has happend at least once
-    //     // TODO: check wether there are still global tasks to be processed
-    //     // TODO: maybe wait for a certain time here
-    // }
 
     // TODO: need an implicit OpenMP or MPI barrier here?
 
@@ -207,6 +202,7 @@ int32_t chameleon_distributed_taskwait() {
 }
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
+    DBP("chameleon_submit_data (enter) - tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
     verify_initialized();
     // check list if already in
     _mtx_data_entry.lock();
@@ -216,22 +212,27 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
             // increase reference count
             entry->ref_count++;
             found = 1;
+            DBP("chameleon_submit_data - incremented ref count to %d\n", entry->ref_count);
             break;
         }
     }
     if(!found) {
+        DBP("chameleon_submit_data - create new entry\n");
         // add it to list
         OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
         // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
         _data_entries.push_back(new_entry);
     }
     _mtx_data_entry.unlock();
+    DBP("chameleon_submit_data (exit)\n");
     return CHAM_SUCCESS;
 }
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     DBP("chameleon_add_task (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d)\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset);
     verify_initialized();
+    // perform lookup in both cases (local execution & offload)
+    lookup_hst_pointers(task);
 
     _mtx_local_tasks.lock();
     // add to queue
@@ -266,7 +267,10 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
     for(int i = 0; i < task->arg_num; i++) {
         // get type and pointer
         int64_t tmp_type    = task->arg_types[i];
-        void * tmp_tgt_ptr  = task->arg_tgt_converted_pointers[i];
+        void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
+        // void * tmp_tgt_ptr  = task->arg_tgt_converted_pointers[i];
+        int is_lit      = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+        int is_from     = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
 
         if(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
             // pointer represents numerical value that is implicitly mapped
@@ -280,6 +284,9 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
                 // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
                 if(entry->tgt_ptr == tmp_tgt_ptr) {
                     task->arg_sizes[i] = entry->size;
+                    // add offset to hst pointers in case array sections or other stuff is used
+                    // task->arg_hst_pointers[i] = (void *)((intptr_t)entry->hst_ptr + task->arg_tgt_offsets[i]);
+                    // task->arg_hst_pointers[i] = (void *)((intptr_t)entry->hst_ptr - task->arg_tgt_offsets[i]);
                     task->arg_hst_pointers[i] = entry->hst_ptr;
                     found = 1;
                     break;
@@ -287,11 +294,39 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
             }
             if(!found) {
                 // something went wrong here
-                printf("Error: No mapping entry found for address (" DPxMOD ")\n", DPxPTR(tmp_tgt_ptr));
+                printf("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
+                    DPxPTR(tmp_tgt_ptr),
+                    tmp_type,
+                    is_lit,
+                    is_from);
                 return CHAM_FAILURE;
+            } else {
+                print_arg_info_w_tgt("lookup_hst_pointers", task, i);
             }
         }
     }
+
+    // clean up data entries again to avoid problems
+    _mtx_data_entry.lock();
+    for(int i = 0; i < task->arg_num; i++) {
+        // get type and pointer
+        int64_t tmp_type    = task->arg_types[i];
+        void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
+        int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+
+        if(!(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL)) {
+            for(auto &entry : _data_entries) {
+                if(entry->tgt_ptr == tmp_tgt_ptr) {
+                    // remove it if found
+                    _data_entries.remove(entry);
+                    break;
+                }
+            }   
+        }
+    }
+    _mtx_data_entry.unlock();
+
+    DBP("lookup_hst_pointers (exit)\n");
     return CHAM_SUCCESS;
 }
 
@@ -327,6 +362,7 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         // int64_t is_from         = (tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM);
         // int64_t is_prt_obj      = (tmp_type & CHAM_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
         
+        // ptrs[i] = (void*) ((intptr_t)task->arg_hst_pointers[i] + task->arg_tgt_offsets[i]);
         ptrs[i] = task->arg_hst_pointers[i];
         args[i] = &ptrs[i];
         

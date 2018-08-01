@@ -16,6 +16,10 @@ extern MPI_Comm chameleon_comm_load;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
+// global counter for offloads used for generating unique tag id
+extern std::mutex _mtx_global_offload_counter;
+extern int _global_offload_counter;
+
 extern std::vector<intptr_t> _image_base_addresses;
 
 // list with data that has been mapped in map clauses
@@ -48,12 +52,17 @@ extern int32_t _outstanding_local_jobs;
 extern std::mutex _mtx_complete_load_info;
 extern int32_t *_complete_load_info;
 extern int32_t _sum_complete_load_info;
+
 // Threading section
 extern int _comm_thread_load_exchange_happend;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx);
+
+void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx);
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
 

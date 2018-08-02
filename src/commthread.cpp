@@ -253,6 +253,8 @@ short pin_thread_to_last_core() {
 #pragma endregion Start/Stop/Pin Communication Threads
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
+    int has_outputs = entry->task_entry->HasAtLeastOneOutput();
+    DBP("offload_task_to_rank (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
     // explicitly make threads joinable to be portable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -269,6 +271,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     // } else {
         // ...
     // }
+    DBP("offload_task_to_rank (exit)\n");
     return CHAM_SUCCESS;
 }
 

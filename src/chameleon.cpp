@@ -103,6 +103,105 @@ int32_t chameleon_finalize() {
     return CHAM_SUCCESS;
 }
 
+// int32_t chameleon_distributed_taskwait() {
+//     DBP("chameleon_distributed_taskwait (enter)\n");
+//     verify_initialized();
+
+//     // start communication threads here
+//     start_communication_threads();
+
+//     bool had_local_tasks = !_local_tasks.empty();
+    
+//     // as long as there are local tasks run this loop
+//     while(true) {
+//         int32_t res = CHAM_SUCCESS;
+//         // // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
+//         // if(!_stolen_remote_tasks.empty()) {
+//         //     res = process_remote_task();
+//         //     // if task has been executed successfully start from beginning
+//         //     if(res == CHAM_REMOTE_TASK_SUCCESS)
+//         //         continue;
+//         // }
+
+//         // // ========== Prio 2: check whether to abort procedure
+//         // if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
+//         //     // only abort if load exchange has happened at least once
+//         //     break;
+//         // }
+
+//         // ========== Prio 3: work on local tasks
+//         if(!_local_tasks.empty()) {
+//             TargetTaskEntryTy *cur_task = chameleon_pop_task();
+//             if(cur_task == nullptr)
+//             {
+//                 continue;
+//             }
+            
+//             // if(cur_task) {
+//             //     // perform lookup in both cases (local execution & offload)
+//             //     lookup_hst_pointers(cur_task);
+//             //     // execute region now
+//             //     res = execute_target_task(cur_task);
+                
+//             //     // it is save to decrement counter after local execution
+//             //     _mtx_local_tasks.lock();
+//             //     _num_local_tasks--;
+//             //     trigger_local_load_update();
+//             //     _mtx_local_tasks.unlock();
+//             // }
+
+//             // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
+//             if(cur_task) {
+//                 // create temp entry and offload
+//                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+//                 res = offload_task_to_rank(off_entry);
+//             }
+//             // ===== DEBUG
+//         }
+//         else {
+//             break;
+//         }
+//     }
+
+//     // ===== DEBUG
+//     if(had_local_tasks) {
+//         while(_num_local_tasks > 0)
+//         {
+//             // DBP("Waiting for local tasks to finish\n");
+//             usleep(1000);
+//         }
+//         // P0: for now return after first offload
+//         stop_communication_threads();
+//         return CHAM_SUCCESS;
+//     }
+//     // ===== DEBUG
+
+//     // // stop threads here - actually the last thread will do that
+//     // stop_communication_threads();
+
+//     // ===== DEBUG
+//     // P1: call function to recieve remote tasks
+
+//     while(true) {
+//         if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
+//             // only abort if load exchange has happened at least once
+//             break;
+//         }
+//         if(!_stolen_remote_tasks.empty()) {
+//             int32_t res = process_remote_task();
+//         }
+//         // sleep for 1 ms
+//         usleep(1000);
+//     }
+//     stop_communication_threads();
+//     // ===== DEBUG
+
+//     // TODO: need an implicit OpenMP or MPI barrier here?
+
+//     return CHAM_SUCCESS;
+// }
+
+// !!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
 int32_t chameleon_distributed_taskwait() {
     DBP("chameleon_distributed_taskwait (enter)\n");
     verify_initialized();
@@ -115,20 +214,7 @@ int32_t chameleon_distributed_taskwait() {
     // as long as there are local tasks run this loop
     while(true) {
         int32_t res = CHAM_SUCCESS;
-        // // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
-        // if(!_stolen_remote_tasks.empty()) {
-        //     res = process_remote_task();
-        //     // if task has been executed successfully start from beginning
-        //     if(res == CHAM_REMOTE_TASK_SUCCESS)
-        //         continue;
-        // }
-
-        // // ========== Prio 2: check whether to abort procedure
-        // if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
-        //     // only abort if load exchange has happened at least once
-        //     break;
-        // }
-
+        
         // ========== Prio 3: work on local tasks
         if(!_local_tasks.empty()) {
             TargetTaskEntryTy *cur_task = chameleon_pop_task();
@@ -136,52 +222,31 @@ int32_t chameleon_distributed_taskwait() {
             {
                 continue;
             }
-            
-            // if(cur_task) {
-            //     // perform lookup in both cases (local execution & offload)
-            //     lookup_hst_pointers(cur_task);
-            //     // execute region now
-            //     res = execute_target_task(cur_task);
-                
-            //     // it is save to decrement counter after local execution
-            //     _mtx_local_tasks.lock();
-            //     _num_local_tasks--;
-            //     trigger_local_load_update();
-            //     _mtx_local_tasks.unlock();
-            // }
 
-            // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
+            // force offloading to test MPI communication process (will be done by comm thread later)
             if(cur_task) {
                 // create temp entry and offload
                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
                 res = offload_task_to_rank(off_entry);
             }
-            // ===== DEBUG
-        }
-        else {
+        } else {
             break;
         }
     }
 
-    // ===== DEBUG
+    // rank 0 should wait until data comes back
     if(had_local_tasks) {
         while(_num_local_tasks > 0)
         {
-            // DBP("Waiting for local tasks to finish\n");
             usleep(1000);
         }
-        // P0: for now return after first offload
+        // P0: for now return after offloads
         stop_communication_threads();
         return CHAM_SUCCESS;
     }
-    // ===== DEBUG
 
-    // // stop threads here - actually the last thread will do that
-    // stop_communication_threads();
-
-    // ===== DEBUG
+    
     // P1: call function to recieve remote tasks
-
     while(true) {
         if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
             // only abort if load exchange has happened at least once
@@ -194,8 +259,7 @@ int32_t chameleon_distributed_taskwait() {
         usleep(1000);
     }
     stop_communication_threads();
-    // ===== DEBUG
-
+    
     // TODO: need an implicit OpenMP or MPI barrier here?
 
     return CHAM_SUCCESS;

@@ -30,12 +30,12 @@ std::list<OffloadingDataEntryTy*> _data_entries;
 // these can either be executed here or offloaded to a different rank
 std::mutex _mtx_local_tasks;
 std::list<TargetTaskEntryTy*> _local_tasks;
-int32_t _num_local_tasks = 0;
+int32_t _num_local_tasks_outstanding = 0;
 
 // list with stolen task entries that should be executed
 std::mutex _mtx_stolen_remote_tasks;
 std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
-int32_t _num_stolen_tasks = 0;
+int32_t _num_stolen_tasks_outstanding = 0;
 
 // list with stolen task entries that need output data transfer
 std::mutex _mtx_stolen_remote_tasks_send_back;
@@ -45,14 +45,20 @@ std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 std::mutex _mtx_offload_entries;
 std::list<OffloadEntryTy*> _offload_entries;
 
-// Counter what needs to be done locally
-std::mutex _mtx_outstanding_local_jobs;
-int32_t _outstanding_local_jobs = 0;
+// ====== Info about outstanding jobs (local & stolen) ======
+// extern std::mutex _mtx_outstanding_jobs;
+std::vector<int32_t> _outstanding_jobs_ranks;
+int32_t _outstanding_jobs_local;
+int32_t _outstanding_jobs_sum;
+// ====== Info about real load that is open or is beeing processed ======
+// extern std::mutex _mtx_load_info;
+std::vector<int32_t> _load_info_ranks;
+int32_t _load_info_local;
+int32_t _load_info_sum;
+// for now use a single mutex for box info
+std::mutex _mtx_load_exchange;
 
-std::mutex _mtx_complete_load_info;
-int32_t *_complete_load_info;
-int32_t _sum_complete_load_info = 0;
-
+// === Constants
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
 // ============== Thread Section ===========
@@ -255,6 +261,12 @@ short pin_thread_to_last_core() {
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
     DBP("offload_task_to_rank (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
+
+    _mtx_load_exchange.lock();
+    _load_info_local--;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+
     // explicitly make threads joinable to be portable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -333,10 +345,10 @@ void* thread_offload_action(void *arg) {
     }
 
     // decrement counter if offloading + receiving results finished
-    _mtx_local_tasks.lock();
-    _num_local_tasks--;
-    trigger_local_load_update();
-    _mtx_local_tasks.unlock();
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding--;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
 
     DBP("thread_offload_action (exit)\n");
 
@@ -554,9 +566,13 @@ void* receive_remote_tasks(void* arg) {
         // add task to stolen list and increment counter
         _mtx_stolen_remote_tasks.lock();
         _stolen_remote_tasks.push_back(task);
-        _num_stolen_tasks++;
-        trigger_local_load_update();
         _mtx_stolen_remote_tasks.unlock();
+
+        _mtx_load_exchange.lock();
+        _num_stolen_tasks_outstanding++;
+        _load_info_local++;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
     }
 }
 
@@ -574,19 +590,25 @@ void* send_back_mapped_data(void *arg) {
     MPI_Status status_out;
     int request_created = 0;
 
+    int transported_load_values[2];
+    int * buffer_load_values = (int*) malloc(sizeof(int)*2*chameleon_comm_size);
+
     DBP("send_back_mapped_data (enter)\n");
     while(true) {
         TargetTaskEntryTy* cur_task = nullptr;
+
+        // ================= Load / Outstanding Jobs Section =================
         // exchange work load here before reaching the abort section
         // this is a collective call and needs to be performed at least once
 
         // avoid overwriting request or keep it up to date?
         // not 100% sure if overwriting a request is a bad idea or makes any problems in MPI
         if(!request_created) {
-            _mtx_outstanding_local_jobs.lock();
-            int tmp_outstanding = _outstanding_local_jobs;
-            _mtx_outstanding_local_jobs.unlock();
-            MPI_Iallgather(&tmp_outstanding, 1, MPI_INT, _complete_load_info, 1, MPI_INT, chameleon_comm_load, &request_out);
+            _mtx_load_exchange.lock();
+            transported_load_values[0] = _outstanding_jobs_local;
+            transported_load_values[1] = _load_info_local;
+            _mtx_load_exchange.unlock();
+            MPI_Iallgather(&transported_load_values[0], 2, MPI_INT, buffer_load_values, 2, MPI_INT, chameleon_comm_load, &request_out);
             request_created = 1;
         }
 
@@ -595,13 +617,18 @@ void* send_back_mapped_data(void *arg) {
         if(flag_request_avail) {
             // sum up that stuff
             // DBP("send_back_mapped_data - gathered new load info\n");
-            int32_t sum = 0;
+            int32_t sum_outstanding = 0;
+            int32_t sum_load = 0;
             for(int j = 0; j < chameleon_comm_size; j++) {
-                // DBP("load info from rank %d = %d\n", j, _complete_load_info[j]);
-                sum += _complete_load_info[j];
+                _outstanding_jobs_ranks[j]  = buffer_load_values[j*2];
+                _load_info_ranks[j]         = buffer_load_values[(j*2)+1];
+                sum_outstanding             += _outstanding_jobs_ranks[j];
+                sum_load                    += _load_info_ranks[j];
+                // DBP("load info from rank %d = %d\n", j, _load_info_ranks[j]);
             }
-            _sum_complete_load_info = sum;
-            // DBP("complete summed load = %d\n", _sum_complete_load_info);
+            _outstanding_jobs_sum           = sum_outstanding;
+            _load_info_sum                  = sum_load;
+            // DBP("complete summed load = %d\n", _load_info_sum);
             // set flag that exchange has happend
             if(!_comm_thread_load_exchange_happend)
                 _comm_thread_load_exchange_happend = 1;
@@ -612,10 +639,32 @@ void* send_back_mapped_data(void *arg) {
         // check whether to abort thread
         if(_flag_abort_threads) {
             DBP("send_back_mapped_data (abort)\n");
+            free(buffer_load_values);
             int ret_val = 0;
             pthread_exit(&ret_val);
         }
 
+        // ================= Offloading Section =================
+        // only check for offloading if enough local tasks available and exchange has happend at least once
+        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 0) {
+            
+            // TODO: Strategies for speculative load exchange
+            // If we find a rank with load = 0 ==> offload directly
+            // Should we look for the minimum? Might be a critical part of the program because several ranks might offload to that rank
+            // Just offload if there is a certain difference between min and max load to avoid unnecessary offloads
+            // Sorted approach: rank with highest load should offload to rank with minimal load
+            // Be careful about balance between computational complexity and value
+
+            // int cur_threshold_tasks_overall = 3;
+
+            // check other ranks whether there is a rank with low load; start at current position
+            // for(int k = 1; k < chameleon_comm_size; k++) {
+            //     int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
+
+            // }
+        }
+
+        // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
             usleep(10);
             continue;
@@ -653,18 +702,18 @@ void* send_back_mapped_data(void *arg) {
         MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
         free(buff);
 
-        _mtx_stolen_remote_tasks.lock();
-        _num_stolen_tasks--;
-        trigger_local_load_update();
-        _mtx_stolen_remote_tasks.unlock();
+        _mtx_load_exchange.lock();
+        _num_stolen_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
     }
 }
 
-void trigger_local_load_update() {
-    _mtx_outstanding_local_jobs.lock();
-    _outstanding_local_jobs = _num_local_tasks + _num_stolen_tasks;
-    DBP("trigger_local_load_update - current oustanding tasks: %d\n", _outstanding_local_jobs);
-    _mtx_outstanding_local_jobs.unlock();
+void trigger_update_outstanding() {
+    // _mtx_load_exchange.lock();
+    _outstanding_jobs_local = _num_local_tasks_outstanding + _num_stolen_tasks_outstanding;
+    DBP("trigger_update_outstanding - current oustanding jobs: %d, current_local_load = %d\n", _outstanding_jobs_local, _load_info_local);
+    // _mtx_load_exchange.unlock();
 }
 
 void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {

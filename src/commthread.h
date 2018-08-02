@@ -30,12 +30,12 @@ extern std::list<OffloadingDataEntryTy*> _data_entries;
 // these can either be executed here or offloaded to a different rank
 extern std::mutex _mtx_local_tasks;
 extern std::list<TargetTaskEntryTy*> _local_tasks;
-extern int32_t _num_local_tasks;
+extern int32_t _num_local_tasks_outstanding;
 
 // list with stolen task entries that should be executed
 extern std::mutex _mtx_stolen_remote_tasks;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
-extern int32_t _num_stolen_tasks;
+extern int32_t _num_stolen_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
 extern std::mutex _mtx_stolen_remote_tasks_send_back;
@@ -45,13 +45,18 @@ extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 extern std::mutex _mtx_offload_entries;
 extern std::list<OffloadEntryTy*> _offload_entries;
 
-// counter what needs to be done locally
-extern std::mutex _mtx_outstanding_local_jobs;
-extern int32_t _outstanding_local_jobs;
-
-extern std::mutex _mtx_complete_load_info;
-extern int32_t *_complete_load_info;
-extern int32_t _sum_complete_load_info;
+// ====== Info about outstanding jobs (local & stolen) ======
+// extern std::mutex _mtx_outstanding_jobs;
+extern std::vector<int32_t> _outstanding_jobs_ranks;
+extern int32_t _outstanding_jobs_local;
+extern int32_t _outstanding_jobs_sum;
+// ====== Info about real load that is open or is beeing processed ======
+// extern std::mutex _mtx_load_info;
+extern std::vector<int32_t> _load_info_ranks;
+extern int32_t _load_info_local;
+extern int32_t _load_info_sum;
+// for now use a single mutex for box info
+extern std::mutex _mtx_load_exchange;
 
 // Threading section
 extern int _comm_thread_load_exchange_happend;
@@ -74,7 +79,7 @@ int32_t start_communication_threads();
 
 int32_t stop_communication_threads();
 
-void trigger_local_load_update();
+void trigger_update_outstanding();
 
 #ifdef __cplusplus
 }

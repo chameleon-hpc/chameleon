@@ -21,7 +21,7 @@ extern "C" {
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
 int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
-int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
+// int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
 int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_remote_task();
 
@@ -66,13 +66,16 @@ int32_t chameleon_init() {
 
     DBP("chameleon_init\n");
 
-    _mtx_complete_load_info.lock();
-    _complete_load_info = (int32_t *) malloc(sizeof(int32_t) * chameleon_comm_size);
+    _mtx_load_exchange.lock();
+    _outstanding_jobs_ranks.resize(chameleon_comm_size);
+    _load_info_ranks.resize(chameleon_comm_size);
     for(int i = 0; i < chameleon_comm_size; i++) {
-        _complete_load_info[i] = 0;
+        _outstanding_jobs_ranks[i] = 0;
+        _load_info_ranks[i] = 0;
     }
-    _sum_complete_load_info = 0;
-    _mtx_complete_load_info.unlock();
+    _outstanding_jobs_sum = 0;
+    _load_info_sum = 0;
+    _mtx_load_exchange.unlock();
 
     // dummy target region to force binary loading, use host offloading for that purpose
     // #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
@@ -109,25 +112,23 @@ int32_t chameleon_finalize() {
 
 //     // start communication threads here
 //     start_communication_threads();
-
-//     bool had_local_tasks = !_local_tasks.empty();
     
 //     // as long as there are local tasks run this loop
 //     while(true) {
 //         int32_t res = CHAM_SUCCESS;
-//         // // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
-//         // if(!_stolen_remote_tasks.empty()) {
-//         //     res = process_remote_task();
-//         //     // if task has been executed successfully start from beginning
-//         //     if(res == CHAM_REMOTE_TASK_SUCCESS)
-//         //         continue;
-//         // }
+//         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
+//         if(!_stolen_remote_tasks.empty()) {
+//             res = process_remote_task();
+//             // if task has been executed successfully start from beginning
+//             if(res == CHAM_REMOTE_TASK_SUCCESS)
+//                 continue;
+//         }
 
-//         // // ========== Prio 2: check whether to abort procedure
-//         // if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
-//         //     // only abort if load exchange has happened at least once
-//         //     break;
-//         // }
+//         // ========== Prio 2: check whether to abort procedure
+//         //only abort if load exchange has happened at least once and there are no outstanding jobs left
+//         if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
+//             break;
+//         }
 
 //         // ========== Prio 3: work on local tasks
 //         if(!_local_tasks.empty()) {
@@ -137,64 +138,24 @@ int32_t chameleon_finalize() {
 //                 continue;
 //             }
             
-//             // if(cur_task) {
-//             //     // perform lookup in both cases (local execution & offload)
-//             //     lookup_hst_pointers(cur_task);
-//             //     // execute region now
-//             //     res = execute_target_task(cur_task);
-                
-//             //     // it is save to decrement counter after local execution
-//             //     _mtx_local_tasks.lock();
-//             //     _num_local_tasks--;
-//             //     trigger_local_load_update();
-//             //     _mtx_local_tasks.unlock();
-//             // }
-
-//             // DEBUG: force offloading to test MPI communication process (will be done by comm thread later)
 //             if(cur_task) {
-//                 // create temp entry and offload
-//                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
-//                 res = offload_task_to_rank(off_entry);
+//                 // perform lookup in both cases (local execution & offload)
+//                 lookup_hst_pointers(cur_task);
+//                 // execute region now
+//                 res = execute_target_task(cur_task);
+                
+//                 // it is save to decrement counter after local execution
+//                 _mtx_load_exchange.lock();
+//                 _num_local_tasks_outstanding--;
+//                 _load_info_local--;
+//                 trigger_update_outstanding();
+//                 _mtx_load_exchange.unlock();
 //             }
-//             // ===== DEBUG
-//         }
-//         else {
-//             break;
 //         }
 //     }
 
-//     // ===== DEBUG
-//     if(had_local_tasks) {
-//         while(_num_local_tasks > 0)
-//         {
-//             // DBP("Waiting for local tasks to finish\n");
-//             usleep(1000);
-//         }
-//         // P0: for now return after first offload
-//         stop_communication_threads();
-//         return CHAM_SUCCESS;
-//     }
-//     // ===== DEBUG
-
-//     // // stop threads here - actually the last thread will do that
-//     // stop_communication_threads();
-
-//     // ===== DEBUG
-//     // P1: call function to recieve remote tasks
-
-//     while(true) {
-//         if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
-//             // only abort if load exchange has happened at least once
-//             break;
-//         }
-//         if(!_stolen_remote_tasks.empty()) {
-//             int32_t res = process_remote_task();
-//         }
-//         // sleep for 1 ms
-//         usleep(1000);
-//     }
+//     // stop threads here - actually the last thread will do that
 //     stop_communication_threads();
-//     // ===== DEBUG
 
 //     // TODO: need an implicit OpenMP or MPI barrier here?
 
@@ -236,7 +197,7 @@ int32_t chameleon_distributed_taskwait() {
 
     // rank 0 should wait until data comes back
     if(had_local_tasks) {
-        while(_num_local_tasks > 0)
+        while(_num_local_tasks_outstanding > 0)
         {
             usleep(1000);
         }
@@ -248,8 +209,8 @@ int32_t chameleon_distributed_taskwait() {
     
     // P1: call function to recieve remote tasks
     while(true) {
-        if(_comm_thread_load_exchange_happend && _sum_complete_load_info == 0) {
-            // only abort if load exchange has happened at least once
+        // only abort if load exchange has happened at least once and there are no outstanding jobs left
+        if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
             break;
         }
         if(!_stolen_remote_tasks.empty()) {
@@ -301,9 +262,13 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     _mtx_local_tasks.lock();
     // add to queue
     _local_tasks.push_back(task);
-    _num_local_tasks++;
-    trigger_local_load_update();
     _mtx_local_tasks.unlock();
+
+    _mtx_load_exchange.lock();
+    _load_info_local++;
+    _num_local_tasks_outstanding++;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
 
     return CHAM_SUCCESS;
 }
@@ -393,18 +358,18 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
     return CHAM_SUCCESS;
 }
 
-int32_t add_offload_entry(TargetTaskEntryTy *task, int rank) {
-    DBP("add_offload_entry (enter) - task_entry: " DPxMOD ", rank: %d\n", DPxPTR(task->tgt_entry_ptr), rank);
-    // create new entry
-    OffloadEntryTy *new_entry = new OffloadEntryTy(task, rank);
+// int32_t add_offload_entry(TargetTaskEntryTy *task, int rank) {
+//     DBP("add_offload_entry (enter) - task_entry: " DPxMOD ", rank: %d\n", DPxPTR(task->tgt_entry_ptr), rank);
+//     // create new entry
+//     OffloadEntryTy *new_entry = new OffloadEntryTy(task, rank);
 
-    // save in list
-    _mtx_offload_entries.lock();
-    _offload_entries.push_back(new_entry);
-    _mtx_offload_entries.unlock();
+//     // save in list
+//     _mtx_offload_entries.lock();
+//     _offload_entries.push_back(new_entry);
+//     _mtx_offload_entries.unlock();
 
-    return CHAM_SUCCESS;
-}
+//     return CHAM_SUCCESS;
+// }
 
 int32_t execute_target_task(TargetTaskEntryTy *task) {
     DBP("execute_target_task (enter) - task_entry: " DPxMOD "\n", DPxPTR(task->tgt_entry_ptr));
@@ -474,17 +439,23 @@ inline int32_t process_remote_task() {
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - remote");
 
+    // decrement load counter
+    _mtx_load_exchange.lock();
+    _load_info_local--;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+
     if(remote_task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
         _mtx_stolen_remote_tasks_send_back.lock();
         _stolen_remote_tasks_send_back.push_back(remote_task);
         _mtx_stolen_remote_tasks_send_back.unlock();
     } else {
-        // we can now decrement the counter because there is nothing to send back
-        _mtx_stolen_remote_tasks.lock();
-        _num_stolen_tasks--;
-        trigger_local_load_update();
-        _mtx_stolen_remote_tasks.unlock();
+        // we can now decrement outstanding counter because there is nothing to send back
+        _mtx_load_exchange.lock();
+        _num_stolen_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
     }
 
     return CHAM_REMOTE_TASK_SUCCESS;

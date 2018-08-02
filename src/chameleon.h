@@ -115,6 +115,7 @@ struct TargetTaskEntryTy {
     // and freeing of entries in data entry table
     std::vector<void *> arg_tgt_pointers;
     std::vector<ptrdiff_t> arg_tgt_offsets;
+    // currently these are not used at all because they are irrelevant for the execution
     std::vector<void *> arg_tgt_converted_pointers;
 
     // Some special settings for stolen tasks
@@ -160,6 +161,7 @@ struct TargetTaskEntryTy {
         arg_hst_pointers.resize(num_args);
         arg_sizes.resize(num_args);
         arg_types.resize(num_args);
+        arg_tgt_offsets.resize(num_args);
     }
 
     int HasAtLeastOneOutput();

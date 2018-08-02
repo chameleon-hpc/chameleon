@@ -351,8 +351,9 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     //      3. offset of entry point inside image
     //      4. number of arguments = int32_t
     //      5. array with argument types = n_args * int64_t
-    //      6. array with length of argument pointers = n_args * int64_t
-    //      7. array with values
+    //      6. array with argument offsets = n_args * int64_t
+    //      7. array with length of argument pointers = n_args * int64_t
+    //      8. array with values
 
     // TODO: Is it worth while to consider MPI packed data types??
 
@@ -361,7 +362,8 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
         + sizeof(ptrdiff_t)                     // 3. offset inside image
         + sizeof(int32_t)                       // 4. number of arguments
         + task->arg_num * sizeof(int64_t)       // 5. argument sizes
-        + task->arg_num * sizeof(int64_t);      // 6. argument types
+        + task->arg_num * sizeof(ptrdiff_t)     // 6. offsets
+        + task->arg_num * sizeof(int64_t);      // 7. argument types
 
     for(int i = 0; i < task->arg_num; i++) {
         total_size += task->arg_sizes[i];
@@ -391,11 +393,15 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     memcpy(cur_ptr, &(task->arg_sizes[0]), task->arg_num * sizeof(int64_t));
     cur_ptr += task->arg_num * sizeof(int64_t);
 
-    // 6. argument types
+    // 6. offsets
+    memcpy(cur_ptr, &(task->arg_tgt_offsets[0]), task->arg_num * sizeof(ptrdiff_t));
+    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
+
+    // 7. argument types
     memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
     cur_ptr += task->arg_num * sizeof(int64_t);
 
-    // 7. loop through arguments and copy values
+    // 8. loop through arguments and copy values
     for(int32_t i = 0; i < task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
@@ -455,10 +461,14 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
     cur_ptr += task->arg_num * sizeof(int64_t);
 
     // 6. argument types
+    memcpy(&(task->arg_tgt_offsets[0]), cur_ptr, task->arg_num * sizeof(ptrdiff_t));
+    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
+
+    // 7. offsets
     memcpy(&(task->arg_types[0]), cur_ptr, task->arg_num * sizeof(int64_t));
     cur_ptr += task->arg_num * sizeof(int64_t);
 
-    // 5. loop through arguments and copy values
+    // 8. loop through arguments and copy values
     for(int32_t i = 0; i < task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
@@ -472,7 +482,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
             void * new_mem = malloc(task->arg_sizes[i]);
             memcpy(new_mem, cur_ptr, task->arg_sizes[i]);
             // set pointer to memory in list
-            task->arg_hst_pointers[i] = new_mem;
+            // additionally we have to consider the offsets here
+            task->arg_hst_pointers[i] = (void *)((intptr_t)new_mem + task->arg_tgt_offsets[i]);
         }
         
         print_arg_info("decode_send_buffer", task, i);
@@ -622,18 +633,20 @@ void* send_back_mapped_data(void *arg) {
                 tmp_size_buff += cur_task->arg_sizes[i];
             }
         }
+        DBP("send_back_mapped_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
         // allocate memory
         void * buff = malloc(tmp_size_buff);
         char* cur_ptr = (char*)buff;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                // TODO: debug print for argument
-                memcpy(cur_ptr, cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i]);
+                print_arg_info("send_back_mapped_data", cur_task, i);
+                // substract offset again to transport correct values
+                void * ptr_w_offset = (void *)((intptr_t)cur_task->arg_hst_pointers[i] - cur_task->arg_tgt_offsets[i]);
+                memcpy(cur_ptr, ptr_w_offset, cur_task->arg_sizes[i]);
                 cur_ptr += cur_task->arg_sizes[i];
             }
         }
         // initiate blocking send
-        DBP("send_back_mapped_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
         MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
         free(buff);
 
@@ -656,13 +669,12 @@ void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {
     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
     int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
 
-    // DBP("%s - arg: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
-    DBP("%s - arg: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
+    DBP("%s - arg: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
             prefix.c_str(),
             DPxPTR(task->arg_hst_pointers[idx]), 
             task->arg_sizes[idx],
             task->arg_types[idx],
-            // task->arg_tgt_offsets[idx],
+            task->arg_tgt_offsets[idx],
             is_lit,
             is_from);
 }
@@ -672,14 +684,13 @@ void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx) 
     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
     int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
 
-    // DBP("%s - arg_tgt: " DPxMOD ", arg_hst: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
-    DBP("%s - arg_tgt: " DPxMOD ", arg_hst: " DPxMOD ", size: %ld, type: %ld, literal: %d, from: %d\n", 
+    DBP("%s - arg_tgt: " DPxMOD ", arg_hst: " DPxMOD ", size: %ld, type: %ld, offset: %ld, literal: %d, from: %d\n", 
             prefix.c_str(),
             DPxPTR(task->arg_tgt_pointers[idx]), 
             DPxPTR(task->arg_hst_pointers[idx]), 
             task->arg_sizes[idx],
             task->arg_types[idx],
-            // task->arg_tgt_offsets[idx],
+            task->arg_tgt_offsets[idx],
             is_lit,
             is_from);
 }

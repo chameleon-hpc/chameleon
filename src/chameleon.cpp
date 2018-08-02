@@ -268,7 +268,6 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
         // get type and pointer
         int64_t tmp_type    = task->arg_types[i];
         void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
-        // void * tmp_tgt_ptr  = task->arg_tgt_converted_pointers[i];
         int is_lit      = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
 
@@ -362,11 +361,9 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         // int64_t is_from         = (tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM);
         // int64_t is_prt_obj      = (tmp_type & CHAM_OMP_TGT_MAPTYPE_PTR_AND_OBJ);
         
-        // ptrs[i] = (void*) ((intptr_t)task->arg_hst_pointers[i] + task->arg_tgt_offsets[i]);
         ptrs[i] = task->arg_hst_pointers[i];
         args[i] = &ptrs[i];
         
-        // // ptrs[i] = task->arg_tgt_converted_pointers[i];
         // if(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
         //     // no need to do anything because it is by value
         //     args[i] = &ptrs[i];

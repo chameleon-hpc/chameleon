@@ -1,10 +1,12 @@
 #include "commthread.h"
 #include <pthread.h>
 #include <signal.h>
-
+#include <numeric>
 #include <sched.h>
 #include <hwloc.h>
 #include <omp.h>
+
+#include "cham_statistics.h"
 
 // communicator for remote task requests
 MPI_Comm chameleon_comm;
@@ -77,10 +79,25 @@ int                 _th_receive_remote_tasks_created = 0;
 pthread_cond_t      _th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_receive_remote_tasks_mutex   = PTHREAD_MUTEX_INITIALIZER;
 
-pthread_t           _th_send_back_mapped_data;
-int                 _th_send_back_mapped_data_created = 0;
-pthread_cond_t      _th_send_back_mapped_data_cond    = PTHREAD_COND_INITIALIZER;
-pthread_mutex_t     _th_send_back_mapped_data_mutex   = PTHREAD_MUTEX_INITIALIZER;
+pthread_t           _th_service_actions;
+int                 _th_service_actions_created = 0;
+pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t     _th_service_actions_mutex   = PTHREAD_MUTEX_INITIALIZER;
+
+
+template <typename T>
+std::vector<size_t> sort_indexes(const std::vector<T> &v) {
+
+  // initialize original index locations
+  std::vector<size_t> idx(v.size());
+  std::iota(idx.begin(), idx.end(), 0);
+
+  // sort indexes based on comparing values in v
+  std::sort(idx.begin(), idx.end(),
+       [&v](size_t i1, size_t i2) {return v[i1] < v[i2];});
+
+  return idx;
+}
 
 #ifdef __cplusplus
 extern "C" {
@@ -105,6 +122,10 @@ int32_t start_communication_threads() {
         return CHAM_SUCCESS;
     }
 
+#if CHAM_STATS_RECORD
+    cham_stats_init_stats();
+#endif
+
     DBP("start_communication_threads (enter)\n");
     // set flag to avoid that threads are directly aborting
     _flag_abort_threads = 0;
@@ -120,9 +141,9 @@ int32_t start_communication_threads() {
     err = pthread_create(&_th_receive_remote_tasks, &attr, receive_remote_tasks, NULL);
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_receive_remote_tasks");
-    err = pthread_create(&_th_send_back_mapped_data, &attr, send_back_mapped_data, NULL);
+    err = pthread_create(&_th_service_actions, &attr, service_thread_action, NULL);
     if(err != 0)
-        handle_error_en(err, "pthread_create - _th_send_back_mapped_data");
+        handle_error_en(err, "pthread_create - _th_service_actions");
     
     // wait for finished thread creation
     pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
@@ -131,11 +152,11 @@ int32_t start_communication_threads() {
     }
     pthread_mutex_unlock(&_th_receive_remote_tasks_mutex);
 
-    pthread_mutex_lock(&_th_send_back_mapped_data_mutex);
-    while (_th_send_back_mapped_data_created == 0) {
-        pthread_cond_wait(&_th_send_back_mapped_data_cond, &_th_send_back_mapped_data_mutex);
+    pthread_mutex_lock(&_th_service_actions_mutex);
+    while (_th_service_actions_created == 0) {
+        pthread_cond_wait(&_th_service_actions_cond, &_th_service_actions_mutex);
     }
-    pthread_mutex_unlock(&_th_send_back_mapped_data_mutex);
+    pthread_mutex_unlock(&_th_service_actions_mutex);
 
     // set flag to ensure that only a single thread is creating communication threads
     _comm_threads_started = 1;
@@ -168,8 +189,8 @@ int32_t stop_communication_threads() {
     // then wait for all threads to finish
     err = pthread_join(_th_receive_remote_tasks, NULL);
     if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_receive_remote_tasks");
-    err = pthread_join(_th_send_back_mapped_data, NULL);
-    if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_send_back_mapped_data");
+    err = pthread_join(_th_service_actions, NULL);
+    if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_service_actions");
 
     // should be save to reset flags and counters here
     _comm_threads_started = 0;
@@ -178,7 +199,11 @@ int32_t stop_communication_threads() {
     _global_offload_counter = 0;
 
     _th_receive_remote_tasks_created = 0;
-    _th_send_back_mapped_data_created = 0;
+    _th_service_actions_created = 0;
+
+#if CHAM_STATS_RECORD && CHAM_STATS_PRINT
+    cham_stats_print_stats();
+#endif
     DBP("stop_communication_threads (exit)\n");
     _mtx_comm_threads_ended.unlock();    
     return CHAM_SUCCESS;
@@ -283,6 +308,11 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     // } else {
         // ...
     // }
+
+    _mtx_num_tasks_offloaded.lock();
+    _num_tasks_offloaded++;
+    _mtx_num_tasks_offloaded.unlock();
+
     DBP("offload_task_to_rank (exit)\n");
     return CHAM_SUCCESS;
 }
@@ -496,9 +526,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
             // need to allocate new memory
             void * new_mem = malloc(task->arg_sizes[i]);
             memcpy(new_mem, cur_ptr, task->arg_sizes[i]);
-            // set pointer to memory in list
-            // additionally we have to consider the offsets here
-            task->arg_hst_pointers[i] = (void *)((intptr_t)new_mem + task->arg_tgt_offsets[i]);
+            task->arg_hst_pointers[i] = new_mem;
         }
         
         print_arg_info("decode_send_buffer", task, i);
@@ -576,24 +604,25 @@ void* receive_remote_tasks(void* arg) {
     }
 }
 
-void* send_back_mapped_data(void *arg) {
+void* service_thread_action(void *arg) {
     pin_thread_to_last_core();
     
     // trigger signal to tell that thread is running now
-    pthread_mutex_lock( &_th_send_back_mapped_data_mutex );
-    _th_send_back_mapped_data_created = 1; 
-    pthread_cond_signal( &_th_send_back_mapped_data_cond );
-    pthread_mutex_unlock( &_th_send_back_mapped_data_mutex );
+    pthread_mutex_lock( &_th_service_actions_mutex );
+    _th_service_actions_created = 1; 
+    pthread_cond_signal( &_th_service_actions_cond );
+    pthread_mutex_unlock( &_th_service_actions_mutex );
 
     int err;
     MPI_Request request_out;
     MPI_Status status_out;
     int request_created = 0;
+    int offload_triggered = 0;
 
     int transported_load_values[2];
     int * buffer_load_values = (int*) malloc(sizeof(int)*2*chameleon_comm_size);
 
-    DBP("send_back_mapped_data (enter)\n");
+    DBP("service_thread_action (enter)\n");
     while(true) {
         TargetTaskEntryTy* cur_task = nullptr;
 
@@ -616,7 +645,7 @@ void* send_back_mapped_data(void *arg) {
         MPI_Test(&request_out, &flag_request_avail, &status_out);
         if(flag_request_avail) {
             // sum up that stuff
-            // DBP("send_back_mapped_data - gathered new load info\n");
+            // DBP("service_thread_action - gathered new load info\n");
             int32_t sum_outstanding = 0;
             int32_t sum_load = 0;
             for(int j = 0; j < chameleon_comm_size; j++) {
@@ -634,11 +663,12 @@ void* send_back_mapped_data(void *arg) {
                 _comm_thread_load_exchange_happend = 1;
             // reset flag
             request_created = 0;
+            offload_triggered = 0;
         }
 
         // check whether to abort thread
         if(_flag_abort_threads) {
-            DBP("send_back_mapped_data (abort)\n");
+            DBP("service_thread_action (abort)\n");
             free(buffer_load_values);
             int ret_val = 0;
             pthread_exit(&ret_val);
@@ -646,22 +676,61 @@ void* send_back_mapped_data(void *arg) {
 
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
-        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 0) {
+        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 0 && !offload_triggered) {
+
+            int cur_load = _load_info_ranks[chameleon_comm_rank];
             
-            // TODO: Strategies for speculative load exchange
-            // If we find a rank with load = 0 ==> offload directly
-            // Should we look for the minimum? Might be a critical part of the program because several ranks might offload to that rank
-            // Just offload if there is a certain difference between min and max load to avoid unnecessary offloads
-            // Sorted approach: rank with highest load should offload to rank with minimal load
-            // Be careful about balance between computational complexity and value
-
-            // int cur_threshold_tasks_overall = 3;
-
+            // Strategies for speculative load exchange
+            // - If we find a rank with load = 0 ==> offload directly
+            // - Should we look for the minimum? Might be a critical part of the program because several ranks might offload to that rank
+            // - Just offload if there is a certain difference between min and max load to avoid unnecessary offloads
+            // - Sorted approach: rank with highest load should offload to rank with minimal load
+            // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
+            
             // check other ranks whether there is a rank with low load; start at current position
-            // for(int k = 1; k < chameleon_comm_size; k++) {
-            //     int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
+            for(int k = 1; k < chameleon_comm_size; k++) {
+                int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
+                if(_load_info_ranks[tmp_idx] == 0) {
+                    // Direct offload if thread found that has nothing to do
+                    TargetTaskEntryTy *cur_task = chameleon_pop_task();
+                    if(cur_task == nullptr)
+                        break;
 
-            // }
+                    DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty\n", cur_load, tmp_idx);
+                    OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
+                    offload_task_to_rank(off_entry);
+                    offload_triggered = 1;
+                    break;
+                }
+            }
+
+            std::vector<size_t> tmp_sorted_idx = sort_indexes(_load_info_ranks);
+            int min_val = _load_info_ranks[tmp_sorted_idx[0]];
+            int max_val = _load_info_ranks[tmp_sorted_idx[chameleon_comm_size-1]];
+            if(max_val > min_val) {
+                // determine index
+                int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
+                // only offload if on the upper side
+                if((pos+1) >= ((double)chameleon_comm_size/2.0))
+                {
+                    int other_pos = chameleon_comm_size-pos;
+                    // need to adapt in case of even number
+                    if(chameleon_comm_size % 2 == 0)
+                        other_pos--;
+                    int other_idx = tmp_sorted_idx[other_pos];
+                    int other_val = _load_info_ranks[other_idx];
+
+                    if(other_val < cur_load) {
+                        TargetTaskEntryTy *cur_task = chameleon_pop_task();
+                        if(cur_task) {
+                            DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d\n", cur_load, other_idx, other_val);
+                            OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, other_idx);
+                            offload_task_to_rank(off_entry);
+                            offload_triggered = 1;
+                        }
+                    }
+                }
+            }
         }
 
         // ================= Sending back results for stolen tasks =================
@@ -685,16 +754,14 @@ void* send_back_mapped_data(void *arg) {
                 tmp_size_buff += cur_task->arg_sizes[i];
             }
         }
-        DBP("send_back_mapped_data - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
+        DBP("service_thread_action - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
         // allocate memory
         void * buff = malloc(tmp_size_buff);
         char* cur_ptr = (char*)buff;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                print_arg_info("send_back_mapped_data", cur_task, i);
-                // substract offset again to transport correct values
-                void * ptr_w_offset = (void *)((intptr_t)cur_task->arg_hst_pointers[i] - cur_task->arg_tgt_offsets[i]);
-                memcpy(cur_ptr, ptr_w_offset, cur_task->arg_sizes[i]);
+                print_arg_info("service_thread_action", cur_task, i);
+                memcpy(cur_ptr, cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i]);
                 cur_ptr += cur_task->arg_sizes[i];
             }
         }

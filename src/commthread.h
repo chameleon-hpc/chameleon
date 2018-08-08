@@ -73,7 +73,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry);
 
 void* receive_remote_tasks(void *arg);
 
-void* send_back_mapped_data(void *arg);
+void* service_thread_action(void *arg);
 
 int32_t start_communication_threads();
 

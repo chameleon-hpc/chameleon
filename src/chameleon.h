@@ -210,7 +210,7 @@ int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address);
 
 int32_t chameleon_finalize();
 
-int32_t chameleon_distributed_taskwait();
+int32_t chameleon_distributed_taskwait(int nowait = 0);
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
 

@@ -142,7 +142,17 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(cur_task) {
                 // execute region now
                 DBP("chameleon_distributed_taskwait - local task execution\n");
+#if CHAM_STATS_RECORD
+                double cur_time = omp_get_wtime();
+#endif
                 res = execute_target_task(cur_task);
+#if CHAM_STATS_RECORD
+                cur_time = omp_get_wtime()-cur_time;
+                _mtx_time_task_execution_local.lock();
+                _time_task_execution_local_sum += cur_time;
+                _time_task_execution_local_count++;
+                _mtx_time_task_execution_local.unlock();
+#endif
                 
                 // it is save to decrement counter after local execution
                 _mtx_load_exchange.lock();
@@ -151,9 +161,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 trigger_update_outstanding();
                 _mtx_load_exchange.unlock();
 
+#if CHAM_STATS_RECORD
                 _mtx_num_executed_tasks_local.lock();
                 _num_executed_tasks_local++;
                 _mtx_num_executed_tasks_local.unlock();
+#endif
             }
         }
     }
@@ -430,7 +442,17 @@ inline int32_t process_remote_task() {
     _mtx_stolen_remote_tasks.unlock();
 
     // execute region now
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime();
+#endif
     int32_t res = execute_target_task(remote_task);
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    _mtx_time_task_execution_stolen.lock();
+    _time_task_execution_stolen_sum += cur_time;
+    _time_task_execution_stolen_count++;
+    _mtx_time_task_execution_stolen.unlock();
+#endif
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - remote");
 
@@ -453,9 +475,11 @@ inline int32_t process_remote_task() {
         _mtx_load_exchange.unlock();
     }
 
+#if CHAM_STATS_RECORD
     _mtx_num_executed_tasks_stolen.lock();
     _num_executed_tasks_stolen++;
     _mtx_num_executed_tasks_stolen.unlock();
+#endif
 
     return CHAM_REMOTE_TASK_SUCCESS;
 }

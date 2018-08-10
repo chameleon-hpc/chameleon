@@ -6,6 +6,10 @@
 #include "commthread.h"
 #include "cham_statistics.h"
 
+#ifdef TRACE
+#include "VT.h"
+#endif
+
 int TargetTaskEntryTy::HasAtLeastOneOutput() {
     for(int i = 0; i < this->arg_num; i++) {
         if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
@@ -108,6 +112,16 @@ int32_t chameleon_finalize() {
 }
 
 int32_t chameleon_distributed_taskwait(int nowait) {
+#ifdef TRACE
+    static int event_process_remote = -1;
+    static const std::string event_process_remote_name = "process_remote";
+    if( event_process_remote == -1) 
+        int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
+    static int event_process_local = -1;
+    static const std::string event_process_local_name = "process_local";
+    if( event_process_local == -1)
+        int ierr = VT_funcdef(event_process_local_name.c_str(), VT_NOCLASS, &event_process_local);
+#endif
     DBP("chameleon_distributed_taskwait (enter)\n");
     verify_initialized();
 
@@ -119,7 +133,13 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         int32_t res = CHAM_SUCCESS;
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
+#ifdef TRACE
+            VT_begin(event_process_remote);
+#endif
             res = process_remote_task();
+#ifdef TRACE
+            VT_end(event_process_remote);
+#endif
             // if task has been executed successfully start from beginning
             if(res == CHAM_REMOTE_TASK_SUCCESS)
                 continue;
@@ -142,8 +162,13 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(cur_task) {
                 // execute region now
                 DBP("chameleon_distributed_taskwait - local task execution\n");
+#ifdef TRACE
+            VT_begin(event_process_local);
+#endif
                 res = execute_target_task(cur_task);
-                
+#ifdef TRACE
+            VT_end(event_process_local);
+#endif                
                 // it is save to decrement counter after local execution
                 _mtx_load_exchange.lock();
                 _num_local_tasks_outstanding--;
@@ -168,8 +193,17 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     return CHAM_SUCCESS;
 }
 
-// // !!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
-// int32_t chameleon_distributed_taskwait() {
+  //!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
+// int32_t chameleon_distributed_taskwait(int nowait) {
+//#ifdef TRACE
+//    static int event_process_remote = -1;
+//    static const std::string event_process_remote_name = "process_remote";
+//    if(event_process_remote == -1) {
+//        int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
+//        if(ierr!=VT_OK)
+//            handle_error_en(ierr, "generate tracing event");
+//    } 
+//#endif
 //     DBP("chameleon_distributed_taskwait (enter)\n");
 //     verify_initialized();
 
@@ -177,11 +211,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 //     start_communication_threads();
 
 //     bool had_local_tasks = !_local_tasks.empty();
-    
+//    
 //     // as long as there are local tasks run this loop
 //     while(true) {
 //         int32_t res = CHAM_SUCCESS;
-        
+//        
 //         // ========== Prio 3: work on local tasks
 //         if(!_local_tasks.empty()) {
 //             TargetTaskEntryTy *cur_task = chameleon_pop_task();
@@ -212,7 +246,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 //         return CHAM_SUCCESS;
 //     }
 
-    
+//    
 //     // P1: call function to recieve remote tasks
 //     while(true) {
 //         // only abort if load exchange has happened at least once and there are no outstanding jobs left
@@ -220,13 +254,19 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 //             break;
 //         }
 //         if(!_stolen_remote_tasks.empty()) {
+//#ifdef TRACE
+//             VT_begin(event_process_remote);
+//#endif
 //             int32_t res = process_remote_task();
+//#ifdef TRACE
+//             VT_end(event_process_remote);
+//#endif
 //         }
 //         // sleep for 1 ms
 //         usleep(1000);
 //     }
 //     stop_communication_threads();
-    
+//    
 //     // TODO: need an implicit OpenMP or MPI barrier here?
 
 //     return CHAM_SUCCESS;

@@ -5,8 +5,13 @@
 #include <sched.h>
 #include <hwloc.h>
 #include <omp.h>
+#include <algorithm>
 
 #include "cham_statistics.h"
+
+#ifdef TRACE
+#include "VT.h"
+#endif 
 
 // communicator for remote task requests
 MPI_Comm chameleon_comm;
@@ -284,6 +289,13 @@ short pin_thread_to_last_core() {
 #pragma endregion Start/Stop/Pin Communication Threads
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
+#ifdef TRACE
+    static int event_offload = -1;
+    std::string event_offload_name = "offload_task";
+    if(event_offload == -1) 
+        int ierr = VT_funcdef(event_offload_name.c_str(), VT_NOCLASS, &event_offload);
+    VT_begin(event_offload);
+#endif 
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
     DBP("offload_task_to_rank (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
 
@@ -314,11 +326,21 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     _mtx_num_tasks_offloaded.unlock();
 
     DBP("offload_task_to_rank (exit)\n");
+#ifdef TRACE
+    VT_end(event_offload);
+#endif
     return CHAM_SUCCESS;
 }
 
 // This should run in a single pthread because it should be blocking
 void* thread_offload_action(void *arg) {
+#ifdef TRACE
+    static int event_offload_action = -1;
+    std::string event_offload_action_name = "offload_action";
+    if(event_offload_action == -1) 
+        int ierr = VT_funcdef(event_offload_action_name.c_str(), VT_NOCLASS, &event_offload_action);
+    VT_begin(event_offload_action);
+#endif 
     pin_thread_to_last_core();
 
     OffloadEntryTy *entry = (OffloadEntryTy *) arg;
@@ -381,13 +403,22 @@ void* thread_offload_action(void *arg) {
     _mtx_load_exchange.unlock();
 
     DBP("thread_offload_action (exit)\n");
-
+#ifdef TRACE
+    VT_end(event_offload_action);
+#endif
     return nullptr;
     // int ret_val = 0;
     // pthread_exit(&ret_val);
 }
 
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
+#ifdef TRACE
+    static int event_encode = -1;
+    std::string event_encode_name = "encode";
+    if(event_encode == -1) 
+        int ierr = VT_funcdef(event_encode_name.c_str(), VT_NOCLASS, &event_encode);
+    VT_begin(event_encode);
+#endif 
     DBP("encode_send_buffer (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
 
     // FORMAT:
@@ -464,10 +495,20 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 
     // set output size
     *buffer_size = total_size;
+#ifdef TRACE
+    VT_end(event_encode);
+#endif
     return buff;    
 }
 
 TargetTaskEntryTy* decode_send_buffer(void * buffer) {
+#ifdef TRACE
+    static int event_decode = -1;
+    std::string event_decode_name = "decode";
+    if(event_decode == -1) 
+        int ierr = VT_funcdef(event_decode_name.c_str(), VT_NOCLASS, &event_decode);
+    VT_begin(event_decode);
+#endif 
     // init new task
     TargetTaskEntryTy* task = new TargetTaskEntryTy();
 
@@ -533,12 +574,21 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 
         cur_ptr += task->arg_sizes[i];
     }
-
+#ifdef TRACE
+    VT_end(event_decode);
+#endif 
     return task;
 }
 
 // should run in a single thread that is always waiting for incoming requests
 void* receive_remote_tasks(void* arg) {
+#ifdef TRACE
+    static int event_receive_tasks = -1;
+    std::string event_receive_tasks_name = "receive_tasks";
+    if(event_receive_tasks == -1) 
+        int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
+    VT_begin(event_receive_tasks);
+#endif 
     // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
     // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     pin_thread_to_last_core();
@@ -602,9 +652,19 @@ void* receive_remote_tasks(void* arg) {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
+#ifdef TRACE
+    VT_end(event_receive_tasks);
+#endif
 }
 
 void* service_thread_action(void *arg) {
+#ifdef TRACE
+    static int event_service_action = -1;
+    std::string event_service_action_name = "service_action";
+    if(event_service_action == -1) 
+        int ierr = VT_funcdef(event_service_action_name.c_str(), VT_NOCLASS, &event_service_action);
+    VT_begin(event_service_action);
+#endif 
     pin_thread_to_last_core();
     
     // trigger signal to tell that thread is running now
@@ -774,6 +834,7 @@ void* service_thread_action(void *arg) {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
+    VT_end(event_service_action);
 }
 
 void trigger_update_outstanding() {

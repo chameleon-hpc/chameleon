@@ -20,6 +20,30 @@ extern int _num_executed_tasks_stolen;
 extern std::mutex _mtx_num_tasks_offloaded;
 extern int _num_tasks_offloaded;
 
+extern std::mutex _mtx_time_task_execution_local;
+extern double _time_task_execution_local_sum;
+extern int _time_task_execution_local_count;
+
+extern std::mutex _mtx_time_task_execution_stolen;
+extern double _time_task_execution_stolen_sum;
+extern int _time_task_execution_stolen_count;
+
+extern std::mutex _mtx_time_comm_send_task;
+extern double _time_comm_send_task_sum;
+extern int _time_comm_send_task_count;
+
+extern std::mutex _mtx_time_comm_recv_task;
+extern double _time_comm_recv_task_sum;
+extern int _time_comm_recv_task_count;
+
+extern std::mutex _mtx_time_comm_back_send;
+extern double _time_comm_back_send_sum;
+extern int _time_comm_back_send_count;
+
+extern std::mutex _mtx_time_comm_back_recv;
+extern double _time_comm_back_recv_sum;
+extern int _time_comm_back_recv_count;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

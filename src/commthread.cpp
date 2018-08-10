@@ -150,12 +150,12 @@ int32_t start_communication_threads() {
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_service_actions");
     
-    // wait for finished thread creation
-    pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
-    while (_th_receive_remote_tasks_created == 0) {
-        pthread_cond_wait(&_th_receive_remote_tasks_cond, &_th_receive_remote_tasks_mutex);
-    }
-    pthread_mutex_unlock(&_th_receive_remote_tasks_mutex);
+    // // wait for finished thread creation
+    // pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
+    // while (_th_receive_remote_tasks_created == 0) {
+    //     pthread_cond_wait(&_th_receive_remote_tasks_cond, &_th_receive_remote_tasks_mutex);
+    // }
+    // pthread_mutex_unlock(&_th_receive_remote_tasks_mutex);
 
     pthread_mutex_lock(&_th_service_actions_mutex);
     while (_th_service_actions_created == 0) {
@@ -321,9 +321,11 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
         // ...
     // }
 
+#if CHAM_STATS_RECORD
     _mtx_num_tasks_offloaded.lock();
     _num_tasks_offloaded++;
     _mtx_num_tasks_offloaded.unlock();
+#endif
 
     DBP("offload_task_to_rank (exit)\n");
 #ifdef TRACE
@@ -367,17 +369,41 @@ void* thread_offload_action(void *arg) {
     // send data to target rank
     DBP("thread_offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
 
+#if CHAM_STATS_RECORD
+    double cur_time;
+    cur_time = omp_get_wtime();
+#endif
     MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    _mtx_time_comm_send_task.lock();
+    _time_comm_send_task_sum += cur_time;
+    _time_comm_send_task_count++;
+    _mtx_time_comm_send_task.unlock();
+#endif
     free(buffer);
 
     if(has_outputs) {
         DBP("thread_offload_action - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
-        // temp buffer to retreive output data from target rank to be able to update host pointers again
-        void * temp_buffer = malloc(MAX_BUFFER_SIZE_OFFLOAD_ENTRY);
         MPI_Status cur_status;
-        MPI_Recv(temp_buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, &cur_status);
+        int recv_buff_size;
 
-        DBP("thread_offload_action - receiving output data from rank %d for tag: %d\n", cur_status.MPI_SOURCE, cur_status.MPI_TAG);
+        MPI_Probe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &cur_status);
+        MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
+        // temp buffer to retreive output data from target rank to be able to update host pointers again
+        void * temp_buffer = malloc(recv_buff_size);
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime();
+#endif
+        MPI_Recv(temp_buffer, recv_buff_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, MPI_STATUS_IGNORE);
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        _mtx_time_comm_back_recv.lock();
+        _time_comm_back_recv_sum += cur_time;
+        _time_comm_back_recv_count++;
+        _mtx_time_comm_back_recv.unlock();
+#endif
+        DBP("thread_offload_action - receiving output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
         // copy results back to source pointers with memcpy
         char * cur_ptr = (char*) temp_buffer;
         for(int i = 0; i < entry->task_entry->arg_num; i++) {
@@ -407,8 +433,6 @@ void* thread_offload_action(void *arg) {
     VT_end(event_offload_action);
 #endif
     return nullptr;
-    // int ret_val = 0;
-    // pthread_exit(&ret_val);
 }
 
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
@@ -593,18 +617,18 @@ void* receive_remote_tasks(void* arg) {
     // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     pin_thread_to_last_core();
     
-    // trigger signal to tell that thread is running now
-    pthread_mutex_lock( &_th_receive_remote_tasks_mutex );
-    _th_receive_remote_tasks_created = 1; 
-    pthread_cond_signal( &_th_receive_remote_tasks_cond );
-    pthread_mutex_unlock( &_th_receive_remote_tasks_mutex );
+    // // trigger signal to tell that thread is running now
+    // pthread_mutex_lock( &_th_receive_remote_tasks_mutex );
+    // _th_receive_remote_tasks_created = 1; 
+    // pthread_cond_signal( &_th_receive_remote_tasks_cond );
+    // pthread_mutex_unlock( &_th_receive_remote_tasks_mutex );
 
     DBP("receive_remote_tasks (enter)\n");
 
     int32_t res;
     // intention to reuse buffer over and over again
     int cur_max_buff_size = MAX_BUFFER_SIZE_OFFLOAD_ENTRY;
-    void * buffer = malloc(MAX_BUFFER_SIZE_OFFLOAD_ENTRY);
+    void * buffer = malloc(cur_max_buff_size);
     int recv_buff_size = 0;
     
     while(true) {
@@ -613,7 +637,7 @@ void* receive_remote_tasks(void* arg) {
         int flag_open_request = 0;
         
         while(!flag_open_request) {
-            usleep(10);
+            usleep(5);
             // check whether thread should be aborted
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
@@ -624,6 +648,9 @@ void* receive_remote_tasks(void* arg) {
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request, &cur_status);
         }
 
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
         if(recv_buff_size > cur_max_buff_size) {
             // allocate more memory
@@ -633,8 +660,14 @@ void* receive_remote_tasks(void* arg) {
         }
 
         // now receive the data
-        res = MPI_Recv(buffer, MAX_BUFFER_SIZE_OFFLOAD_ENTRY, MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
-
+        res = MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        _mtx_time_comm_recv_task.lock();
+        _time_comm_recv_task_sum += cur_time;
+        _time_comm_recv_task_count++;
+        _mtx_time_comm_recv_task.unlock();
+#endif
         // decode task entry
         TargetTaskEntryTy *task = decode_send_buffer(buffer);
         // set information for sending back results/updates if necessary
@@ -825,8 +858,19 @@ void* service_thread_action(void *arg) {
                 cur_ptr += cur_task->arg_sizes[i];
             }
         }
+
         // initiate blocking send
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif
         MPI_Send(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped);
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        _mtx_time_comm_back_send.lock();
+        _time_comm_back_send_sum += cur_time;
+        _time_comm_back_send_count++;
+        _mtx_time_comm_back_send.unlock();
+#endif
         free(buff);
 
         _mtx_load_exchange.lock();

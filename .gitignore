@@ -1,3 +1,4 @@
 # ignore the following files
 src/libchameleon.so
 *.exe
+/.vscode

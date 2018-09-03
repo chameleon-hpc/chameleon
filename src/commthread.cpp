@@ -835,6 +835,7 @@ void* service_thread_action(void *arg) {
         _mtx_stolen_remote_tasks_send_back.lock();
         // need to check again
         if(_stolen_remote_tasks_send_back.empty()) {
+            _mtx_stolen_remote_tasks_send_back.unlock();
             continue;
         }
         cur_task = _stolen_remote_tasks_send_back.front();
@@ -878,7 +879,9 @@ void* service_thread_action(void *arg) {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
+#ifdef TRACE
     VT_end(event_service_action);
+#endif
 }
 
 void trigger_update_outstanding() {

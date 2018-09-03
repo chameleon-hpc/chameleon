@@ -478,8 +478,10 @@ inline int32_t process_remote_task() {
         
     _mtx_stolen_remote_tasks.lock();
     // for safety need to check again after lock is aquired
-    if(_stolen_remote_tasks.empty())
+    if(_stolen_remote_tasks.empty()) {
+        _mtx_stolen_remote_tasks.unlock();
         return CHAM_REMOTE_TASK_NONE;
+    }
     
     remote_task = _stolen_remote_tasks.front();
     _stolen_remote_tasks.pop_front();

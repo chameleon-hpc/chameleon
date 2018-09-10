@@ -65,6 +65,10 @@ int32_t _load_info_sum;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
 
+// only enable offloading when a task has finished on local rank (change has been made)
+std::mutex _mtx_offload_blocked;
+int32_t _offload_blocked = 0;
+
 // === Constants
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
@@ -770,8 +774,9 @@ void* service_thread_action(void *arg) {
 #if !FORCE_OFFLOAD_MASTER_WORKER
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
-        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 0 && !offload_triggered) {
+        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
 
+            if(!_offload_blocked) {
             int cur_load = _load_info_ranks[chameleon_comm_rank];
             
             // Strategies for speculative load exchange
@@ -794,36 +799,49 @@ void* service_thread_action(void *arg) {
                     OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
                     offload_task_to_rank(off_entry);
                     offload_triggered = 1;
+
+                    _mtx_offload_blocked.lock();
+                    _offload_blocked = 1;
+                    _mtx_offload_blocked.unlock();
                     break;
                 }
             }
+            // only proceed if offloading not already performed
+            if(!offload_triggered) {
+                std::vector<size_t> tmp_sorted_idx = sort_indexes(_load_info_ranks);
+                int min_val = _load_info_ranks[tmp_sorted_idx[0]];
+                int max_val = _load_info_ranks[tmp_sorted_idx[chameleon_comm_size-1]];
+                if(max_val > min_val) {
+                    // determine index
+                    int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
+                    // only offload if on the upper side
+                    if((pos+1) >= ((double)chameleon_comm_size/2.0))
+                    {
+                        int other_pos = chameleon_comm_size-pos;
+                        // need to adapt in case of even number
+                        if(chameleon_comm_size % 2 == 0)
+                            other_pos--;
+                        int other_idx = tmp_sorted_idx[other_pos];
+                        int other_val = _load_info_ranks[other_idx];
 
-            std::vector<size_t> tmp_sorted_idx = sort_indexes(_load_info_ranks);
-            int min_val = _load_info_ranks[tmp_sorted_idx[0]];
-            int max_val = _load_info_ranks[tmp_sorted_idx[chameleon_comm_size-1]];
-            if(max_val > min_val) {
-                // determine index
-                int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
-                // only offload if on the upper side
-                if((pos+1) >= ((double)chameleon_comm_size/2.0))
-                {
-                    int other_pos = chameleon_comm_size-pos;
-                    // need to adapt in case of even number
-                    if(chameleon_comm_size % 2 == 0)
-                        other_pos--;
-                    int other_idx = tmp_sorted_idx[other_pos];
-                    int other_val = _load_info_ranks[other_idx];
+                        // calculate ration between those two and just move if over a certain threshold
+                        double ratio = (double)(cur_load-other_val) / (double)cur_load;
+                        if(other_val < cur_load && ratio > 0.5) {
+                            TargetTaskEntryTy *cur_task = chameleon_pop_task();
+                            if(cur_task) {
+                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d\n", cur_load, other_idx, other_val);
+                                OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, other_idx);
+                                offload_task_to_rank(off_entry);
+                                offload_triggered = 1;
 
-                    if(other_val < cur_load) {
-                        TargetTaskEntryTy *cur_task = chameleon_pop_task();
-                        if(cur_task) {
-                            DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d\n", cur_load, other_idx, other_val);
-                            OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, other_idx);
-                            offload_task_to_rank(off_entry);
-                            offload_triggered = 1;
+                                _mtx_offload_blocked.lock();
+                                _offload_blocked = 1;
+                                _mtx_offload_blocked.unlock();
+                            }
                         }
                     }
                 }
+            }
             }
         }
 #endif

@@ -767,6 +767,7 @@ void* service_thread_action(void *arg) {
             pthread_exit(&ret_val);
         }
 
+#if !FORCE_OFFLOAD_MASTER_WORKER
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
         if(_comm_thread_load_exchange_happend && _local_tasks.size() > 0 && !offload_triggered) {
@@ -825,6 +826,7 @@ void* service_thread_action(void *arg) {
                 }
             }
         }
+#endif
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {

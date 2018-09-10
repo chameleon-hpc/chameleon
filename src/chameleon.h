@@ -81,6 +81,11 @@ enum chameleon_tgt_map_type {
   CHAM_OMP_TGT_MAPTYPE_MEMBER_OF       = 0xffff000000000000
 };
 
+enum chameleon_device_ids {
+  CHAMELEON_HOST    = 1001,
+  CHAMELEON_MPI     = 1002,
+};
+
 enum chameleon_result_types {
     CHAM_SUCCESS = 0,
     CHAM_FAILURE = 1,

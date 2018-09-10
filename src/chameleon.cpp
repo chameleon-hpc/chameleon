@@ -6,6 +6,10 @@
 #include "commthread.h"
 #include "cham_statistics.h"
 
+#ifndef FORCE_OFFLOAD_MASTER_WORKER
+#define FORCE_OFFLOAD_MASTER_WORKER 0
+#endif
+
 #ifdef TRACE
 #include "VT.h"
 #endif
@@ -111,6 +115,7 @@ int32_t chameleon_finalize() {
     return CHAM_SUCCESS;
 }
 
+#if !FORCE_OFFLOAD_MASTER_WORKER
 int32_t chameleon_distributed_taskwait(int nowait) {
 #ifdef TRACE
     static int event_process_remote = -1;
@@ -204,85 +209,86 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
     return CHAM_SUCCESS;
 }
+#else
+//!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
+int32_t chameleon_distributed_taskwait(int nowait) {
+#ifdef TRACE
+   static int event_process_remote = -1;
+   static const std::string event_process_remote_name = "process_remote";
+   if(event_process_remote == -1) {
+       int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
+       if(ierr!=VT_OK)
+           handle_error_en(ierr, "generate tracing event");
+   } 
+#endif
+    DBP("chameleon_distributed_taskwait (enter)\n");
+    verify_initialized();
 
-  //!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
-// int32_t chameleon_distributed_taskwait(int nowait) {
-//#ifdef TRACE
-//    static int event_process_remote = -1;
-//    static const std::string event_process_remote_name = "process_remote";
-//    if(event_process_remote == -1) {
-//        int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
-//        if(ierr!=VT_OK)
-//            handle_error_en(ierr, "generate tracing event");
-//    } 
-//#endif
-//     DBP("chameleon_distributed_taskwait (enter)\n");
-//     verify_initialized();
+    // start communication threads here
+    start_communication_threads();
 
-//     // start communication threads here
-//     start_communication_threads();
+    bool had_local_tasks = !_local_tasks.empty();
+   
+    // as long as there are local tasks run this loop
+    while(true) {
+        int32_t res = CHAM_SUCCESS;
+       
+        // ========== Prio 3: work on local tasks
+        if(!_local_tasks.empty()) {
+            TargetTaskEntryTy *cur_task = chameleon_pop_task();
+            if(cur_task == nullptr)
+            {
+                continue;
+            }
 
-//     bool had_local_tasks = !_local_tasks.empty();
-//    
-//     // as long as there are local tasks run this loop
-//     while(true) {
-//         int32_t res = CHAM_SUCCESS;
-//        
-//         // ========== Prio 3: work on local tasks
-//         if(!_local_tasks.empty()) {
-//             TargetTaskEntryTy *cur_task = chameleon_pop_task();
-//             if(cur_task == nullptr)
-//             {
-//                 continue;
-//             }
+            // force offloading to test MPI communication process (will be done by comm thread later)
+            if(cur_task) {
+                // create temp entry and offload
+                OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+                res = offload_task_to_rank(off_entry);
+            }
+        } else {
+            break;
+        }
+    }
 
-//             // force offloading to test MPI communication process (will be done by comm thread later)
-//             if(cur_task) {
-//                 // create temp entry and offload
-//                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
-//                 res = offload_task_to_rank(off_entry);
-//             }
-//         } else {
-//             break;
-//         }
-//     }
+    // rank 0 should wait until data comes back
+    if(had_local_tasks) {
+        while(_num_local_tasks_outstanding > 0)
+        {
+            usleep(1000);
+        }
+        // P0: for now return after offloads
+        stop_communication_threads();
+        return CHAM_SUCCESS;
+    }
 
-//     // rank 0 should wait until data comes back
-//     if(had_local_tasks) {
-//         while(_num_local_tasks_outstanding > 0)
-//         {
-//             usleep(1000);
-//         }
-//         // P0: for now return after offloads
-//         stop_communication_threads();
-//         return CHAM_SUCCESS;
-//     }
+   
+    // P1: call function to recieve remote tasks
+    while(true) {
+        // only abort if load exchange has happened at least once and there are no outstanding jobs left
+        if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
+            break;
+        }
+        if(!_stolen_remote_tasks.empty()) {
+#ifdef TRACE
+            VT_begin(event_process_remote);
+#endif
+            int32_t res = process_remote_task();
+#ifdef TRACE
+            VT_end(event_process_remote);
+#endif
+        }
+        // sleep for 1 ms
+        usleep(1000);
+    }
+    stop_communication_threads();
+   
+    // TODO: need an implicit OpenMP or MPI barrier here?
 
-//    
-//     // P1: call function to recieve remote tasks
-//     while(true) {
-//         // only abort if load exchange has happened at least once and there are no outstanding jobs left
-//         if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
-//             break;
-//         }
-//         if(!_stolen_remote_tasks.empty()) {
-//#ifdef TRACE
-//             VT_begin(event_process_remote);
-//#endif
-//             int32_t res = process_remote_task();
-//#ifdef TRACE
-//             VT_end(event_process_remote);
-//#endif
-//         }
-//         // sleep for 1 ms
-//         usleep(1000);
-//     }
-//     stop_communication_threads();
-//    
-//     // TODO: need an implicit OpenMP or MPI barrier here?
-
-//     return CHAM_SUCCESS;
-// }
+    return CHAM_SUCCESS;
+}
+#endif
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     DBP("chameleon_submit_data (enter) - tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);

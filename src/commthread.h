@@ -58,6 +58,10 @@ extern int32_t _load_info_sum;
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
 
+// only allow offloading when a task has finished on local rank
+extern std::mutex _mtx_offload_blocked;
+extern int32_t _offload_blocked;
+
 // Threading section
 extern int _comm_thread_load_exchange_happend;
 

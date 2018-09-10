@@ -87,10 +87,10 @@ int32_t chameleon_init() {
     _mtx_load_exchange.unlock();
 
     // dummy target region to force binary loading, use host offloading for that purpose
-    // #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
-    // {
-    //     DBP("chameleon_init - dummy region\n");
-    // }
+    #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
+    {
+        DBP("chameleon_init - dummy region\n");
+    }
         
     // set flag to ensure that only a single thread is initializing
     _ch_is_initialized = 1;
@@ -191,6 +191,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 _load_info_local--;
                 trigger_update_outstanding();
                 _mtx_load_exchange.unlock();
+
+                _mtx_offload_blocked.lock();
+                _offload_blocked = 0;
+                _mtx_offload_blocked.unlock();
+
 #if CHAM_STATS_RECORD
                 _mtx_num_executed_tasks_local.lock();
                 _num_executed_tasks_local++;
@@ -512,6 +517,10 @@ inline int32_t process_remote_task() {
     _load_info_local--;
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
+
+    _mtx_offload_blocked.lock();
+    _offload_blocked = 0;
+    _mtx_offload_blocked.unlock();
 
     if(remote_task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output

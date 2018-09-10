@@ -163,18 +163,16 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 // execute region now
                 DBP("chameleon_distributed_taskwait - local task execution\n");
 
-#ifdef TRACE
-            VT_begin(event_process_local);
-#endif
-                res = execute_target_task(cur_task);
-#ifdef TRACE
-            VT_end(event_process_local);
-#endif                
-
 #if CHAM_STATS_RECORD
                 double cur_time = omp_get_wtime();
 #endif
+#ifdef TRACE
+                VT_begin(event_process_local);
+#endif
                 res = execute_target_task(cur_task);
+#ifdef TRACE
+                VT_end(event_process_local);
+#endif
 #if CHAM_STATS_RECORD
                 cur_time = omp_get_wtime()-cur_time;
                 _mtx_time_task_execution_local.lock();
@@ -182,14 +180,12 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 _time_task_execution_local_count++;
                 _mtx_time_task_execution_local.unlock();
 #endif
-
                 // it is save to decrement counter after local execution
                 _mtx_load_exchange.lock();
                 _num_local_tasks_outstanding--;
                 _load_info_local--;
                 trigger_update_outstanding();
                 _mtx_load_exchange.unlock();
-
 #if CHAM_STATS_RECORD
                 _mtx_num_executed_tasks_local.lock();
                 _num_executed_tasks_local++;
@@ -340,8 +336,10 @@ TargetTaskEntryTy* chameleon_pop_task() {
     TargetTaskEntryTy* task = nullptr;
 
     // we do not necessarily need the lock here
-    if(_local_tasks.empty())
+    if(_local_tasks.empty()) {
+        DBP("chameleon_pop_task (exit)\n");
         return task;
+    }
 
     // get first task in queue
     _mtx_local_tasks.lock();
@@ -350,6 +348,7 @@ TargetTaskEntryTy* chameleon_pop_task() {
         _local_tasks.pop_front();
     }
     _mtx_local_tasks.unlock();
+    DBP("chameleon_pop_task (exit)\n");
     return task;
 }
 

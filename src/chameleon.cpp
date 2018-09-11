@@ -118,10 +118,6 @@ int32_t chameleon_finalize() {
 #if !FORCE_OFFLOAD_MASTER_WORKER
 int32_t chameleon_distributed_taskwait(int nowait) {
 #ifdef TRACE
-    static int event_process_remote = -1;
-    static const std::string event_process_remote_name = "process_remote";
-    if( event_process_remote == -1) 
-        int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
     static int event_process_local = -1;
     static const std::string event_process_local_name = "process_local";
     if( event_process_local == -1)
@@ -138,13 +134,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         int32_t res = CHAM_SUCCESS;
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
-#ifdef TRACE
-            VT_begin(event_process_remote);
-#endif
             res = process_remote_task();
-#ifdef TRACE
-            VT_end(event_process_remote);
-#endif
+
             // if task has been executed successfully start from beginning
             if(res == CHAM_REMOTE_TASK_SUCCESS)
                 continue;
@@ -192,9 +183,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 trigger_update_outstanding();
                 _mtx_load_exchange.unlock();
 
+#if OFFLOAD_BLOCKING
                 _mtx_offload_blocked.lock();
                 _offload_blocked = 0;
                 _mtx_offload_blocked.unlock();
+#endif
 
 #if CHAM_STATS_RECORD
                 _mtx_num_executed_tasks_local.lock();
@@ -217,15 +210,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #else
 //!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
 int32_t chameleon_distributed_taskwait(int nowait) {
-#ifdef TRACE
-   static int event_process_remote = -1;
-   static const std::string event_process_remote_name = "process_remote";
-   if(event_process_remote == -1) {
-       int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
-       if(ierr!=VT_OK)
-           handle_error_en(ierr, "generate tracing event");
-   } 
-#endif
     DBP("chameleon_distributed_taskwait (enter)\n");
     verify_initialized();
 
@@ -276,13 +260,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             break;
         }
         if(!_stolen_remote_tasks.empty()) {
-#ifdef TRACE
-            VT_begin(event_process_remote);
-#endif
             int32_t res = process_remote_task();
-#ifdef TRACE
-            VT_end(event_process_remote);
-#endif
         }
         // sleep for 1 ms
         usleep(1000);
@@ -492,7 +470,14 @@ inline int32_t process_remote_task() {
         _mtx_stolen_remote_tasks.unlock();
         return CHAM_REMOTE_TASK_NONE;
     }
-    
+
+#ifdef TRACE
+    static int event_process_remote = -1;
+    static const std::string event_process_remote_name = "process_remote";
+    if( event_process_remote == -1) 
+        int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
+    VT_begin(event_process_remote);
+#endif
     remote_task = _stolen_remote_tasks.front();
     _stolen_remote_tasks.pop_front();
     _mtx_stolen_remote_tasks.unlock();
@@ -518,9 +503,11 @@ inline int32_t process_remote_task() {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
+#if OFFLOAD_BLOCKING
     _mtx_offload_blocked.lock();
     _offload_blocked = 0;
     _mtx_offload_blocked.unlock();
+#endif
 
     if(remote_task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
@@ -540,7 +527,9 @@ inline int32_t process_remote_task() {
     _num_executed_tasks_stolen++;
     _mtx_num_executed_tasks_stolen.unlock();
 #endif
-
+#ifdef TRACE
+    VT_end(event_process_remote);
+#endif
     return CHAM_REMOTE_TASK_SUCCESS;
 }
 

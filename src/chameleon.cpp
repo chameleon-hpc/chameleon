@@ -192,9 +192,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 trigger_update_outstanding();
                 _mtx_load_exchange.unlock();
 
+#if OFFLOAD_BLOCKING
                 _mtx_offload_blocked.lock();
                 _offload_blocked = 0;
                 _mtx_offload_blocked.unlock();
+#endif
 
 #if CHAM_STATS_RECORD
                 _mtx_num_executed_tasks_local.lock();
@@ -518,9 +520,11 @@ inline int32_t process_remote_task() {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
+#if OFFLOAD_BLOCKING
     _mtx_offload_blocked.lock();
     _offload_blocked = 0;
     _mtx_offload_blocked.unlock();
+#endif
 
     if(remote_task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output

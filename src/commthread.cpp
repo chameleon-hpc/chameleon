@@ -699,9 +699,6 @@ void* receive_remote_tasks(void* arg) {
 #endif
         // decode task entry
         TargetTaskEntryTy *task = decode_send_buffer(buffer);
-#ifdef TRACE
-        VT_begin(event_receive_tasks);
-#endif
         // set information for sending back results/updates if necessary
         task->source_mpi_rank   = cur_status.MPI_SOURCE;
         task->source_mpi_tag    = cur_status.MPI_TAG;
@@ -716,9 +713,6 @@ void* receive_remote_tasks(void* arg) {
         _load_info_local++;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
-#ifdef TRACE
-        VT_end(event_receive_tasks);
-#endif
     }
 }
 

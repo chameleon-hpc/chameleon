@@ -65,9 +65,11 @@ int32_t _load_info_sum;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
 
+#if OFFLOAD_BLOCKING
 // only enable offloading when a task has finished on local rank (change has been made)
 std::mutex _mtx_offload_blocked;
 int32_t _offload_blocked = 0;
+#endif
 
 // === Constants
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
@@ -341,12 +343,16 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
 // This should run in a single pthread because it should be blocking
 void* thread_offload_action(void *arg) {
 #ifdef TRACE
-    static int event_offload_action = -1;
-    std::string event_offload_action_name = "offload_action";
-    if(event_offload_action == -1) 
-        int ierr = VT_funcdef(event_offload_action_name.c_str(), VT_NOCLASS, &event_offload_action);
-    VT_begin(event_offload_action);
-#endif 
+    static int event_offload_send = -1;
+    std::string event_offload_send_name = "offload_send";
+    if(event_offload_send == -1) 
+        int ierr = VT_funcdef(event_offload_send_name.c_str(), VT_NOCLASS, &event_offload_send);
+    
+    static int event_offload_wait_recv = -1;
+    std::string event_offload_wait_recv_name = "offload_wait_recv";
+    if(event_offload_wait_recv == -1) 
+        int ierr = VT_funcdef(event_offload_wait_recv_name.c_str(), VT_NOCLASS, &event_offload_wait_recv);
+#endif
     pin_thread_to_last_core();
 
     OffloadEntryTy *entry = (OffloadEntryTy *) arg;
@@ -356,7 +362,9 @@ void* thread_offload_action(void *arg) {
     // encode buffer
     int32_t buffer_size = 0;
     void * buffer = encode_send_buffer(entry->task_entry, &buffer_size);
-
+#ifdef TRACE
+    VT_begin(event_offload_send);
+#endif
     // calculate proper tag that contains bit combination of sender as well as 
     // "task id" (maybe global increment per process)
     _mtx_global_offload_counter.lock();
@@ -387,12 +395,24 @@ void* thread_offload_action(void *arg) {
 #endif
     free(buffer);
 
+#ifdef TRACE
+    VT_end(event_offload_send);
+#endif
+
     if(has_outputs) {
+#ifdef TRACE
+        VT_begin(event_offload_wait_recv);
+#endif
         DBP("thread_offload_action - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
         MPI_Status cur_status;
         int recv_buff_size;
+        int flag = 0;
 
-        MPI_Probe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &cur_status);
+        while(!flag) {
+            MPI_Iprobe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &flag, &cur_status);
+            usleep(20);
+        }
+
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
         // temp buffer to retreive output data from target rank to be able to update host pointers again
         void * temp_buffer = malloc(recv_buff_size);
@@ -424,6 +444,9 @@ void* thread_offload_action(void *arg) {
         }
         // free buffer again
         free(temp_buffer);
+#ifdef TRACE
+        VT_end(event_offload_wait_recv);
+#endif
     }
 
     // decrement counter if offloading + receiving results finished
@@ -433,9 +456,6 @@ void* thread_offload_action(void *arg) {
     _mtx_load_exchange.unlock();
 
     DBP("thread_offload_action (exit)\n");
-#ifdef TRACE
-    VT_end(event_offload_action);
-#endif
     return nullptr;
 }
 
@@ -612,10 +632,9 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 void* receive_remote_tasks(void* arg) {
 #ifdef TRACE
     static int event_receive_tasks = -1;
-    std::string event_receive_tasks_name = "receive_tasks";
+    std::string event_receive_tasks_name = "receive_task";
     if(event_receive_tasks == -1) 
         int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
-    VT_begin(event_receive_tasks);
 #endif 
     // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
     // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -655,6 +674,9 @@ void* receive_remote_tasks(void* arg) {
 #if CHAM_STATS_RECORD
         double cur_time = omp_get_wtime();
 #endif
+#ifdef TRACE
+        VT_begin(event_receive_tasks);
+#endif
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
         if(recv_buff_size > cur_max_buff_size) {
             // allocate more memory
@@ -671,6 +693,9 @@ void* receive_remote_tasks(void* arg) {
         _time_comm_recv_task_sum += cur_time;
         _time_comm_recv_task_count++;
         _mtx_time_comm_recv_task.unlock();
+#endif
+#ifdef TRACE
+        VT_end(event_receive_tasks);
 #endif
         // decode task entry
         TargetTaskEntryTy *task = decode_send_buffer(buffer);
@@ -689,19 +714,26 @@ void* receive_remote_tasks(void* arg) {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
-#ifdef TRACE
-    VT_end(event_receive_tasks);
-#endif
 }
 
 void* service_thread_action(void *arg) {
 #ifdef TRACE
-    static int event_service_action = -1;
-    std::string event_service_action_name = "service_action";
-    if(event_service_action == -1) 
-        int ierr = VT_funcdef(event_service_action_name.c_str(), VT_NOCLASS, &event_service_action);
-    VT_begin(event_service_action);
-#endif 
+    static int event_exchange_outstanding = -1;
+    std::string exchange_outstanding_name = "exchange_outstanding";
+    if(event_exchange_outstanding == -1)
+        int ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);
+
+    static int event_offload_decision = -1;
+    std::string event_offload_decision_name = "offload_decision";
+    if(event_offload_decision == -1)
+        int ierr = VT_funcdef(event_offload_decision_name.c_str(), VT_NOCLASS, &event_offload_decision);
+    
+    static int event_send_back = -1;
+    std::string event_send_back_name = "send_back";
+    if(event_send_back == -1)
+        int ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
+#endif
+
     pin_thread_to_last_core();
     
     // trigger signal to tell that thread is running now
@@ -715,6 +747,7 @@ void* service_thread_action(void *arg) {
     MPI_Status status_out;
     int request_created = 0;
     int offload_triggered = 0;
+    int last_known_sum_outstanding = -1;
 
     int transported_load_values[2];
     int * buffer_load_values = (int*) malloc(sizeof(int)*2*chameleon_comm_size);
@@ -730,17 +763,26 @@ void* service_thread_action(void *arg) {
         // avoid overwriting request or keep it up to date?
         // not 100% sure if overwriting a request is a bad idea or makes any problems in MPI
         if(!request_created) {
+#ifdef TRACE
+            VT_begin(event_exchange_outstanding);
+#endif
             _mtx_load_exchange.lock();
             transported_load_values[0] = _outstanding_jobs_local;
             transported_load_values[1] = _load_info_local;
             _mtx_load_exchange.unlock();
             MPI_Iallgather(&transported_load_values[0], 2, MPI_INT, buffer_load_values, 2, MPI_INT, chameleon_comm_load, &request_out);
             request_created = 1;
+#ifdef TRACE
+            VT_end(event_exchange_outstanding);
+#endif
         }
 
         int flag_request_avail;
         MPI_Test(&request_out, &flag_request_avail, &status_out);
         if(flag_request_avail) {
+#ifdef TRACE
+            VT_begin(event_exchange_outstanding);
+#endif
             // sum up that stuff
             // DBP("service_thread_action - gathered new load info\n");
             int32_t sum_outstanding = 0;
@@ -760,7 +802,24 @@ void* service_thread_action(void *arg) {
                 _comm_thread_load_exchange_happend = 1;
             // reset flag
             request_created = 0;
+#if OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
+            if(last_known_sum_outstanding == -1) {
+                last_known_sum_outstanding = sum_outstanding;
+                offload_triggered = 0;
+            } else {
+                // check whether changed.. only allow new offload after change
+                if(last_known_sum_outstanding != sum_outstanding) {
+                    last_known_sum_outstanding = sum_outstanding;
+                    offload_triggered = 0;
+                }
+            }
+#else // OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
             offload_triggered = 0;
+#endif
+
+#ifdef TRACE
+            VT_end(event_exchange_outstanding);
+#endif
         }
 
         // check whether to abort thread
@@ -771,12 +830,17 @@ void* service_thread_action(void *arg) {
             pthread_exit(&ret_val);
         }
 
-#if !FORCE_OFFLOAD_MASTER_WORKER
+#if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
         if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
 
+#if OFFLOAD_BLOCKING
             if(!_offload_blocked) {
+#endif
+#ifdef TRACE
+            VT_begin(event_offload_decision);
+#endif
             int cur_load = _load_info_ranks[chameleon_comm_rank];
             
             // Strategies for speculative load exchange
@@ -794,15 +858,19 @@ void* service_thread_action(void *arg) {
                     TargetTaskEntryTy *cur_task = chameleon_pop_task();
                     if(cur_task == nullptr)
                         break;
-
-                    DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty\n", cur_load, tmp_idx);
+#ifdef TRACE
+            VT_end(event_offload_decision);
+#endif
+                    DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
                     OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
                     offload_task_to_rank(off_entry);
                     offload_triggered = 1;
 
+#if OFFLOAD_BLOCKING
                     _mtx_offload_blocked.lock();
                     _offload_blocked = 1;
                     _mtx_offload_blocked.unlock();
+#endif
                     break;
                 }
             }
@@ -829,26 +897,37 @@ void* service_thread_action(void *arg) {
                         if(other_val < cur_load && ratio > 0.5) {
                             TargetTaskEntryTy *cur_task = chameleon_pop_task();
                             if(cur_task) {
-                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d\n", cur_load, other_idx, other_val);
+#ifdef TRACE
+                                VT_end(event_offload_decision);
+#endif
+                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, other_idx, other_val, last_known_sum_outstanding);
                                 OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, other_idx);
                                 offload_task_to_rank(off_entry);
                                 offload_triggered = 1;
 
+#if OFFLOAD_BLOCKING
                                 _mtx_offload_blocked.lock();
                                 _offload_blocked = 1;
                                 _mtx_offload_blocked.unlock();
+#endif
                             }
                         }
                     }
                 }
             }
+#ifdef TRACE
+            if(!offload_triggered)
+                VT_end(event_offload_decision);
+#endif
+#if OFFLOAD_BLOCKING
             }
+#endif
         }
 #endif
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
-            usleep(10);
+            usleep(5);
             continue;
         }
 
@@ -861,6 +940,10 @@ void* service_thread_action(void *arg) {
         cur_task = _stolen_remote_tasks_send_back.front();
         _stolen_remote_tasks_send_back.pop_front();
         _mtx_stolen_remote_tasks_send_back.unlock();
+
+#ifdef TRACE
+        VT_begin(event_send_back);
+#endif
 
         int32_t tmp_size_buff = 0;
         for(int i = 0; i < cur_task->arg_num; i++) {
@@ -894,14 +977,15 @@ void* service_thread_action(void *arg) {
 #endif
         free(buff);
 
+#ifdef TRACE
+        VT_end(event_send_back);
+#endif
+
         _mtx_load_exchange.lock();
         _num_stolen_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
-#ifdef TRACE
-    VT_end(event_service_action);
-#endif
 }
 
 void trigger_update_outstanding() {

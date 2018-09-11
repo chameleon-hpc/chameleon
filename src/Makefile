@@ -23,5 +23,13 @@ trace:
 	
 	cp chameleon.h $(INSTALL_DIR)/include/
 	cp libchameleon.so $(INSTALL_DIR)/lib/
+
+trace-debug:
+	@# compile with target offloading to force image loading process, all target images should be loaded at program start
+	$(MPICXX) -O0 -g -DCHAM_DEBUG -DTRACE -I$(VT_ROOT)/include -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu  -std=c++11 -fpic -shared -o libchameleon.so chameleon.cpp commthread.cpp cham_statistics.cpp -lffi -lpthread -lhwloc -trace
+	
+	cp chameleon.h $(INSTALL_DIR)/include/
+	cp libchameleon.so $(INSTALL_DIR)/lib/
+
 clean:
 	rm -f *.so *.o

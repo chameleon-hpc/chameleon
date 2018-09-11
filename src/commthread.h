@@ -6,6 +6,22 @@
 
 #include "chameleon.h"
 
+#ifndef OFFLOAD_BLOCKING
+#define OFFLOAD_BLOCKING 0
+#endif
+
+#ifndef OFFLOAD_ENABLED
+#define OFFLOAD_ENABLED 1
+#endif
+
+#ifndef OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
+#define OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED 1
+#endif
+
+#ifndef FORCE_OFFLOAD_MASTER_WORKER
+#define FORCE_OFFLOAD_MASTER_WORKER 0
+#endif
+
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
@@ -58,9 +74,11 @@ extern int32_t _load_info_sum;
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
 
+#if OFFLOAD_BLOCKING
 // only allow offloading when a task has finished on local rank
 extern std::mutex _mtx_offload_blocked;
 extern int32_t _offload_blocked;
+#endif
 
 // Threading section
 extern int _comm_thread_load_exchange_happend;

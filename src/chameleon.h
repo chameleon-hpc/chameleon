@@ -46,10 +46,6 @@
 #endif
 #endif
 
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
-#endif
-
 #define handle_error_en(en, msg) \
            do { errno = en; RELP("ERROR: %s : %s\n", msg, strerror(en)); exit(EXIT_FAILURE); } while (0)
 

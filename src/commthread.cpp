@@ -848,7 +848,7 @@ void* receive_remote_tasks(void* arg) {
         VT_begin(event_receive_tasks);
 #endif
 	 for(int32_t i=0; i<task->arg_num; i++) {
-		MPI_Recv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+		MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
         } 
 #ifdef TRACE
         VT_end(event_receive_tasks);

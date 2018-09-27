@@ -117,7 +117,9 @@ extern "C" {
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
+void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size, int tag);
 TargetTaskEntryTy* decode_send_buffer(void * buffer);
+TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer);
 short pin_thread_to_last_core();
 void* thread_offload_action(void *arg);
 
@@ -359,12 +361,6 @@ void* thread_offload_action(void *arg) {
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
     DBP("thread_offload_action (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
 
-    // encode buffer
-    int32_t buffer_size = 0;
-    void * buffer = encode_send_buffer(entry->task_entry, &buffer_size);
-#ifdef TRACE
-    VT_begin(event_offload_send);
-#endif
     // calculate proper tag that contains bit combination of sender as well as 
     // "task id" (maybe global increment per process)
     _mtx_global_offload_counter.lock();
@@ -373,6 +369,13 @@ void* thread_offload_action(void *arg) {
     int tmp_rank = chameleon_comm_rank;
     int tmp_tag = (tmp_rank << 16) | (tmp_counter);
 
+    // encode buffer
+    int32_t buffer_size = 0;
+    void * buffer = encode_send_buffer_metadata(entry->task_entry, &buffer_size, tmp_tag);
+
+#ifdef TRACE
+    VT_begin(event_offload_send);
+#endif
     // // == DEBUG: Verify bit encoding
     // int tmp_verify_count = tmp_tag & 0x0000ffff;
     // int tmp_verify_rank = tmp_tag >> 16;
@@ -385,7 +388,11 @@ void* thread_offload_action(void *arg) {
     double cur_time;
     cur_time = omp_get_wtime();
 #endif
-    MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+    MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm); //TODO: introduce metadata_tag
+
+    for(int i=0; i<entry->task_entry->arg_num; i++) {
+	MPI_Send(entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+    }
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     _mtx_time_comm_send_task.lock();
@@ -457,6 +464,74 @@ void* thread_offload_action(void *arg) {
 
     DBP("thread_offload_action (exit)\n");
     return nullptr;
+}
+
+void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size, int tag) {
+#ifdef TRACE
+    static int event_encode = -1;
+    std::string event_encode_name = "encode";
+    if(event_encode == -1) 
+        int ierr = VT_funcdef(event_encode_name.c_str(), VT_NOCLASS, &event_encode);
+    VT_begin(event_encode);
+#endif 
+
+    DBP("encode_send_buffer_metadata (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+
+    // FORMAT:
+    //      1. target function pointer = address (intptr_t)
+    //      2. image index
+    //      3. offset of entry point inside image
+    //      4. number of arguments = int32_t
+    //      5. array with argument types = n_args * int64_t
+    //      6. array with argument offsets = n_args * int64_t
+    //      7. array with length of argument pointers = n_args * int64_t
+   int total_size = sizeof(intptr_t)           // 1. target entry pointer
+        + sizeof(int32_t)                       // 2. img index
+        + sizeof(ptrdiff_t)                     // 3. offset inside image
+        + sizeof(int32_t)                       // 4. number of arguments
+        + task->arg_num * sizeof(int64_t)       // 5. argument sizes
+        + task->arg_num * sizeof(ptrdiff_t)     // 6. offsets
+        + task->arg_num * sizeof(int64_t);       // 7. argument types
+	 
+    // allocate memory for transfer
+    char *buff = (char *) malloc(total_size);
+    char *cur_ptr = (char *)buff;
+
+    // 1. target entry address
+    ((intptr_t *) cur_ptr)[0] = (intptr_t) task->tgt_entry_ptr;
+    cur_ptr += sizeof(intptr_t);
+
+    // 2. img index
+    ((int32_t *) cur_ptr)[0] = task->idx_image;
+    cur_ptr += sizeof(int32_t);
+
+    // 3. offset
+    ((ptrdiff_t *) cur_ptr)[0] = task->entry_image_offset;
+    cur_ptr += sizeof(ptrdiff_t);
+
+    // 4. number of arguments
+    ((int32_t *) cur_ptr)[0] = task->arg_num;
+    cur_ptr += sizeof(int32_t);
+
+    // 5. argument sizes
+    memcpy(cur_ptr, &(task->arg_sizes[0]), task->arg_num * sizeof(int64_t));
+    cur_ptr += task->arg_num * sizeof(int64_t);
+
+    // 6. offsets
+    memcpy(cur_ptr, &(task->arg_tgt_offsets[0]), task->arg_num * sizeof(ptrdiff_t));
+    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
+
+    // 7. argument types
+    memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
+    cur_ptr += task->arg_num * sizeof(int64_t);
+
+   
+    // set output size
+    *buffer_size = total_size;
+#ifdef TRACE
+    VT_end(event_encode);
+#endif
+    return buff;    
 }
 
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
@@ -628,6 +703,84 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
     return task;
 }
 
+TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer) {
+#ifdef TRACE
+    static int event_decode = -1;
+    std::string event_decode_name = "decode";
+    if(event_decode == -1) 
+        int ierr = VT_funcdef(event_decode_name.c_str(), VT_NOCLASS, &event_decode);
+    VT_begin(event_decode);
+#endif 
+    // init new task
+    TargetTaskEntryTy* task = new TargetTaskEntryTy();
+
+    // current pointer position
+    char *cur_ptr = (char*) buffer;
+
+    // 1. target function pointer
+    task->tgt_entry_ptr = ((intptr_t *) cur_ptr)[0];
+    cur_ptr += sizeof(intptr_t);
+
+    // 2. img index
+    task->idx_image = ((int32_t *) cur_ptr)[0];
+    cur_ptr += sizeof(int32_t);
+
+    // 3. offset
+    task->entry_image_offset = ((ptrdiff_t *) cur_ptr)[0];
+    cur_ptr += sizeof(ptrdiff_t);
+
+    // 4. number of arguments
+    task->arg_num = ((int32_t *) cur_ptr)[0];
+    cur_ptr += sizeof(int32_t);
+
+    DBP("decode_send_buffer (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+
+    // we need a mapping to process local task entry points
+    intptr_t local_img_base     = _image_base_addresses[task->idx_image];
+    intptr_t local_entry        = local_img_base + task->entry_image_offset;
+    DBP("decode_send_buffer - mapping remote entry point from: " DPxMOD " to local: " DPxMOD "\n", DPxPTR(task->tgt_entry_ptr), DPxPTR(local_entry));
+    task->tgt_entry_ptr         = local_entry;
+
+    // resize data structure
+    task->ReSizeArrays(task->arg_num);
+    
+    // 5. argument sizes
+    memcpy(&(task->arg_sizes[0]), cur_ptr, task->arg_num * sizeof(int64_t));
+    cur_ptr += task->arg_num * sizeof(int64_t);
+
+    // 6. argument types
+    memcpy(&(task->arg_tgt_offsets[0]), cur_ptr, task->arg_num * sizeof(ptrdiff_t));
+    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
+
+    // 7. offsets
+    memcpy(&(task->arg_types[0]), cur_ptr, task->arg_num * sizeof(int64_t));
+    cur_ptr += task->arg_num * sizeof(int64_t);
+
+    for(int32_t i = 0; i < task->arg_num; i++) {
+        int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+
+        // copy value from host pointer directly
+        if(!is_lit) {
+            // need to allocate new memory
+            void * new_mem = malloc(task->arg_sizes[i]);
+            task->arg_hst_pointers[i] = new_mem;
+        }
+        print_arg_info("decode_send_buffer", task, i);
+    }
+#ifdef TRACE
+    VT_end(event_decode);
+#endif 
+    return task;
+}
+
+//int decode_tag_from_metadata(void *buffer, int32_t bufferSize) {
+//    char *cur_ptr = (char*) buffer;
+//    cur_ptr += bufferSize;
+//    cur_ptr -= sizeof(int);
+//    return ((int) cur_ptr[0]);
+//}
+
+
 // should run in a single thread that is always waiting for incoming requests
 void* receive_remote_tasks(void* arg) {
 #ifdef TRACE
@@ -668,7 +821,7 @@ void* receive_remote_tasks(void* arg) {
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
-            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request, &cur_status);
+            MPI_Iprobe(MPI_ANY_SOURCE, -1, chameleon_comm, &flag_open_request, &cur_status);
         }
 
 #if CHAM_STATS_RECORD
@@ -685,8 +838,22 @@ void* receive_remote_tasks(void* arg) {
             buffer = malloc(recv_buff_size);
         }
 
-        // now receive the data
+        // now receive the metadata
         res = MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+#ifdef TRACE
+        VT_end(event_receive_tasks);
+#endif
+	 TargetTaskEntryTy *task = decode_send_buffer_metadata(buffer);
+#ifdef TRACE
+        VT_begin(event_receive_tasks);
+#endif
+	 for(int32_t i=0; i<task->arg_num; i++) {
+		MPI_Recv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+        } 
+#ifdef TRACE
+        VT_end(event_receive_tasks);
+#endif
+
 #if CHAM_STATS_RECORD
         cur_time = omp_get_wtime()-cur_time;
         _mtx_time_comm_recv_task.lock();
@@ -694,11 +861,7 @@ void* receive_remote_tasks(void* arg) {
         _time_comm_recv_task_count++;
         _mtx_time_comm_recv_task.unlock();
 #endif
-#ifdef TRACE
-        VT_end(event_receive_tasks);
-#endif
-        // decode task entry
-        TargetTaskEntryTy *task = decode_send_buffer(buffer);
+
         // set information for sending back results/updates if necessary
         task->source_mpi_rank   = cur_status.MPI_SOURCE;
         task->source_mpi_tag    = cur_status.MPI_TAG;

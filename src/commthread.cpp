@@ -397,8 +397,14 @@ void* offload_action(OffloadEntryTy *entry) {
     MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm); //TODO: introduce metadata_tag
 
     for(int i=0; i<entry->task_entry->arg_num; i++) {
-	MPI_Send(entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
-    }
+        int is_lit      = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+        if(is_lit) {
+            MPI_Send(&entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+        }
+        else{
+            MPI_Send(entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+        } 
+   }
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     _mtx_time_comm_send_task.lock();
@@ -873,7 +879,12 @@ void* receive_remote_tasks(void* arg) {
             VT_begin(event_receive_tasks);
 #endif
 	        for(int32_t i=0; i<task->arg_num; i++) {
-	            MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+                int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+                if(is_lit) {
+                    MPI_Recv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+                } else {
+	                MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+                }
             } 
 #ifdef TRACE
             VT_end(event_receive_tasks);

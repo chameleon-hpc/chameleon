@@ -21,6 +21,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <vector>
+#include <atomic>
 
 #ifndef DPxMOD
 #define DPxMOD "0x%0*" PRIxPTR
@@ -30,7 +31,7 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
-extern std::mutex _mtx_relp;
+//extern std::mutex _mtx_relp;
 
 #ifdef CHAM_DEBUG
 extern std::atomic<long> mem_allocated;
@@ -39,10 +40,10 @@ extern std::atomic<long> mem_allocated;
 #ifndef RELP
 #define RELP( ... )                                                                                         \
   {                                                                                                        \
-    _mtx_relp.lock(); \
+     \
     fprintf(stderr, "ChameleonLib R#%d T#%d (OS_TID:%ld): --> ", chameleon_comm_rank, omp_get_thread_num(), syscall(SYS_gettid));      \
     fprintf(stderr, __VA_ARGS__);                                                                           \
-    _mtx_relp.unlock(); \
+     \
   }
 #endif
 

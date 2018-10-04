@@ -14,6 +14,12 @@
 #include "VT.h"
 #endif
 
+std::mutex _mtx_relp;
+
+#ifdef CHAM_DEBUG
+std::atomic<long> mem_allocated;
+#endif
+
 int TargetTaskEntryTy::HasAtLeastOneOutput() {
     for(int i = 0; i < this->arg_num; i++) {
         if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
@@ -74,6 +80,9 @@ int32_t chameleon_init() {
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_load");
 
     DBP("chameleon_init\n");
+#ifdef CHAM_DEBUG
+    mem_allocated = 0;
+#endif
 
     _mtx_load_exchange.lock();
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
@@ -96,6 +105,12 @@ int32_t chameleon_init() {
     _ch_is_initialized = 1;
     _mtx_ch_is_initialized.unlock();
     return CHAM_SUCCESS;
+}
+
+void chameleon_incr_mem_alloc(int64_t size) {
+#ifdef CHAM_DEBUG
+    mem_allocated += size;
+#endif
 }
 
 int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address) {
@@ -281,15 +296,12 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     int found = 0;
     for(auto &entry : _data_entries) {
         if(entry->tgt_ptr == tgt_ptr && entry->hst_ptr == hst_ptr && entry->size == size) {
-            // increase reference count
-            entry->ref_count++;
             found = 1;
-            DBP("chameleon_submit_data - incremented ref count to %d\n", entry->ref_count);
             break;
         }
     }
     if(!found) {
-        DBP("chameleon_submit_data - create new entry\n");
+        DBP("chameleon_submit_data - new entry for tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
         // add it to list
         OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
         // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
@@ -300,8 +312,23 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     return CHAM_SUCCESS;
 }
 
+void chameleon_remove_data(void *tgt_ptr) {
+    _mtx_data_entry.lock();
+    for(auto &entry : _data_entries) {
+        if(entry->tgt_ptr == tgt_ptr) {
+            free(entry->tgt_ptr);
+#ifdef CHAM_DEBUG
+            mem_allocated -= entry->size;
+#endif
+            _data_entries.remove(entry);
+            break;
+        }
+    }
+    _mtx_data_entry.unlock();
+}
+
 int32_t chameleon_add_task(TargetTaskEntryTy *task) {
-    DBP("chameleon_add_task (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d)\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset);
+    DBP("chameleon_add_task (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
     lookup_hst_pointers(task);
@@ -354,22 +381,50 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
             // pointer represents numerical value that is implicitly mapped
             task->arg_hst_pointers[i] = tmp_tgt_ptr;
             task->arg_sizes[i] = sizeof(void *);
+            print_arg_info_w_tgt("lookup_hst_pointers", task, i);
         } else {
             // here we need to perform a pointer mapping to host pointer
             // because target pointers have already been freed and deleted
             int found = 0;
+            _mtx_data_entry.lock();
             for(auto &entry : _data_entries) {
                 // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
                 if(entry->tgt_ptr == tmp_tgt_ptr) {
-                    task->arg_sizes[i] = entry->size;
-                    task->arg_hst_pointers[i] = entry->hst_ptr;
+                    // if(!found) {
+                        task->arg_sizes[i] = entry->size;
+                        task->arg_hst_pointers[i] = entry->hst_ptr;
+                        print_arg_info_w_tgt("lookup_hst_pointers (first)", task, i);
+                    // } else {
+                    //     // temporary assignment to find more matches and errors
+                    //     void * swap = task->arg_hst_pointers[i];
+                    //     task->arg_hst_pointers[i] = entry->hst_ptr;
+                    //     print_arg_info_w_tgt("lookup_hst_pointers (next)", task, i);
+                    //     task->arg_hst_pointers[i] = swap;
+                    // }
                     found = 1;
                     break;
                 }
             }
+            _mtx_data_entry.unlock();
+            if(!found) {
+                // There seems to be a race condition in internal mapping von source to target pointers (that might be reused) and the kernel call if using multiple threads 
+                // Workaround: wait a small amount of time and try again once more (i know it is ugly but hard to fix that race here)
+                usleep(1000);
+                _mtx_data_entry.lock();
+                for(auto &entry : _data_entries) {
+                    // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
+                    if(entry->tgt_ptr == tmp_tgt_ptr) {
+                        task->arg_sizes[i] = entry->size;
+                        task->arg_hst_pointers[i] = entry->hst_ptr;
+                        found = 1;
+                        break;
+                    }
+                }
+                _mtx_data_entry.unlock();
+            }
             if(!found) {
                 // something went wrong here
-                printf("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
+                RELP("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
                     DPxPTR(tmp_tgt_ptr),
                     tmp_type,
                     is_lit,
@@ -381,25 +436,27 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
         }
     }
 
-    // clean up data entries again to avoid problems
-    _mtx_data_entry.lock();
-    for(int i = 0; i < task->arg_num; i++) {
-        // get type and pointer
-        int64_t tmp_type    = task->arg_types[i];
-        void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
-        int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+    // // clean up data entries again to avoid problems
+    // _mtx_data_entry.lock();
+    // for(int i = 0; i < task->arg_num; i++) {
+    //     // get type and pointer
+    //     int64_t tmp_type    = task->arg_types[i];
+    //     void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
+    //     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
 
-        if(!(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL)) {
-            for(auto &entry : _data_entries) {
-                if(entry->tgt_ptr == tmp_tgt_ptr) {
-                    // remove it if found
-                    _data_entries.remove(entry);
-                    break;
-                }
-            }   
-        }
-    }
-    _mtx_data_entry.unlock();
+    //     if(!(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL)) {
+    //         for(auto &entry : _data_entries) {
+    //             if(entry->tgt_ptr == tmp_tgt_ptr) {
+    //                     // remove it if found
+    //                     free(entry->tgt_ptr);
+    //                     mem_allocated -= entry->size;
+    //                     _data_entries.remove(entry);
+    //                 break;
+    //             }
+    //         }   
+    //     }
+    // }
+    // _mtx_data_entry.unlock();
 
     DBP("lookup_hst_pointers (exit)\n");
     return CHAM_SUCCESS;

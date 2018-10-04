@@ -141,7 +141,7 @@ int32_t start_communication_threads() {
     // set flag to avoid that threads are directly aborting
     _flag_abort_threads = 0;
     _comm_thread_load_exchange_happend = 0;
-    _global_offload_counter = 0;
+    _global_offload_counter = 0;    
 
     // explicitly make threads joinable to be portable
     pthread_attr_t attr;
@@ -208,6 +208,10 @@ int32_t stop_communication_threads() {
     _comm_thread_load_exchange_happend = 0;
     _comm_threads_ended_count = 0;
     _global_offload_counter = 0;
+#ifdef CHAM_DEBUG
+    DBP("stop_communication_threads - still mem_allocated = %ld\n", (long)mem_allocated);
+    mem_allocated = 0;
+#endif
 
     _th_receive_remote_tasks_created = 0;
     _th_service_actions_created = 0;

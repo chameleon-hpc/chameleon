@@ -30,11 +30,19 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+extern std::mutex _mtx_relp;
+
+#ifdef CHAM_DEBUG
+extern std::atomic<long> mem_allocated;
+#endif
+
 #ifndef RELP
 #define RELP( ... )                                                                                         \
-  {                                                                                                         \
+  {                                                                                                        \
+    _mtx_relp.lock(); \
     fprintf(stderr, "ChameleonLib R#%d T#%d (OS_TID:%ld): --> ", chameleon_comm_rank, omp_get_thread_num(), syscall(SYS_gettid));      \
     fprintf(stderr, __VA_ARGS__);                                                                           \
+    _mtx_relp.unlock(); \
   }
 #endif
 
@@ -186,20 +194,17 @@ struct OffloadingDataEntryTy {
     void *tgt_ptr;
     void *hst_ptr;
     int64_t size;
-    int32_t ref_count;
 
     OffloadingDataEntryTy() {
         tgt_ptr = nullptr;
         hst_ptr = nullptr;
         size = 0;
-        ref_count = 1;
     }
 
     OffloadingDataEntryTy(void *p_tgt_ptr, void *p_hst_ptr, int64_t p_size) {
         tgt_ptr = p_tgt_ptr;
         hst_ptr = p_hst_ptr;
         size = p_size;
-        ref_count = 1;
     }
 };
 
@@ -218,6 +223,10 @@ int32_t chameleon_finalize();
 int32_t chameleon_distributed_taskwait(int nowait = 0);
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
+
+void chameleon_remove_data(void *tgt_ptr);
+
+void chameleon_incr_mem_alloc(int64_t size);
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task);
 

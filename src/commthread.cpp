@@ -6,6 +6,7 @@
 #include <hwloc.h>
 #include <omp.h>
 #include <algorithm>
+#include <unordered_map>
 
 #include "cham_statistics.h"
 
@@ -51,6 +52,10 @@ std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 // entries that should be offloaded to specific ranks
 std::mutex _mtx_offload_entries;
 std::list<OffloadEntryTy*> _offload_entries;
+
+// map that maps tag id's back to local tasks that have been offloaded
+std::mutex _mtx_map_tag_to_task;
+std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_task;
 
 // ====== Info about outstanding jobs (local & stolen) ======
 // extern std::mutex _mtx_outstanding_jobs;
@@ -121,7 +126,7 @@ void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size
 TargetTaskEntryTy* decode_send_buffer(void * buffer);
 TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer);
 short pin_thread_to_last_core();
-void* thread_offload_action(void *arg);
+void* offload_action(OffloadEntryTy *task);
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
@@ -313,21 +318,23 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     _mtx_load_exchange.unlock();
 
     // explicitly make threads joinable to be portable
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    //pthread_attr_t attr;
+    //pthread_attr_init(&attr);
+    //pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
     // TODO: might be better to not create additional thread if there are output variables
     // if(entry->HasAtLeastOneOutput()) {
-        pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
+    //    pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
 
-        int err;
-        err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
-        if(err != 0)
-            handle_error_en(err, "offload_task_to_rank - pthread_create");
+    //    int err;
+    //    err = pthread_create(tmp_new_thread, &attr, thread_offload_action, (void*)entry);
+    //    if(err != 0)
+    //        handle_error_en(err, "offload_task_to_rank - pthread_create");
     // } else {
         // ...
     // }
+
+    offload_action( entry);
 
 #if CHAM_STATS_RECORD
     _mtx_num_tasks_offloaded.lock();
@@ -343,23 +350,18 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
 }
 
 // This should run in a single pthread because it should be blocking
-void* thread_offload_action(void *arg) {
+void* offload_action(OffloadEntryTy *entry) {
 #ifdef TRACE
     static int event_offload_send = -1;
     std::string event_offload_send_name = "offload_send";
     if(event_offload_send == -1) 
         int ierr = VT_funcdef(event_offload_send_name.c_str(), VT_NOCLASS, &event_offload_send);
-    
-    static int event_offload_wait_recv = -1;
-    std::string event_offload_wait_recv_name = "offload_wait_recv";
-    if(event_offload_wait_recv == -1) 
-        int ierr = VT_funcdef(event_offload_wait_recv_name.c_str(), VT_NOCLASS, &event_offload_wait_recv);
-#endif
-    pin_thread_to_last_core();
 
-    OffloadEntryTy *entry = (OffloadEntryTy *) arg;
+     VT_begin(event_offload_send);
+#endif
+
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
-    DBP("thread_offload_action (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
+    DBP("offload_action (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
 
     // calculate proper tag that contains bit combination of sender as well as 
     // "task id" (maybe global increment per process)
@@ -382,7 +384,7 @@ void* thread_offload_action(void *arg) {
     // // == DEBUG
     
     // send data to target rank
-    DBP("thread_offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
+    DBP("offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
 
 #if CHAM_STATS_RECORD
     double cur_time;
@@ -407,53 +409,9 @@ void* thread_offload_action(void *arg) {
 #endif
 
     if(has_outputs) {
-#ifdef TRACE
-        VT_begin(event_offload_wait_recv);
-#endif
-        DBP("thread_offload_action - waiting for output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
-        MPI_Status cur_status;
-        int recv_buff_size;
-        int flag = 0;
-
-        while(!flag) {
-            MPI_Iprobe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &flag, &cur_status);
-            usleep(20);
-        }
-
-        MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
-        // temp buffer to retreive output data from target rank to be able to update host pointers again
-        void * temp_buffer = malloc(recv_buff_size);
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime();
-#endif
-        MPI_Recv(temp_buffer, recv_buff_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, MPI_STATUS_IGNORE);
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime()-cur_time;
-        _mtx_time_comm_back_recv.lock();
-        _time_comm_back_recv_sum += cur_time;
-        _time_comm_back_recv_count++;
-        _mtx_time_comm_back_recv.unlock();
-#endif
-        DBP("thread_offload_action - receiving output data from rank %d for tag: %d\n", entry->target_rank, tmp_tag);
-        // copy results back to source pointers with memcpy
-        char * cur_ptr = (char*) temp_buffer;
-        for(int i = 0; i < entry->task_entry->arg_num; i++) {
-            int is_lit      = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            int is_from     = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
-
-            if(entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                print_arg_info("thread_offload_action", entry->task_entry, i);
-                    
-                // we already have information about size and data type
-                memcpy(entry->task_entry->arg_hst_pointers[i], cur_ptr, entry->task_entry->arg_sizes[i]);
-                cur_ptr += entry->task_entry->arg_sizes[i];
-            }
-        }
-        // free buffer again
-        free(temp_buffer);
-#ifdef TRACE
-        VT_end(event_offload_wait_recv);
-#endif
+        _mtx_map_tag_to_task.lock();
+        _map_tag_to_task.insert(std::make_pair(tmp_tag, entry->task_entry));
+        _mtx_map_tag_to_task.unlock();
     }
 
     // decrement counter if offloading + receiving results finished
@@ -462,7 +420,7 @@ void* thread_offload_action(void *arg) {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
-    DBP("thread_offload_action (exit)\n");
+    DBP("offload_action (exit)\n");
     return nullptr;
 }
 
@@ -788,6 +746,11 @@ void* receive_remote_tasks(void* arg) {
     std::string event_receive_tasks_name = "receive_task";
     if(event_receive_tasks == -1) 
         int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
+
+    static int event_recv_back = -1;
+    std::string event_recv_back = "receive_back";
+    if(event_offload_recv == -1) 
+        int ierr = VT_funcdef(event_recv_back.c_str(), VT_NOCLASS, &event_recv_back);
 #endif 
     // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
     // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -806,13 +769,17 @@ void* receive_remote_tasks(void* arg) {
     int cur_max_buff_size = MAX_BUFFER_SIZE_OFFLOAD_ENTRY;
     void * buffer = malloc(cur_max_buff_size);
     int recv_buff_size = 0;
+ 
+    double cur_time;
     
     while(true) {
         // first check transmission and make sure that buffer has enough memory
-        MPI_Status cur_status;
-        int flag_open_request = 0;
-        
-        while(!flag_open_request) {
+        MPI_Status cur_status_receive;
+        MPI_Status cur_status_receiveBack;
+        int flag_open_request_receive = 0;
+        int flag_open_request_receiveBack = 0;      
+
+        while(!flag_open_request_receive && !flag_open_request_receiveBack) {
             usleep(5);
             // check whether thread should be aborted
             if(_flag_abort_threads) {
@@ -821,61 +788,116 @@ void* receive_remote_tasks(void* arg) {
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
-            MPI_Iprobe(MPI_ANY_SOURCE, -1, chameleon_comm, &flag_open_request, &cur_status);
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
         }
 
+        if( flag_open_request_receiveBack ) {
+	        _mtx_map_tag_to_task.lock();
+            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
+	        _mtx_map_tag_to_task.unlock();
+            // receive data back
+	        if(got!=_map_tag_to_task.end()) {
+	            MPI_Get_count(&cur_status_receiveBack, MPI_BYTE, &recv_buff_size);
+                if(recv_buff_size > cur_max_buff_size) {
+                    // allocate more memory
+                    free(buffer);
+                    cur_max_buff_size = recv_buff_size;
+                    buffer = malloc(recv_buff_size);
+                }
+#ifdef TRACE
+                VT_begin(event_recv_back);
+#endif
+ 
 #if CHAM_STATS_RECORD
-        double cur_time = omp_get_wtime();
+                cur_time = omp_get_wtime();
+#endif
+                MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status_receiveBack.MPI_SOURCE, cur_status_receiveBack.MPI_TAG,
+                                                                                      chameleon_comm_mapped, MPI_STATUS_IGNORE);
+#if CHAM_STATS_RECORD
+                cur_time = omp_get_wtime()-cur_time;
+                _mtx_time_comm_back_recv.lock();
+                _time_comm_back_recv_sum += cur_time;
+                _time_comm_back_recv_count++;
+                _mtx_time_comm_back_recv.unlock();
+#endif
+                DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", cur_status_receiveBack.MPI_SOURCE, 
+                                                                                               cur_status_receiveBack.MPI_TAG);
+                // copy results back to source pointers with memcpy
+                TargetTaskEntryTy *task_entry = got->second;
+                char * cur_ptr = (char*) buffer;
+                for(int i = 0; i < task_entry->arg_num; i++) {
+                    int is_lit      = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+                    int is_from     = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
+
+                    if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
+                        print_arg_info("receive_remote_tasks", task_entry, i);
+                    
+                        // we already have information about size and data type
+                        memcpy(task_entry->arg_hst_pointers[i], cur_ptr, task_entry->arg_sizes[i]);
+                        cur_ptr += task_entry->arg_sizes[i];
+                    }
+                }
+#ifdef TRACE
+                VT_end(event_offload_wait_recv);
+#endif
+            }
+	    }
+        // receive new task
+        if ( flag_open_request_receive ) {
+#if CHAM_STATS_RECORD
+            cur_time = omp_get_wtime();
 #endif
 #ifdef TRACE
-        VT_begin(event_receive_tasks);
+            VT_begin(event_receive_tasks);
 #endif
-        MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
-        if(recv_buff_size > cur_max_buff_size) {
-            // allocate more memory
-            free(buffer);
-            cur_max_buff_size = recv_buff_size;
-            buffer = malloc(recv_buff_size);
+            MPI_Get_count(&cur_status_receive, MPI_BYTE, &recv_buff_size);
+            if(recv_buff_size > cur_max_buff_size) {
+                // allocate more memory
+                free(buffer);
+                cur_max_buff_size = recv_buff_size;
+                buffer = malloc(recv_buff_size);
+            }
+
+            // now receive the metadata
+            res = MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+#ifdef TRACE
+            VT_end(event_receive_tasks);
+#endif
+	        TargetTaskEntryTy *task = decode_send_buffer_metadata(buffer);
+#ifdef TRACE
+            VT_begin(event_receive_tasks);
+#endif
+	        for(int32_t i=0; i<task->arg_num; i++) {
+	            MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
+            } 
+#ifdef TRACE
+            VT_end(event_receive_tasks);
+#endif
+
+#if CHAM_STATS_RECORD
+            cur_time = omp_get_wtime()-cur_time;
+            _mtx_time_comm_recv_task.lock();
+            _time_comm_recv_task_sum += cur_time;
+            _time_comm_recv_task_count++;
+            _mtx_time_comm_recv_task.unlock();
+#endif
+
+            // set information for sending back results/updates if necessary
+            task->source_mpi_rank   = cur_status_receive.MPI_SOURCE;
+            task->source_mpi_tag    = cur_status_receive.MPI_TAG;
+
+            // add task to stolen list and increment counter
+            _mtx_stolen_remote_tasks.lock();
+            _stolen_remote_tasks.push_back(task);
+            _mtx_stolen_remote_tasks.unlock();
+
+            _mtx_load_exchange.lock();
+            _num_stolen_tasks_outstanding++;
+            _load_info_local++;
+            trigger_update_outstanding();
+            _mtx_load_exchange.unlock();
         }
-
-        // now receive the metadata
-        res = MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
-#ifdef TRACE
-        VT_end(event_receive_tasks);
-#endif
-	 TargetTaskEntryTy *task = decode_send_buffer_metadata(buffer);
-#ifdef TRACE
-        VT_begin(event_receive_tasks);
-#endif
-	 for(int32_t i=0; i<task->arg_num; i++) {
-		MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status.MPI_SOURCE, cur_status.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
-        } 
-#ifdef TRACE
-        VT_end(event_receive_tasks);
-#endif
-
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime()-cur_time;
-        _mtx_time_comm_recv_task.lock();
-        _time_comm_recv_task_sum += cur_time;
-        _time_comm_recv_task_count++;
-        _mtx_time_comm_recv_task.unlock();
-#endif
-
-        // set information for sending back results/updates if necessary
-        task->source_mpi_rank   = cur_status.MPI_SOURCE;
-        task->source_mpi_tag    = cur_status.MPI_TAG;
-
-        // add task to stolen list and increment counter
-        _mtx_stolen_remote_tasks.lock();
-        _stolen_remote_tasks.push_back(task);
-        _mtx_stolen_remote_tasks.unlock();
-
-        _mtx_load_exchange.lock();
-        _num_stolen_tasks_outstanding++;
-        _load_info_local++;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
     }
 }
 

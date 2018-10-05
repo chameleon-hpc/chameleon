@@ -758,9 +758,9 @@ void* receive_remote_tasks(void* arg) {
         int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
 
     static int event_recv_back = -1;
-    std::string event_recv_back = "receive_back";
-    if(event_offload_recv == -1) 
-        int ierr = VT_funcdef(event_recv_back.c_str(), VT_NOCLASS, &event_recv_back);
+    std::string event_recv_back_name = "receive_back";
+    if(event_recv_back == -1) 
+        int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
 #endif 
     // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
     // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -849,7 +849,7 @@ void* receive_remote_tasks(void* arg) {
                     }
                 }
 #ifdef TRACE
-                VT_end(event_offload_wait_recv);
+                VT_end(event_recv_back);
 #endif
             }
 	    }

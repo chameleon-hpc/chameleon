@@ -33,6 +33,14 @@ std::mutex _mtx_time_comm_back_recv;
 double _time_comm_back_recv_sum;
 int _time_comm_back_recv_count;
 
+std::mutex _mtx_time_encode;
+double _time_encode_sum;
+int _time_encode_count;
+
+std::mutex _mtx_time_decode;
+double _time_decode_sum;
+int _time_decode_count;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,6 +67,12 @@ void cham_stats_init_stats() {
 
     _time_comm_back_recv_sum = 0.0;
     _time_comm_back_recv_count = 0;
+
+    _time_encode_sum = 0.0;
+    _time_encode_count = 0;
+
+    _time_decode_sum = 0.0;
+    _time_decode_count = 0;
 }
 
 void cham_stats_print_stats_w_mean(std::string name, double sum, int count) {
@@ -80,6 +94,8 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
     cham_stats_print_stats_w_mean("_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);
     cham_stats_print_stats_w_mean("_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
+    cham_stats_print_stats_w_mean("_time_encode_sum", _time_encode_sum, _time_encode_count);
+    cham_stats_print_stats_w_mean("_time_decode_sum", _time_decode_sum, _time_decode_count);
 }
 
 #ifdef __cplusplus

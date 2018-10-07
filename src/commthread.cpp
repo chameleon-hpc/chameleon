@@ -25,8 +25,7 @@ int chameleon_comm_rank = -1;
 int chameleon_comm_size = -1;
 
 // global counter for offloads used for generating unique tag id
-std::mutex _mtx_global_offload_counter;
-int _global_offload_counter = 0;
+std::atomic<int> _global_offload_counter(0);
 
 std::vector<intptr_t> _image_base_addresses;
 
@@ -121,12 +120,16 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
+#if OFFLOAD_DATA_PACKING_TYPE == 0
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
-void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size, int tag);
 TargetTaskEntryTy* decode_send_buffer(void * buffer);
+#elif OFFLOAD_DATA_PACKING_TYPE == 1
+void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size);
 TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer);
+#endif
+
 short pin_thread_to_last_core();
-void* offload_action(OffloadEntryTy *task);
+void* offload_action(void *task);
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
@@ -338,7 +341,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
         // ...
     // }
 
-    offload_action( entry);
+    offload_action((void*)entry);
 
 #if CHAM_STATS_RECORD
     _mtx_num_tasks_offloaded.lock();
@@ -353,8 +356,8 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     return CHAM_SUCCESS;
 }
 
-// This should run in a single pthread because it should be blocking
-void* offload_action(OffloadEntryTy *entry) {
+void* offload_action(void *v_entry) {
+    OffloadEntryTy *entry = (OffloadEntryTy *) v_entry;
 #ifdef TRACE
     static int event_offload_send = -1;
     std::string event_offload_send_name = "offload_send";
@@ -367,35 +370,44 @@ void* offload_action(OffloadEntryTy *entry) {
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
     DBP("offload_action (enter) - task_entry: " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
 
-    // calculate proper tag that contains bit combination of sender as well as 
-    // "task id" (maybe global increment per process)
-    _mtx_global_offload_counter.lock();
+    // calculate proper tag that contains bit combination of sender as well as "task id" (global increment per process)
     int tmp_counter = ++_global_offload_counter;
-    _mtx_global_offload_counter.unlock();
     int tmp_rank = chameleon_comm_rank;
     int tmp_tag = (tmp_rank << 16) | (tmp_counter);
 
     // encode buffer
     int32_t buffer_size = 0;
-    void * buffer = encode_send_buffer_metadata(entry->task_entry, &buffer_size, tmp_tag);
-
-#ifdef TRACE
-    VT_begin(event_offload_send);
-#endif
-    // // == DEBUG: Verify bit encoding
-    // int tmp_verify_count = tmp_tag & 0x0000ffff;
-    // int tmp_verify_rank = tmp_tag >> 16;
-    // // == DEBUG
-    
-    // send data to target rank
-    DBP("offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
+    void *buffer = NULL;
 
 #if CHAM_STATS_RECORD
     double cur_time;
     cur_time = omp_get_wtime();
 #endif
-    MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm); //TODO: introduce metadata_tag
+#if OFFLOAD_DATA_PACKING_TYPE == 0
+    buffer = encode_send_buffer(entry->task_entry, &buffer_size);
+#elif OFFLOAD_DATA_PACKING_TYPE == 1
+    buffer = encode_send_buffer_metadata(entry->task_entry, &buffer_size);
+#endif
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    _mtx_time_encode.lock();
+    _time_encode_sum += cur_time;
+    _time_encode_count++;
+    _mtx_time_encode.unlock();
+#endif
 
+#ifdef TRACE
+    VT_begin(event_offload_send);
+#endif    
+    // send data to target rank
+    DBP("offload_action - sending data to target rank %d with tag: %d\n", entry->target_rank, tmp_tag);
+
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime();
+#endif
+    MPI_Send(buffer, buffer_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
+
+#if OFFLOAD_DATA_PACKING_TYPE == 1
     for(int i=0; i<entry->task_entry->arg_num; i++) {
         int is_lit      = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         if(is_lit) {
@@ -405,6 +417,7 @@ void* offload_action(OffloadEntryTy *entry) {
             MPI_Send(entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm);
         } 
    }
+#endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     _mtx_time_comm_send_task.lock();
@@ -434,7 +447,8 @@ void* offload_action(OffloadEntryTy *entry) {
     return nullptr;
 }
 
-void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size, int tag) {
+#if OFFLOAD_DATA_PACKING_TYPE == 1
+void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #ifdef TRACE
     static int event_encode = -1;
     std::string event_encode_name = "encode";
@@ -501,7 +515,7 @@ void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size
 #endif
     return buff;    
 }
-
+#elif OFFLOAD_DATA_PACKING_TYPE == 0
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #ifdef TRACE
     static int event_encode = -1;
@@ -591,7 +605,9 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #endif
     return buff;    
 }
+#endif
 
+#if OFFLOAD_DATA_PACKING_TYPE == 0
 TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 #ifdef TRACE
     static int event_decode = -1;
@@ -670,7 +686,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer) {
 #endif 
     return task;
 }
-
+#elif OFFLOAD_DATA_PACKING_TYPE == 1
 TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer) {
 #ifdef TRACE
     static int event_decode = -1;
@@ -740,14 +756,7 @@ TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer) {
 #endif 
     return task;
 }
-
-//int decode_tag_from_metadata(void *buffer, int32_t bufferSize) {
-//    char *cur_ptr = (char*) buffer;
-//    cur_ptr += bufferSize;
-//    cur_ptr -= sizeof(int);
-//    return ((int) cur_ptr[0]);
-//}
-
+#endif
 
 // should run in a single thread that is always waiting for incoming requests
 void* receive_remote_tasks(void* arg) {
@@ -803,11 +812,13 @@ void* receive_remote_tasks(void* arg) {
         }
 
         if( flag_open_request_receiveBack ) {
+            bool match = false;
 	        _mtx_map_tag_to_task.lock();
             std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
-	        _mtx_map_tag_to_task.unlock();
+            match = got != _map_tag_to_task.end();
+            _mtx_map_tag_to_task.unlock();
             // receive data back
-	        if(got!=_map_tag_to_task.end()) {
+	        if(match) {
 	            MPI_Get_count(&cur_status_receiveBack, MPI_BYTE, &recv_buff_size);
                 if(recv_buff_size > cur_max_buff_size) {
                     // allocate more memory
@@ -869,12 +880,29 @@ void* receive_remote_tasks(void* arg) {
                 buffer = malloc(recv_buff_size);
             }
 
-            // now receive the metadata
+            // now receive at least meta data
             res = MPI_Recv(buffer, recv_buff_size, MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
 #ifdef TRACE
             VT_end(event_receive_tasks);
 #endif
-	        TargetTaskEntryTy *task = decode_send_buffer_metadata(buffer);
+            TargetTaskEntryTy *task = NULL;
+#if CHAM_STATS_RECORD
+            double cur_time_decode;
+            cur_time_decode = omp_get_wtime();
+#endif
+#if OFFLOAD_DATA_PACKING_TYPE == 0
+            task = decode_send_buffer(buffer);
+#elif OFFLOAD_DATA_PACKING_TYPE == 1
+	        task = decode_send_buffer_metadata(buffer);
+#endif
+#if CHAM_STATS_RECORD
+            cur_time_decode = omp_get_wtime()-cur_time_decode;
+            _mtx_time_decode.lock();
+            _time_decode_sum += cur_time_decode;
+            _time_decode_count++;
+            _mtx_time_decode.unlock();
+#endif
+#if OFFLOAD_DATA_PACKING_TYPE == 1
 #ifdef TRACE
             VT_begin(event_receive_tasks);
 #endif
@@ -885,19 +913,19 @@ void* receive_remote_tasks(void* arg) {
                 } else {
 	                MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, MPI_STATUS_IGNORE);
                 }
-            } 
+            }
 #ifdef TRACE
             VT_end(event_receive_tasks);
+#endif
 #endif
 
 #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
             _mtx_time_comm_recv_task.lock();
-            _time_comm_recv_task_sum += cur_time;
+            _time_comm_recv_task_sum += (cur_time-cur_time_decode);
             _time_comm_recv_task_count++;
             _mtx_time_comm_recv_task.unlock();
 #endif
-
             // set information for sending back results/updates if necessary
             task->source_mpi_rank   = cur_status_receive.MPI_SOURCE;
             task->source_mpi_tag    = cur_status_receive.MPI_TAG;
@@ -1123,7 +1151,7 @@ void* service_thread_action(void *arg) {
             }
 #endif
         }
-#endif
+#endif // #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {

@@ -44,6 +44,14 @@ extern std::mutex _mtx_time_comm_back_recv;
 extern double _time_comm_back_recv_sum;
 extern int _time_comm_back_recv_count;
 
+extern std::mutex _mtx_time_encode;
+extern double _time_encode_sum;
+extern int _time_encode_count;
+
+extern std::mutex _mtx_time_decode;
+extern double _time_decode_sum;
+extern int _time_decode_count;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

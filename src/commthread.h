@@ -6,20 +6,35 @@
 
 #include "chameleon.h"
 
-#ifndef OFFLOAD_BLOCKING
-#define OFFLOAD_BLOCKING 0
+// Special version with 2 ranks where master (rank 0) is always offloading to rank 1
+#ifndef FORCE_OFFLOAD_MASTER_WORKER
+#define FORCE_OFFLOAD_MASTER_WORKER 0
 #endif
 
+// Flag wether offloading in general is enabled or disabled
 #ifndef OFFLOAD_ENABLED
 #define OFFLOAD_ENABLED 1
 #endif
 
+// Allow offload as soon as sum of outstanding jobs has changed
 #ifndef OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
 #define OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED 1
 #endif
 
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
+// Just allow a single offload and block offload until a local or remote task has been executed and the local load has changed again
+#ifndef OFFLOAD_BLOCKING
+#define OFFLOAD_BLOCKING 0
+#endif
+
+// determines how data (arguments) is packed and send during offloading
+#ifndef OFFLOAD_DATA_PACKING_TYPE
+#define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments to gether and send it with a single message (requires copy to buffer)
+// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
+#endif
+
+// Create a separate thread for offloads that expect mapped data to be transfered back
+#ifndef OFFLOAD_CREATE_SEPARATE_THREAD
+#define OFFLOAD_CREATE_SEPARATE_THREAD 0
 #endif
 
 // communicator for remote task requests
@@ -31,10 +46,6 @@ extern MPI_Comm chameleon_comm_load;
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
-
-// global counter for offloads used for generating unique tag id
-extern std::mutex _mtx_global_offload_counter;
-extern int _global_offload_counter;
 
 extern std::vector<intptr_t> _image_base_addresses;
 

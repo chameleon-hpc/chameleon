@@ -364,7 +364,7 @@ static void receive_handler(void* buffer, int tag, int source) {
                                     source,
                                     task->arg_num, 
                                     requests,
-                                    false,
+                                    MPI_BLOCKING,
                                     handler_noop);
 #ifdef TRACE
     VT_end(event_receive_tasks);
@@ -546,7 +546,7 @@ void* offload_action(void *v_entry) {
 #if CHAM_STATS_RECORD
     request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
                                 requests,
-                                false,
+                                MPI_BLOCKING,
                                 send_handler,
                                 buffer);
                                 
@@ -966,7 +966,7 @@ void* receive_remote_tasks(void* arg) {
                                                                                       chameleon_comm_mapped, &request);
                 request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, 1, 
                                                         &request,
-                                                        false,
+                                                        MPI_BLOCKING,
                                                         receive_back_handler,
                                                         buffer);
 #if CHAM_STATS_RECORD
@@ -976,23 +976,7 @@ void* receive_remote_tasks(void* arg) {
                 _time_comm_back_recv_count++;
                 _mtx_time_comm_back_recv.unlock();
 #endif
-               // DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", cur_status_receiveBack.MPI_SOURCE, 
-               //                                                                                cur_status_receiveBack.MPI_TAG);
-                // copy results back to source pointers with memcpy
-               // TargetTaskEntryTy *task_entry = got->second;
-               // char * cur_ptr = (char*) buffer;
-               // for(int i = 0; i < task_entry->arg_num; i++) {
-               //    int is_lit      = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-               //    int is_from     = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
-               //     if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-               //         print_arg_info("receive_remote_tasks", task_entry, i);
-                    
-                        // we already have information about size and data type
-               //         memcpy(task_entry->arg_hst_pointers[i], cur_ptr, task_entry->arg_sizes[i]);
-               //         cur_ptr += task_entry->arg_sizes[i];
-               //     }
-               // }
 #ifdef TRACE
                 VT_end(event_recv_back);
 #endif
@@ -1016,7 +1000,7 @@ void* receive_remote_tasks(void* arg) {
                                             cur_status_receive.MPI_SOURCE,
                                             1, 
                                             &request,
-                                            false,
+                                            MPI_BLOCKING,
                                             receive_handler,
                                             buffer);
 #ifdef TRACE
@@ -1282,7 +1266,7 @@ void* service_thread_action(void *arg) {
 #endif
         MPI_Request request;
         MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &request);
-        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, false, send_back_handler, buff );
+        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, buff );
 #if CHAM_STATS_RECORD
         cur_time = omp_get_wtime()-cur_time;
         _mtx_time_comm_back_send.lock();

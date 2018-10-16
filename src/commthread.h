@@ -5,6 +5,7 @@
 #include <mpi.h>
 
 #include "chameleon.h"
+#include "request_manager.h"
 
 // Special version with 2 ranks where master (rank 0) is always offloading to rank 1
 #ifndef FORCE_OFFLOAD_MASTER_WORKER
@@ -37,6 +38,11 @@
 #define OFFLOAD_CREATE_SEPARATE_THREAD 0
 #endif
 
+//Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
+#ifndef MPI_BLOCKING
+#define MPI_BLOCKING 0
+#endif
+
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
@@ -46,6 +52,9 @@ extern MPI_Comm chameleon_comm_load;
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
+
+extern RequestManager request_manager_send;
+extern RequestManager request_manager_receive;
 
 extern std::vector<intptr_t> _image_base_addresses;
 

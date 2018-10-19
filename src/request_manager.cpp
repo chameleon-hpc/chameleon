@@ -61,8 +61,8 @@ void RequestManager::progressRequests() {
     int rid = vecid_to_rid[idx];
     int gid = _map_rid_to_gid[rid];
     _outstanding_reqs_for_group[gid]--;
-    _map_rid_to_gid.erase(gid);
-    _map_rid_to_request.erase(gid);
+    _map_rid_to_gid.erase(rid);
+    _map_rid_to_request.erase(rid);
    
     if(_outstanding_reqs_for_group[gid]==0) { 
        _outstanding_reqs_for_group.erase(gid);

@@ -19,15 +19,23 @@ class RequestManager {
     void progressRequests();
 
   private:
+    struct RequestGroupData {
+        void *buffer;
+        std::function<void(void*, int, int)> handler;
+        int rank;
+        int tag;
+    };
+
+    struct RequestData {
+        int gid;
+        MPI_Request mpi_request;
+    };
+
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     std::queue<int> _request_queue;
-    std::unordered_map<int, void*> _map_id_to_buffers;
-    std::unordered_map<int, std::function<void(void*, int, int)>> _map_id_to_handler;
-    std::unordered_map<int, int> _map_id_to_rank;
-    std::unordered_map<int, int> _map_id_to_tag;
-    std::unordered_map<int, int> _map_rid_to_gid;
-    std::unordered_map<int, MPI_Request> _map_rid_to_request;
+    std::unordered_map<int, RequestGroupData> _map_id_to_request_group_data;
+    std::unordered_map<int, RequestData> _map_rid_to_request_data;
     std::unordered_map<int, int> _outstanding_reqs_for_group;
 };
 

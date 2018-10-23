@@ -43,6 +43,10 @@
 #define MPI_BLOCKING 0
 #endif
 
+#ifndef OFFLOADING_STRATEGY_AGGRESSIVE
+#define OFFLOADING_STRATEGY_AGGRESSIVE 1
+#endif
+
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values

@@ -20,16 +20,16 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
   }
  
   int gid=_groupId++;
-  _map_id_to_buffers.insert(std::make_pair(gid, buffer));
-  _map_id_to_handler.insert(std::make_pair(gid, handler));
-  _map_id_to_rank.insert(std::make_pair(gid, rank));
-  _map_id_to_tag.insert(std::make_pair(gid, tag));
+  RequestGroupData request_group_data = {buffer, handler, rank, tag};
+  _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
   _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));
 
   for(int i=0; i<n_requests; i++) {
     int rid=_id++;
-    _map_rid_to_gid.insert(std::make_pair(rid, gid));
-    _map_rid_to_request.insert(std::make_pair(rid, requests[i]));
+ 
+    RequestData request_data = {gid, requests[i]};
+
+    _map_rid_to_request_data.insert(std::make_pair(rid, request_data));
     _request_queue.push(rid);
   }
 }
@@ -41,7 +41,7 @@ void RequestManager::progressRequests() {
   for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
     int rid = _request_queue.front();
     _request_queue.pop();
-    MPI_Request request = _map_rid_to_request[rid];
+    MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
     requests.push_back(request);  
     vecid_to_rid.insert(std::make_pair(i, rid));
   }
@@ -59,25 +59,24 @@ void RequestManager::progressRequests() {
   for(int i=0; i<outcount; i++) {
     int idx = arr_of_indices[i];
     int rid = vecid_to_rid[idx];
-    int gid = _map_rid_to_gid[rid];
+
+    RequestData request_data = _map_rid_to_request_data[rid];
+    int gid = request_data.gid;
     _outstanding_reqs_for_group[gid]--;
-    _map_rid_to_gid.erase(rid);
-    _map_rid_to_request.erase(rid);
+    _map_rid_to_request_data.erase(rid);
    
     if(_outstanding_reqs_for_group[gid]==0) { 
        _outstanding_reqs_for_group.erase(gid);
-       std::function<void(void*, int, int)> handler = _map_id_to_handler[gid];
-       void* buffer = _map_id_to_buffers[gid];
-       int tag = _map_id_to_tag[gid];
-       int rank = _map_id_to_rank[gid];
-       
+       RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
+
+       std::function<void(void*, int, int)> handler = request_group_data.handler;
+       void* buffer = request_group_data.buffer;
+       int tag = request_group_data.tag;
+       int rank = request_group_data.rank;
+               
        handler(buffer, tag, rank);
 
-       //for(int i=0; i<buf_to_delete.size(); i++) delete[] buf_to_delete[i]; 
-       _map_id_to_rank.erase(gid);
-       _map_id_to_tag.erase(gid);
-       _map_id_to_handler.erase(gid);
-	   _map_id_to_buffers.erase(gid);
+       _map_id_to_request_group_data.erase(gid);
     } 
   }
 

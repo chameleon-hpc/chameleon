@@ -60,6 +60,8 @@ extern std::atomic<long> mem_allocated;
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
+// atomic counter for task ids
+extern std::atomic<int32_t> _task_id_counter;
 
 // TODO: fix that to have only one place where that is defined
 // copy of OpenMP target argument types
@@ -111,11 +113,14 @@ enum chameleon_task_status {
 };
 
 struct TargetTaskEntryTy {
+    // target entry point / function that holds the code that should be executed
     intptr_t tgt_entry_ptr;
-    
     // we need index of image here as well since pointers are not matching for other ranks
     int32_t idx_image = 0;
     ptrdiff_t entry_image_offset = 0;
+
+    // task id (unique id that combines the host rank and a unique id per rank)
+    int32_t task_id;
 
     // number of arguments that should be passed to "function call" for target region
     int32_t arg_num;
@@ -129,8 +134,6 @@ struct TargetTaskEntryTy {
     // and freeing of entries in data entry table
     std::vector<void *> arg_tgt_pointers;
     std::vector<ptrdiff_t> arg_tgt_offsets;
-    // currently these are not used at all because they are irrelevant for the execution
-    std::vector<void *> arg_tgt_converted_pointers;
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank = 0;
@@ -138,7 +141,7 @@ struct TargetTaskEntryTy {
 
     // Constructor 1: Called when creating new task during decoding
     TargetTaskEntryTy() {
-
+        // here we dont need to give a task id in that case because it should be transfered from source
     }
 
     // Constructor 2: Called from libomptarget plugin to create a new task
@@ -148,6 +151,11 @@ struct TargetTaskEntryTy {
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num) {
+            // generate a unique task id
+            int tmp_counter = ++_task_id_counter;
+            // int tmp_rank = chameleon_comm_rank;
+            task_id = (chameleon_comm_rank << 16) | (tmp_counter);
+            // DBP("TargetTaskEntryTy - Created task with (task_id=%d)\n", task_id);
 
             tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;
             arg_num = p_arg_num;
@@ -159,15 +167,11 @@ struct TargetTaskEntryTy {
             arg_types.resize(arg_num);
             arg_tgt_pointers.resize(arg_num);
             arg_tgt_offsets.resize(arg_num);
-            arg_tgt_converted_pointers.resize(arg_num);
 
             for(int i = 0; i < arg_num; i++) {
                 arg_tgt_pointers[i] = p_tgt_args[i];
                 arg_tgt_offsets[i] = p_tgt_offsets[i];
                 arg_types[i] = p_tgt_arg_types[i];
-                
-                // calculate converted pointers that include offset
-                arg_tgt_converted_pointers[i] = (void *)((intptr_t)arg_tgt_pointers[i] + arg_tgt_offsets[i]);
             }
         }
     
@@ -225,7 +229,7 @@ int32_t chameleon_distributed_taskwait(int nowait = 0);
 
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
 
-void chameleon_remove_data(void *tgt_ptr);
+void chameleon_free_data(void *tgt_ptr);
 
 void chameleon_incr_mem_alloc(int64_t size);
 

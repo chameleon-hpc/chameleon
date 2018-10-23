@@ -68,10 +68,6 @@ extern int32_t _num_stolen_tasks_outstanding;
 extern std::mutex _mtx_stolen_remote_tasks_send_back;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 
-// entries that should be offloaded to specific ranks
-extern std::mutex _mtx_offload_entries;
-extern std::list<OffloadEntryTy*> _offload_entries;
-
 // ====== Info about outstanding jobs (local & stolen) ======
 // extern std::mutex _mtx_outstanding_jobs;
 extern std::vector<int32_t> _outstanding_jobs_ranks;

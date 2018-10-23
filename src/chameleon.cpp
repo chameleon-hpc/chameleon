@@ -14,12 +14,6 @@
 #include "VT.h"
 #endif
 
-std::mutex _mtx_relp;
-
-#ifdef CHAM_DEBUG
-std::atomic<long> mem_allocated;
-#endif
-
 int TargetTaskEntryTy::HasAtLeastOneOutput() {
     for(int i = 0; i < this->arg_num; i++) {
         if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
@@ -27,6 +21,19 @@ int TargetTaskEntryTy::HasAtLeastOneOutput() {
     }
     return 0;
 }
+
+// ================================================================================
+// Variables
+// ================================================================================
+std::mutex _mtx_relp;
+#ifdef CHAM_DEBUG
+std::atomic<long> mem_allocated;
+#endif
+// flag that tells whether library has already been initialized
+std::mutex _mtx_ch_is_initialized;
+int32_t _ch_is_initialized = 0;
+// atomic counter for task ids
+std::atomic<int32_t> _task_id_counter(0);
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,14 +47,20 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
 int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_remote_task();
 
-std::mutex _mtx_ch_is_initialized;
-int32_t _ch_is_initialized = 0;
-
+/* 
+ * Function verify_initialized
+ * Verifies whether library has already been initialized or not.
+ * Otherwise it will throw an error. 
+ */
 inline void verify_initialized() {
     if(!_ch_is_initialized)
         throw std::runtime_error("Chameleon has not been initilized before.");
 }
 
+/* 
+ * Function chameleon_init
+ * Initialized chameleon library, communicators and all whats necessary.
+ */
 int32_t chameleon_init() {
     if(_ch_is_initialized)
         return CHAM_SUCCESS;
@@ -94,6 +107,7 @@ int32_t chameleon_init() {
     _outstanding_jobs_sum = 0;
     _load_info_sum = 0;
     _mtx_load_exchange.unlock();
+    _task_id_counter = 0;
 
     // dummy target region to force binary loading, use host offloading for that purpose
     #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
@@ -107,12 +121,21 @@ int32_t chameleon_init() {
     return CHAM_SUCCESS;
 }
 
+/*
+ * Function chameleon_incr_mem_alloc
+ * Increment counter that measures how much memory is allocated for mapped types
+ */
 void chameleon_incr_mem_alloc(int64_t size) {
 #ifdef CHAM_DEBUG
     mem_allocated += size;
 #endif
 }
 
+/*
+ * Function chameleon_set_image_base_address
+ * Sets base address of particular image index.
+ * This is necessary to determine the entry point for functions that represent a target construct
+ */
 int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address) {
     if(_image_base_addresses.size() < idx_image+1) {
         _image_base_addresses.resize(idx_image+1);
@@ -123,6 +146,10 @@ int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address) {
     return CHAM_SUCCESS;
 }
 
+/* 
+ * Function chameleon_finalize
+ * Finalizing and cleaning up chameleon library before the program ends.
+ */
 int32_t chameleon_finalize() {
     DBP("chameleon_finalize (enter)\n");
     verify_initialized();
@@ -131,6 +158,15 @@ int32_t chameleon_finalize() {
 }
 
 #if !FORCE_OFFLOAD_MASTER_WORKER
+/* 
+ * Function chameleon_distributed_taskwait
+ * Default distributed task wait function that will
+ *      - start communication threads
+ *      - execute local and stolen tasks
+ *      - wait until all global work is done
+ * 
+ * Also provides the possibility for a nowait if there is a delay caused by stopping the comm threads
+ */
 int32_t chameleon_distributed_taskwait(int nowait) {
 #ifdef TRACE
     static int event_process_local = -1;
@@ -288,6 +324,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 }
 #endif
 
+/* 
+ * Function chameleon_submit_data
+ * Submit mapped data that will be used by tasks.
+ */
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     DBP("chameleon_submit_data (enter) - tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
     verify_initialized();
@@ -312,7 +352,7 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     return CHAM_SUCCESS;
 }
 
-void chameleon_remove_data(void *tgt_ptr) {
+void chameleon_free_data(void *tgt_ptr) {
     _mtx_data_entry.lock();
     for(auto &entry : _data_entries) {
         if(entry->tgt_ptr == tgt_ptr) {
@@ -328,7 +368,7 @@ void chameleon_remove_data(void *tgt_ptr) {
 }
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task) {
-    DBP("chameleon_add_task (enter) - task_entry: " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+    DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
     lookup_hst_pointers(task);
@@ -369,13 +409,13 @@ TargetTaskEntryTy* chameleon_pop_task() {
 }
 
 int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
-    DBP("lookup_hst_pointers (enter) - task_entry: " DPxMOD "\n", DPxPTR(task->tgt_entry_ptr));
+    DBP("lookup_hst_pointers (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     for(int i = 0; i < task->arg_num; i++) {
         // get type and pointer
         int64_t tmp_type    = task->arg_types[i];
         void * tmp_tgt_ptr  = task->arg_tgt_pointers[i];
-        int is_lit      = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-        int is_from     = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
+        int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+        int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
 
         if(tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
             // pointer represents numerical value that is implicitly mapped
@@ -462,21 +502,8 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
     return CHAM_SUCCESS;
 }
 
-// int32_t add_offload_entry(TargetTaskEntryTy *task, int rank) {
-//     DBP("add_offload_entry (enter) - task_entry: " DPxMOD ", rank: %d\n", DPxPTR(task->tgt_entry_ptr), rank);
-//     // create new entry
-//     OffloadEntryTy *new_entry = new OffloadEntryTy(task, rank);
-
-//     // save in list
-//     _mtx_offload_entries.lock();
-//     _offload_entries.push_back(new_entry);
-//     _mtx_offload_entries.unlock();
-
-//     return CHAM_SUCCESS;
-// }
-
 int32_t execute_target_task(TargetTaskEntryTy *task) {
-    DBP("execute_target_task (enter) - task_entry: " DPxMOD "\n", DPxPTR(task->tgt_entry_ptr));
+    DBP("execute_target_task (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     // Use libffi to launch execution.
     ffi_cif cif;
 

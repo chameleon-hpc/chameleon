@@ -222,10 +222,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
 #if CHAM_STATS_RECORD
                 cur_time = omp_get_wtime()-cur_time;
-                _mtx_time_task_execution_local.lock();
-                _time_task_execution_local_sum += cur_time;
+                atomic_add_dbl(_time_task_execution_local_sum, cur_time);
                 _time_task_execution_local_count++;
-                _mtx_time_task_execution_local.unlock();
 #endif
                 // it is save to decrement counter after local execution
                 _mtx_load_exchange.lock();
@@ -235,15 +233,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 _mtx_load_exchange.unlock();
 
 #if OFFLOAD_BLOCKING
-                _mtx_offload_blocked.lock();
                 _offload_blocked = 0;
-                _mtx_offload_blocked.unlock();
 #endif
 
 #if CHAM_STATS_RECORD
-                _mtx_num_executed_tasks_local.lock();
                 _num_executed_tasks_local++;
-                _mtx_num_executed_tasks_local.unlock();
 #endif
             }
         }
@@ -373,8 +367,8 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     // perform lookup in both cases (local execution & offload)
     lookup_hst_pointers(task);
 
-    _mtx_local_tasks.lock();
     // add to queue
+    _mtx_local_tasks.lock();
     _local_tasks.push_back(task);
     _mtx_local_tasks.unlock();
 
@@ -573,10 +567,8 @@ inline int32_t process_remote_task() {
     int32_t res = execute_target_task(remote_task);
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    _mtx_time_task_execution_stolen.lock();
-    _time_task_execution_stolen_sum += cur_time;
+    atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
     _time_task_execution_stolen_count++;
-    _mtx_time_task_execution_stolen.unlock();
 #endif
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - remote");
@@ -584,13 +576,11 @@ inline int32_t process_remote_task() {
     // decrement load counter
     _mtx_load_exchange.lock();
     _load_info_local--;
-    trigger_update_outstanding();
+    // trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
 #if OFFLOAD_BLOCKING
-    _mtx_offload_blocked.lock();
     _offload_blocked = 0;
-    _mtx_offload_blocked.unlock();
 #endif
 
     if(remote_task->HasAtLeastOneOutput()) {
@@ -607,9 +597,7 @@ inline int32_t process_remote_task() {
     }
 
 #if CHAM_STATS_RECORD
-    _mtx_num_executed_tasks_stolen.lock();
     _num_executed_tasks_stolen++;
-    _mtx_num_executed_tasks_stolen.unlock();
 #endif
 #ifdef TRACE
     VT_end(event_process_remote);

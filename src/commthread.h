@@ -57,34 +57,31 @@ extern std::list<OffloadingDataEntryTy*> _data_entries;
 // these can either be executed here or offloaded to a different rank
 extern std::mutex _mtx_local_tasks;
 extern std::list<TargetTaskEntryTy*> _local_tasks;
-extern int32_t _num_local_tasks_outstanding;
+extern std::atomic<int32_t> _num_local_tasks_outstanding;
 
 // list with stolen task entries that should be executed
 extern std::mutex _mtx_stolen_remote_tasks;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
-extern int32_t _num_stolen_tasks_outstanding;
+extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
 extern std::mutex _mtx_stolen_remote_tasks_send_back;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 
-// ====== Info about outstanding jobs (local & stolen) ======
-// extern std::mutex _mtx_outstanding_jobs;
+// for now use a single mutex for box info
+extern std::mutex _mtx_load_exchange;
+// ====== Info about outstanding jobs (local & stolen & offloaded (communication)) ======
 extern std::vector<int32_t> _outstanding_jobs_ranks;
-extern int32_t _outstanding_jobs_local;
-extern int32_t _outstanding_jobs_sum;
+extern std::atomic<int32_t> _outstanding_jobs_local;
+extern std::atomic<int32_t> _outstanding_jobs_sum;
 // ====== Info about real load that is open or is beeing processed ======
-// extern std::mutex _mtx_load_info;
 extern std::vector<int32_t> _load_info_ranks;
 extern int32_t _load_info_local;
 extern int32_t _load_info_sum;
-// for now use a single mutex for box info
-extern std::mutex _mtx_load_exchange;
 
 #if OFFLOAD_BLOCKING
 // only allow offloading when a task has finished on local rank
-extern std::mutex _mtx_offload_blocked;
-extern int32_t _offload_blocked;
+extern std::atomic<int32_t> _offload_blocked;
 #endif
 
 // Threading section

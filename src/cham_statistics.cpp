@@ -1,4 +1,5 @@
 #include "cham_statistics.h"
+#include "chameleon.h"
 
 std::atomic<int>     _num_executed_tasks_local(0);
 std::atomic<int>     _num_executed_tasks_stolen(0);
@@ -71,6 +72,7 @@ void cham_stats_print_stats_w_mean(std::string name, double sum, int count) {
 }
 
 void cham_stats_print_stats() {
+    printf("Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
     printf("Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
     printf("Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
     printf("Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());

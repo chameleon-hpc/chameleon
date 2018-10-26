@@ -2,3 +2,4 @@
 src/libchameleon.so
 *.exe
 /.vscode
+__pycache__

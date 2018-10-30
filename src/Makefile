@@ -1,5 +1,6 @@
 #INSTALL_DIR=~/chameleon
 INSTALL_DIR=~/install/chameleon-lib/1.0
+#INSTALL_DIR=~/install/chameleon-lib/1.0-zero-copy
 
 MPICXX_TRACE ?= mpiicpc
 

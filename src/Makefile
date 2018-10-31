@@ -1,5 +1,8 @@
 INSTALL_DIR=~/chameleon
 #INSTALL_DIR=~/install/chameleon-lib/1.0
+#INSTALL_DIR=~/install/chameleon-lib/1.0-zero-copy
+
+MPICXX_TRACE ?= mpiicpc
 
 default: release
 
@@ -19,14 +22,14 @@ release:
 
 trace:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
-	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu  -std=c++11 -fpic -shared -o libchameleon.so chameleon.cpp commthread.cpp cham_statistics.cpp request_manager.cpp -lffi -lpthread -lhwloc -trace
+	I_MPI_CXX=clang++ $(MPICXX_TRACE) -O3 -g -DTRACE -I$(VT_ROOT)/include -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu  -std=c++11 -fpic -shared -o libchameleon.so chameleon.cpp commthread.cpp cham_statistics.cpp request_manager.cpp -lffi -lpthread -lhwloc -trace
 	
 	cp chameleon.h $(INSTALL_DIR)/include/
 	cp libchameleon.so $(INSTALL_DIR)/lib/
 
 trace-debug:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
-	$(MPICXX) -O0 -g -DCHAM_DEBUG -DTRACE -I$(VT_ROOT)/include -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu  -std=c++11 -fpic -shared -o libchameleon.so chameleon.cpp commthread.cpp cham_statistics.cpp request_manager.cpp -lffi -lpthread -lhwloc -trace
+	I_MPI_CXX=clang++ $(MPICXX_TRACE) -O0 -g -DCHAM_DEBUG -DTRACE -I$(VT_ROOT)/include -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu  -std=c++11 -fpic -shared -o libchameleon.so chameleon.cpp commthread.cpp cham_statistics.cpp request_manager.cpp -lffi -lpthread -lhwloc -trace
 	
 	cp chameleon.h $(INSTALL_DIR)/include/
 	cp libchameleon.so $(INSTALL_DIR)/lib/

@@ -75,6 +75,9 @@ int32_t _load_info_sum;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
 
+// counter for current number of offloaded tasks
+std::atomic<int> _num_offloaded_tasks_outstanding (0);
+
 #if OFFLOAD_BLOCKING
 // only enable offloading when a task has finished on local rank (change has been made)
 std::mutex _mtx_offload_blocked;
@@ -427,6 +430,7 @@ static void receive_back_handler(void* buffer, int tag, int source) {
        }
    }
    free(buffer);
+   _num_offloaded_tasks_outstanding--;
 }
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
@@ -463,6 +467,7 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     // }
 
     offload_action((void*)entry);
+    _num_offloaded_tasks_outstanding++;
 
 #if CHAM_STATS_RECORD
     _mtx_num_tasks_offloaded.lock();
@@ -934,8 +939,12 @@ void* receive_remote_tasks(void* arg) {
         while(!flag_open_request_receive && !flag_open_request_receiveBack) {
             usleep(5);
             // check whether thread should be aborted
-            if(_flag_abort_threads) {
-                DBP("receive_remote_tasks (abort)\n");
+            if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
+
+                DBP("receive_remote_tasks (abort), outstanding requests: %d\n", request_manager_receive.getNumberOfOutstandingRequests());
+                while(!(request_manager_receive.getNumberOfOutstandingRequests()==0)) {
+                  request_manager_receive.progressRequests();
+                }
                 //free(buffer);
                 int ret_val = 0;
                 pthread_exit(&ret_val);
@@ -1199,7 +1208,10 @@ void* service_thread_action(void *arg) {
 
         // check whether to abort thread
         if(_flag_abort_threads) {
-            DBP("service_thread_action (abort)\n");
+            DBP("service_thread_action (abort), outstanding requests: %d\n", request_manager_send.getNumberOfOutstandingRequests());
+            while(!(request_manager_send.getNumberOfOutstandingRequests()==0)) {
+              request_manager_send.progressRequests();
+            }
             free(buffer_load_values);
             int ret_val = 0;
             pthread_exit(&ret_val);

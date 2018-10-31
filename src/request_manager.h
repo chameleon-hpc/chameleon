@@ -17,6 +17,7 @@ class RequestManager {
                          std::function<void(void*, int, int)> handler,
                          void* buffer=NULL);
     void progressRequests();
+    int getNumberOfOutstandingRequests();
 
   private:
     struct RequestGroupData {

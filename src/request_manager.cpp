@@ -87,3 +87,7 @@ void RequestManager::progressRequests() {
   }
 
 }
+
+int RequestManager::getNumberOfOutstandingRequests() {
+  return _request_queue.size();
+}

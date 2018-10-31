@@ -44,7 +44,7 @@
 #endif
 
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 1
+#define OFFLOADING_STRATEGY_AGGRESSIVE 0
 #endif
 
 // communicator for remote task requests

@@ -31,7 +31,7 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
-//extern std::mutex _mtx_relp;
+extern std::mutex _mtx_relp;
 
 #ifdef CHAM_DEBUG
 extern std::atomic<long> mem_allocated;
@@ -41,8 +41,10 @@ extern std::atomic<long> mem_allocated;
 #define RELP( ... )                                                                                         \
   {                                                                                                        \
      \
+     _mtx_relp.lock(); \
     fprintf(stderr, "ChameleonLib R#%d T#%d (OS_TID:%ld): --> ", chameleon_comm_rank, omp_get_thread_num(), syscall(SYS_gettid));      \
     fprintf(stderr, __VA_ARGS__);                                                                           \
+    _mtx_relp.unlock(); \
      \
   }
 #endif
@@ -236,6 +238,10 @@ void chameleon_incr_mem_alloc(int64_t size);
 int32_t chameleon_add_task(TargetTaskEntryTy *task);
 
 TargetTaskEntryTy* chameleon_pop_task();
+
+int32_t chameleon_get_last_local_task_id_added();
+
+int32_t chameleon_local_task_has_finished(int32_t task_id);
 
 #ifdef __cplusplus
 }

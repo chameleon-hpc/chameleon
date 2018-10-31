@@ -84,6 +84,10 @@ extern int32_t _load_info_sum;
 extern std::atomic<int32_t> _offload_blocked;
 #endif
 
+// list that holds task ids (created at the current rank) that are not finsihed yet
+extern std::mutex _mtx_unfinished_locally_created_tasks;
+extern std::list<int32_t> _unfinished_locally_created_tasks;
+
 // Threading section
 extern int _comm_thread_load_exchange_happend;
 

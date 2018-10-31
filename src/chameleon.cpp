@@ -35,6 +35,14 @@ int32_t _ch_is_initialized = 0;
 // atomic counter for task ids
 std::atomic<int32_t> _task_id_counter(0);
 
+// id of last task that has been created by thread.
+// this is thread local storage
+__thread int32_t __last_task_id_added = -1;
+
+// list that holds task ids (created at the current rank) that are not finsihed yet
+std::mutex _mtx_unfinished_locally_created_tasks;
+std::list<int32_t> _unfinished_locally_created_tasks;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -225,6 +233,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 atomic_add_dbl(_time_task_execution_local_sum, cur_time);
                 _time_task_execution_local_count++;
 #endif
+                // mark locally created task finished
+                _mtx_unfinished_locally_created_tasks.lock();
+                _unfinished_locally_created_tasks.remove(cur_task->task_id);
+                _mtx_unfinished_locally_created_tasks.unlock();
+
                 // it is save to decrement counter after local execution
                 _mtx_load_exchange.lock();
                 _num_local_tasks_outstanding--;
@@ -253,69 +266,69 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     return CHAM_SUCCESS;
 }
 #else
-//!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
-int32_t chameleon_distributed_taskwait(int nowait) {
-    DBP("chameleon_distributed_taskwait (enter)\n");
-    verify_initialized();
+// //!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
+// int32_t chameleon_distributed_taskwait(int nowait) {
+//     DBP("chameleon_distributed_taskwait (enter)\n");
+//     verify_initialized();
 
-    // start communication threads here
-    start_communication_threads();
+//     // start communication threads here
+//     start_communication_threads();
 
-    bool had_local_tasks = !_local_tasks.empty();
+//     bool had_local_tasks = !_local_tasks.empty();
    
-    // as long as there are local tasks run this loop
-    while(true) {
-        int32_t res = CHAM_SUCCESS;
+//     // as long as there are local tasks run this loop
+//     while(true) {
+//         int32_t res = CHAM_SUCCESS;
        
-        // ========== Prio 3: work on local tasks
-        if(!_local_tasks.empty()) {
-            TargetTaskEntryTy *cur_task = chameleon_pop_task();
-            if(cur_task == nullptr)
-            {
-                continue;
-            }
+//         // ========== Prio 3: work on local tasks
+//         if(!_local_tasks.empty()) {
+//             TargetTaskEntryTy *cur_task = chameleon_pop_task();
+//             if(cur_task == nullptr)
+//             {
+//                 continue;
+//             }
 
-            // force offloading to test MPI communication process (will be done by comm thread later)
-            if(cur_task) {
-                // create temp entry and offload
-                OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
-                res = offload_task_to_rank(off_entry);
-            }
-        } else {
-            break;
-        }
-    }
+//             // force offloading to test MPI communication process (will be done by comm thread later)
+//             if(cur_task) {
+//                 // create temp entry and offload
+//                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+//                 res = offload_task_to_rank(off_entry);
+//             }
+//         } else {
+//             break;
+//         }
+//     }
 
-    // rank 0 should wait until data comes back
-    if(had_local_tasks) {
-        while(_num_local_tasks_outstanding > 0)
-        {
-            usleep(1000);
-        }
-        // P0: for now return after offloads
-        stop_communication_threads();
-        return CHAM_SUCCESS;
-    }
+//     // rank 0 should wait until data comes back
+//     if(had_local_tasks) {
+//         while(_num_local_tasks_outstanding > 0)
+//         {
+//             usleep(1000);
+//         }
+//         // P0: for now return after offloads
+//         stop_communication_threads();
+//         return CHAM_SUCCESS;
+//     }
 
    
-    // P1: call function to recieve remote tasks
-    while(true) {
-        // only abort if load exchange has happened at least once and there are no outstanding jobs left
-        if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
-            break;
-        }
-        if(!_stolen_remote_tasks.empty()) {
-            int32_t res = process_remote_task();
-        }
-        // sleep for 1 ms
-        usleep(1000);
-    }
-    stop_communication_threads();
+//     // P1: call function to recieve remote tasks
+//     while(true) {
+//         // only abort if load exchange has happened at least once and there are no outstanding jobs left
+//         if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
+//             break;
+//         }
+//         if(!_stolen_remote_tasks.empty()) {
+//             int32_t res = process_remote_task();
+//         }
+//         // sleep for 1 ms
+//         usleep(1000);
+//     }
+//     stop_communication_threads();
    
-    // TODO: need an implicit OpenMP or MPI barrier here?
+//     // TODO: need an implicit OpenMP or MPI barrier here?
 
-    return CHAM_SUCCESS;
-}
+//     return CHAM_SUCCESS;
+// }
 #endif
 
 /* 
@@ -370,6 +383,11 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     // add to queue
     _mtx_local_tasks.lock();
     _local_tasks.push_back(task);
+    // set last task added
+    __last_task_id_added = task->task_id;
+    _mtx_unfinished_locally_created_tasks.lock();
+    _unfinished_locally_created_tasks.push_back(task->task_id);
+    _mtx_unfinished_locally_created_tasks.unlock();
     _mtx_local_tasks.unlock();
 
     _mtx_load_exchange.lock();
@@ -400,6 +418,20 @@ TargetTaskEntryTy* chameleon_pop_task() {
     _mtx_local_tasks.unlock();
     DBP("chameleon_pop_task (exit)\n");
     return task;
+}
+
+int32_t chameleon_get_last_local_task_id_added() {
+    return __last_task_id_added;
+}
+
+/*
+ * Checks whether the corresponding task has already been finished
+ */
+int32_t chameleon_local_task_has_finished(int32_t task_id) {
+    _mtx_unfinished_locally_created_tasks.lock();
+    bool found = (std::find(_unfinished_locally_created_tasks.begin(), _unfinished_locally_created_tasks.end(), task_id) != _unfinished_locally_created_tasks.end());
+    _mtx_unfinished_locally_created_tasks.unlock();
+    return found ? 0 : 1;
 }
 
 int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {

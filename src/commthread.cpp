@@ -476,6 +476,11 @@ void* offload_action(void *v_entry) {
 #ifdef TRACE
         VT_end(event_offload_wait_recv);
 #endif
+        // mark locally created task finished
+        _mtx_unfinished_locally_created_tasks.lock();
+        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
+        _mtx_unfinished_locally_created_tasks.unlock();
+
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
@@ -487,6 +492,11 @@ void* offload_action(void *v_entry) {
         _mtx_map_tag_to_task.unlock();
 #endif
     } else {
+        // mark locally created task finished
+        _mtx_unfinished_locally_created_tasks.lock();
+        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
+        _mtx_unfinished_locally_created_tasks.unlock();
+
         // decrement counter if offloading finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
@@ -828,16 +838,7 @@ void* receive_remote_tasks(void* arg) {
         int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
 #endif
 #endif 
-    // pthread_setcancelstate (PTHREAD_CANCEL_ENABLE, NULL);
-    // pthread_setcanceltype (PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
     pin_thread_to_last_core();
-    
-    // // trigger signal to tell that thread is running now
-    // pthread_mutex_lock( &_th_receive_remote_tasks_mutex );
-    // _th_receive_remote_tasks_created = 1; 
-    // pthread_cond_signal( &_th_receive_remote_tasks_cond );
-    // pthread_mutex_unlock( &_th_receive_remote_tasks_mutex );
-
     DBP("receive_remote_tasks (enter)\n");
 
     int32_t res;
@@ -929,6 +930,11 @@ void* receive_remote_tasks(void* arg) {
 #ifdef TRACE
                 VT_end(event_recv_back);
 #endif
+                // mark locally created task finished
+                _mtx_unfinished_locally_created_tasks.lock();
+                _unfinished_locally_created_tasks.remove(task_entry->task_id);
+                _mtx_unfinished_locally_created_tasks.unlock();
+
                 // decrement counter if offloading + receiving results finished
                 _mtx_load_exchange.lock();
                 _num_local_tasks_outstanding--;

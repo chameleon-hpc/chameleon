@@ -65,9 +65,9 @@ void cham_stats_init_stats() {
 
 void cham_stats_print_stats_w_mean(std::string name, double sum, int count) {
     if(count <= 0) {
-        printf("Stats R#%d:\t%s\tsum=\t%f\tcount=\t%d\tmean=\t%d\n", chameleon_comm_rank, name.c_str(), sum, count, 0);
+        printf("Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", chameleon_comm_rank, name.c_str(), sum, count, 0);
     } else {
-        printf("Stats R#%d:\t%s\tsum=\t%f\tcount=\t%d\tmean=\t%f\n", chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
+        printf("Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
     }
 }
 

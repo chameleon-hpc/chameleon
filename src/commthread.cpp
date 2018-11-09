@@ -227,7 +227,6 @@ int32_t wake_up_comm_threads() {
 int32_t stop_communication_threads() {
 
     // ===> Not necessary any more... should just be done in finalize call
-
     #if !THREAD_ACTIVATION
     _mtx_comm_threads_ended.lock();
     // increment counter
@@ -262,17 +261,17 @@ int32_t stop_communication_threads() {
     _comm_threads_ended_count = 0;
     
     #ifdef CHAM_DEBUG
-        DBP("stop_communication_threads - still mem_allocated = %ld\n", (long)mem_allocated);
-        mem_allocated = 0;
+    DBP("stop_communication_threads - still mem_allocated = %ld\n", (long)mem_allocated);
+    mem_allocated = 0;
     #endif
 
-    _th_receive_remote_tasks_created        = 0;
-    _th_service_actions_created             = 0;
+    _th_receive_remote_tasks_created = 0;
+    _th_service_actions_created = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
     _num_threads_entered_taskwait           = 0;
     _num_threads_idle                       = 0;
     #if CHAM_STATS_RECORD && CHAM_STATS_PRINT
-        cham_stats_print_stats();
+    cham_stats_print_stats();
     #endif
     #endif
     
@@ -576,6 +575,7 @@ void* offload_action(void *v_entry) {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 #else
+        DBP("offload_action - queuing task for later result transfer " DPxMOD " (task_id=%d)\n", DPxPTR(entry->task_entry), tmp_tag);
         _mtx_map_tag_to_task.lock();
         _map_tag_to_task.insert(std::make_pair(tmp_tag, entry->task_entry));
         _mtx_map_tag_to_task.unlock();
@@ -940,22 +940,16 @@ void* receive_remote_tasks(void* arg) {
  
     double cur_time;
 
-    // first check transmission and make sure that buffer has enough memory
-    MPI_Status cur_status_receive;
-    int flag_open_request_receive = 0;
-
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
-    MPI_Status cur_status_receiveBack;
-    int flag_open_request_receiveBack = 0; 
-#endif
-
     while(true) {
+        // first check transmission and make sure that buffer has enough memory
+        MPI_Status cur_status_receive;
+        int flag_open_request_receive = 0;
 
         #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
             // dont do anything if the thread is sleeping
             usleep(20);
-            DBP("receive_remote_tasks - thread sleeping\n");
+            // DBP("receive_remote_tasks - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
                 free(buffer);
@@ -968,6 +962,9 @@ void* receive_remote_tasks(void* arg) {
 #if OFFLOAD_CREATE_SEPARATE_THREAD
         while(!flag_open_request_receive) {
 #else
+        MPI_Status cur_status_receiveBack;
+        int flag_open_request_receiveBack = 0;
+
         while(!flag_open_request_receive && !flag_open_request_receiveBack) {
 #endif
             usleep(5);
@@ -990,8 +987,8 @@ void* receive_remote_tasks(void* arg) {
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
         }
 
-        // if threads have been put to sleep start from beginning to end up in sleep mode
         #if THREAD_ACTIVATION
+        // if threads have been put to sleep start from beginning to end up in sleep mode
         if(_flag_comm_threads_sleeping) {
             DBP("receive_remote_tasks - thread went to sleep again\n");
             continue;
@@ -1000,11 +997,14 @@ void* receive_remote_tasks(void* arg) {
 
         if( flag_open_request_receiveBack ) {
             bool match = false;
+            TargetTaskEntryTy *task_entry = nullptr;
 	        _mtx_map_tag_to_task.lock();
             std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
             match = got != _map_tag_to_task.end();
             // remove entry from map again
             if(match) {
+                // grab task before it is freed (might happen after erasing from map)
+                task_entry = got->second;
                 _map_tag_to_task.erase(cur_status_receiveBack.MPI_TAG);
             }
             _mtx_map_tag_to_task.unlock();
@@ -1031,10 +1031,11 @@ void* receive_remote_tasks(void* arg) {
                 atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
                 _time_comm_back_recv_count++;
 #endif
-                DBP("receive_output - receiving output data from rank %d for (task_id=%d)\n", cur_status_receiveBack.MPI_SOURCE, 
-                                                                                               cur_status_receiveBack.MPI_TAG);
+                DBP("receive_output - receiving output data from rank %d for (task_id=%d) " DPxMOD "\n", cur_status_receiveBack.MPI_SOURCE, 
+                                                                                               cur_status_receiveBack.MPI_TAG, DPxPTR(task_entry));
                 // copy results back to source pointers with memcpy
-                TargetTaskEntryTy *task_entry = got->second;
+                // TargetTaskEntryTy *task_entry = got->second;
+                if(task_entry) {
                 char * cur_ptr = (char*) buffer;
                 for(int i = 0; i < task_entry->arg_num; i++) {
                     int is_lit      = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
@@ -1047,6 +1048,9 @@ void* receive_remote_tasks(void* arg) {
                         memcpy(task_entry->arg_hst_pointers[i], cur_ptr, task_entry->arg_sizes[i]);
                         cur_ptr += task_entry->arg_sizes[i];
                     }
+                }
+                } else {
+                    DBP("receive_output - STRANGE!! task is NULL (task_id=%d)\n", cur_status_receiveBack.MPI_TAG);
                 }
 #ifdef TRACE
                 VT_end(event_recv_back);
@@ -1188,7 +1192,7 @@ void* service_thread_action(void *arg) {
         while (_flag_comm_threads_sleeping) {
             // dont do anything if the thread is sleeping
             usleep(20);
-            DBP("service_thread_action - thread sleeping\n");
+            // DBP("service_thread_action - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("service_thread_action (abort)\n");
                 free(buffer_load_values);
@@ -1245,11 +1249,11 @@ void* service_thread_action(void *arg) {
                 // DBP("load info from rank %d = %d\n", j, _load_info_ranks[j]);
             }
 
-            _num_ranks_not_completely_idle   = sum_ranks_not_completely_idle;
+            _num_ranks_not_completely_idle      = sum_ranks_not_completely_idle;
             if(old_val_n_ranks != sum_ranks_not_completely_idle)
                 DBP("service_thread_action - new _num_ranks_not_completely_idle: %d\n", sum_ranks_not_completely_idle);
-            _outstanding_jobs_sum                   = sum_outstanding;
-            _load_info_sum                          = sum_load;
+            _outstanding_jobs_sum               = sum_outstanding;
+            _load_info_sum                      = sum_load;
             // DBP("complete summed load = %d\n", _load_info_sum);
             // set flag that exchange has happend
             if(!_comm_thread_load_exchange_happend)
@@ -1409,7 +1413,7 @@ void* service_thread_action(void *arg) {
                 tmp_size_buff += cur_task->arg_sizes[i];
             }
         }
-        DBP("service_thread_action - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
+        DBP("service_thread_action - sending back data to rank %d with tag %d for (task_id=%d)\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag, cur_task->task_id);
         // allocate memory
         void * buff = malloc(tmp_size_buff);
         char* cur_ptr = (char*)buff;

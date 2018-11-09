@@ -205,9 +205,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // at least try to execute this amout of normal task after rank runs out of offloadable tasks
     // before assuming idle state
     // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 10;
+    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 1;
     int this_thread_num_attemps_standard_task = 0;
     #else
+    // start communication threads here
     start_communication_threads();
     #endif
     
@@ -319,9 +320,12 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // to avoid that we miss some tasks
         if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
         {
-            // increment idle counter again
-            _num_threads_idle++;
-            this_thread_idle = 1;
+            // of course only do that once for the thread :)
+            if(!this_thread_idle) {
+                // increment idle counter again
+                _num_threads_idle++;
+                this_thread_idle = 1;
+            }
         } else {
             #pragma omp taskyield
             // increment attemps that might result in

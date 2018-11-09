@@ -5,6 +5,7 @@
 #include <mpi.h>
 
 #include "chameleon.h"
+#include "chameleon_common.h"
 
 // Special version with 2 ranks where master (rank 0) is always offloading to rank 1
 #ifndef FORCE_OFFLOAD_MASTER_WORKER
@@ -121,10 +122,6 @@ void* service_thread_action(void *arg);
 int32_t start_communication_threads();
 
 int32_t stop_communication_threads();
-
-int32_t wake_up_comm_threads();
-
-int32_t put_comm_threads_to_sleep();
 
 void trigger_update_outstanding();
 

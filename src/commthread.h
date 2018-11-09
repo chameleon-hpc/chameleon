@@ -37,6 +37,10 @@
 #define OFFLOAD_CREATE_SEPARATE_THREAD 0
 #endif
 
+#ifndef THREAD_ACTIVATION
+#define THREAD_ACTIVATION 0
+#endif
+
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
@@ -91,6 +95,15 @@ extern std::list<int32_t> _unfinished_locally_created_tasks;
 // Threading section
 extern int _comm_thread_load_exchange_happend;
 
+// variables to indicate when it is save to break out of taskwait
+extern std::mutex _mtx_taskwait;
+extern int _flag_comm_threads_sleeping;
+extern int _num_threads_involved_in_taskwait;
+// extern int _num_threads_entered_taskwait;
+extern std::atomic<int32_t> _num_threads_entered_taskwait;
+extern std::atomic<int32_t> _num_threads_idle;
+extern int _num_ranks_not_completely_idle;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -108,6 +121,10 @@ void* service_thread_action(void *arg);
 int32_t start_communication_threads();
 
 int32_t stop_communication_threads();
+
+int32_t wake_up_comm_threads();
+
+int32_t put_comm_threads_to_sleep();
 
 void trigger_update_outstanding();
 

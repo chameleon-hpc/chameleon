@@ -184,7 +184,13 @@ struct TargetTaskEntryTy {
         arg_tgt_offsets.resize(num_args);
     }
 
-    int HasAtLeastOneOutput();
+    int HasAtLeastOneOutput() {
+        for(int i = 0; i < this->arg_num; i++) {
+            if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
+                return 1;
+        }
+        return 0;
+    }
 };
 
 struct OffloadEntryTy {

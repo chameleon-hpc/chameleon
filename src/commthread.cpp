@@ -1116,7 +1116,7 @@ void* receive_remote_tasks(void* arg) {
             // DBP("receive_remote_tasks - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
-                free(buffer);
+                //free(buffer);
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }

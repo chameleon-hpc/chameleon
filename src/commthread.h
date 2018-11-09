@@ -29,8 +29,8 @@
 
 // determines how data (arguments) is packed and send during offloading
 #ifndef OFFLOAD_DATA_PACKING_TYPE
-#define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments to gether and send it with a single message (requires copy to buffer)
-// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
+#define OFFLOAD_DATA_PACKING_TYPE 1     // 0 = pack meta data and arguments to gether and send it with a single message (requires copy to buffer)
+// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separate send for each mapped argument
 #endif
 
 // Create a separate thread for offloads that expect mapped data to be transfered back
@@ -44,9 +44,9 @@
 #endif
 
 
-//Specify whether tasks should be offloaded aggressively after one performance update:q:
+//Specify whether tasks should be offloaded aggressively after one performance update
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 0
+#define OFFLOADING_STRATEGY_AGGRESSIVE 1
 #endif
 
 // communicator for remote task requests

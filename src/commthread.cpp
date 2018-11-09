@@ -1,4 +1,9 @@
 #include "commthread.h"
+#include "chameleon_common.h"
+#include "chameleon_common.cpp"
+#include "cham_statistics.h"
+#include "request_manager.h"
+
 #include <pthread.h>
 #include <signal.h>
 #include <numeric>
@@ -9,13 +14,11 @@
 #include <unordered_map>
 #include <functional>
 
-#include "cham_statistics.h"
-#include "request_manager.h"
-
 #ifdef TRACE
 #include "VT.h"
 #endif 
 
+#pragma region Variables
 // communicator for remote task requests
 MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
@@ -62,6 +65,7 @@ std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_task;
 std::vector<int32_t> _outstanding_jobs_ranks;
 std::atomic<int32_t> _outstanding_jobs_local(0);
 std::atomic<int32_t> _outstanding_jobs_sum(0);
+
 // ====== Info about real load that is open or is beeing processed ======
 // extern std::mutex _mtx_load_info;
 std::vector<int32_t> _load_info_ranks;
@@ -92,6 +96,16 @@ int _comm_threads_ended_count           = 0;
 // flag that signalizes comm threads to abort their work
 int _flag_abort_threads                 = 0;
 
+// variables to indicate when it is save to break out of taskwait
+std::mutex _mtx_taskwait;
+int _flag_comm_threads_sleeping             = 1;
+
+int _num_threads_involved_in_taskwait       = INT_MAX;
+// int _num_threads_entered_taskwait           = 0; // maybe replace with atomic
+std::atomic<int32_t> _num_threads_entered_taskwait(0);
+std::atomic<int32_t> _num_threads_idle(0);
+int _num_ranks_not_completely_idle          = INT_MAX;
+
 pthread_t           _th_receive_remote_tasks;
 int                 _th_receive_remote_tasks_created = 0;
 pthread_cond_t      _th_receive_remote_tasks_cond    = PTHREAD_COND_INITIALIZER;
@@ -101,8 +115,9 @@ pthread_t           _th_service_actions;
 int                 _th_service_actions_created = 0;
 pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_service_actions_mutex   = PTHREAD_MUTEX_INITIALIZER;
+#pragma endregion Variables
 
-
+#pragma region Local Helpers
 template <typename T>
 std::vector<size_t> sort_indexes(const std::vector<T> &v) {
 
@@ -116,10 +131,13 @@ std::vector<size_t> sort_indexes(const std::vector<T> &v) {
 
   return idx;
 }
+#pragma endregion Local Helpers
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#pragma region Forward Declarations
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
@@ -140,6 +158,7 @@ static void send_back_handler(void* buffer, int tag, int rank);
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
 static void receive_back_handler(void* buffer, int tag, int rank);
 #endif
+#pragma endregion Forward Declarations
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
@@ -153,13 +172,16 @@ int32_t start_communication_threads() {
         return CHAM_SUCCESS;
     }
 
-#if CHAM_STATS_RECORD
-    cham_stats_init_stats();
-#endif
+    #if !THREAD_ACTIVATION
+    #if CHAM_STATS_RECORD
+        cham_stats_init_stats();
+    #endif
+    #endif
 
     DBP("start_communication_threads (enter)\n");
     // set flag to avoid that threads are directly aborting
     _flag_abort_threads = 0;
+    // indicating that this has not happend yet for the current sync cycle
     _comm_thread_load_exchange_happend = 0;
 
     // explicitly make threads joinable to be portable
@@ -174,13 +196,6 @@ int32_t start_communication_threads() {
     err = pthread_create(&_th_service_actions, &attr, service_thread_action, NULL);
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_service_actions");
-    
-    // // wait for finished thread creation
-    // pthread_mutex_lock(&_th_receive_remote_tasks_mutex);
-    // while (_th_receive_remote_tasks_created == 0) {
-    //     pthread_cond_wait(&_th_receive_remote_tasks_cond, &_th_receive_remote_tasks_mutex);
-    // }
-    // pthread_mutex_unlock(&_th_receive_remote_tasks_mutex);
 
     pthread_mutex_lock(&_th_service_actions_mutex);
     while (_th_service_actions_created == 0) {
@@ -195,8 +210,41 @@ int32_t start_communication_threads() {
     return CHAM_SUCCESS;
 }
 
-// only last openmp thread should be able to stop threads
+int32_t wake_up_comm_threads() {
+    // if threads already awake
+    if(!_flag_comm_threads_sleeping)
+        return CHAM_SUCCESS;
+    
+    _mtx_taskwait.lock();
+    // need to check again
+    if(!_flag_comm_threads_sleeping) {
+        _mtx_taskwait.unlock();
+        return CHAM_SUCCESS;
+    }
+
+    DBP("wake_up_comm_threads (enter)\n");
+
+    #if CHAM_STATS_RECORD
+        cham_stats_init_stats();
+    #endif
+    // determine or set values once
+    _num_threads_involved_in_taskwait   = omp_get_num_threads();
+    _num_threads_entered_taskwait       = 0;
+    _num_threads_idle                   = 0;
+
+    // indicating that this has not happend yet for the current sync cycle
+    _comm_thread_load_exchange_happend = 0;
+    
+    _flag_comm_threads_sleeping = 0;
+    _mtx_taskwait.unlock();
+    DBP("wake_up_comm_threads (exit)\n");
+    return CHAM_SUCCESS;
+}
+
 int32_t stop_communication_threads() {
+
+    // ===> Not necessary any more... should just be done in finalize call
+    #if !THREAD_ACTIVATION
     _mtx_comm_threads_ended.lock();
     // increment counter
     _comm_threads_ended_count++;
@@ -207,6 +255,7 @@ int32_t stop_communication_threads() {
         _mtx_comm_threads_ended.unlock();
         return CHAM_SUCCESS;
     }
+    #endif
 
     DBP("stop_communication_threads (enter)\n");
     int err = 0;
@@ -224,21 +273,61 @@ int32_t stop_communication_threads() {
 
     // should be save to reset flags and counters here
     _comm_threads_started = 0;
+    #if !THREAD_ACTIVATION
     _comm_thread_load_exchange_happend = 0;
     _comm_threads_ended_count = 0;
-#ifdef CHAM_DEBUG
+    
+    #ifdef CHAM_DEBUG
     DBP("stop_communication_threads - still mem_allocated = %ld\n", (long)mem_allocated);
     mem_allocated = 0;
-#endif
+    #endif
 
     _th_receive_remote_tasks_created = 0;
     _th_service_actions_created = 0;
-
-#if CHAM_STATS_RECORD && CHAM_STATS_PRINT
+    _num_threads_involved_in_taskwait       = INT_MAX;
+    _num_threads_entered_taskwait           = 0;
+    _num_threads_idle                       = 0;
+    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT
     cham_stats_print_stats();
-#endif
+    #endif
+    #endif
+    
     DBP("stop_communication_threads (exit)\n");
     _mtx_comm_threads_ended.unlock();    
+    return CHAM_SUCCESS;
+}
+
+int32_t put_comm_threads_to_sleep() {
+    // if threads already awake
+    if(_flag_comm_threads_sleeping)
+        return CHAM_SUCCESS;
+    
+    _mtx_taskwait.lock();
+    // need to check again
+    if(_flag_comm_threads_sleeping) {
+        _mtx_taskwait.unlock();
+        return CHAM_SUCCESS;
+    }
+
+    DBP("put_comm_threads_to_sleep (enter)\n");
+    #ifdef CHAM_DEBUG
+        DBP("put_comm_threads_to_sleep - still mem_allocated = %ld\n", (long)mem_allocated);
+        mem_allocated = 0;
+    #endif
+
+    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT
+        cham_stats_print_stats();
+    #endif
+
+    _flag_comm_threads_sleeping             = 1;
+    _comm_thread_load_exchange_happend      = 0;
+    _num_threads_involved_in_taskwait       = INT_MAX;
+    _num_threads_entered_taskwait           = 0;
+    _num_threads_idle                       = 0;
+    _num_ranks_not_completely_idle          = INT_MAX;
+
+    _mtx_taskwait.unlock();
+    DBP("put_comm_threads_to_sleep (exit)\n");
     return CHAM_SUCCESS;
 }
 
@@ -448,6 +537,7 @@ static void receive_back_handler(void* buffer, int tag, int source) {
 }
 #endif
 
+#pragma region Offloading / Packing
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
 #ifdef TRACE
     static int event_offload = -1;
@@ -584,14 +674,13 @@ void* offload_action(void *v_entry) {
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
-    //free(buffer);
+    //free(buffer); //Buffer is freed in handler
 
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
 
     if(has_outputs) {
-//TODO 
 #if OFFLOAD_CREATE_SEPARATE_THREAD
 #ifdef TRACE
         static int event_offload_wait_recv = -1;
@@ -984,7 +1073,9 @@ TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer, int mpi_tag) {
     return task;
 }
 #endif
+#pragma endregion Offloading / Packing
 
+#pragma region Thread Receive
 // should run in a single thread that is always waiting for incoming requests
 void* receive_remote_tasks(void* arg) {
 #ifdef TRACE
@@ -1010,7 +1101,7 @@ void* receive_remote_tasks(void* arg) {
     int recv_buff_size = 0;
  
     double cur_time;
-    
+
     while(true) {
         request_manager_receive.progressRequests();
 
@@ -1018,11 +1109,25 @@ void* receive_remote_tasks(void* arg) {
         MPI_Status cur_status_receive;
         int flag_open_request_receive = 0;
 
+        #if THREAD_ACTIVATION
+        while (_flag_comm_threads_sleeping) {
+            // dont do anything if the thread is sleeping
+            usleep(20);
+            // DBP("receive_remote_tasks - thread sleeping\n");
+            if(_flag_abort_threads) {
+                DBP("receive_remote_tasks (abort)\n");
+                free(buffer);
+                int ret_val = 0;
+                pthread_exit(&ret_val);
+            }
+        }
+        #endif
+
 #if OFFLOAD_CREATE_SEPARATE_THREAD
         while(!flag_open_request_receive) {
 #else
         MPI_Status cur_status_receiveBack;
-        int flag_open_request_receiveBack = 0;      
+        int flag_open_request_receiveBack = 0;
 
         while(!flag_open_request_receive && !flag_open_request_receiveBack) {
 #endif
@@ -1038,12 +1143,25 @@ void* receive_remote_tasks(void* arg) {
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
+            #if THREAD_ACTIVATION
+            if(_flag_comm_threads_sleeping) {
+                break;
+            }
+            #endif
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
 #if OFFLOAD_CREATE_SEPARATE_THREAD
         }
 #else
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
         }
+
+        #if THREAD_ACTIVATION
+        // if threads have been put to sleep start from beginning to end up in sleep mode
+        if(_flag_comm_threads_sleeping) {
+            DBP("receive_remote_tasks - thread went to sleep again\n");
+            continue;
+        }
+        #endif
 
         if( flag_open_request_receiveBack ) {
             bool match = false;
@@ -1076,7 +1194,7 @@ void* receive_remote_tasks(void* arg) {
                 atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
                 _time_comm_back_recv_count++;
 #endif
-
+      
 #ifdef TRACE
                 VT_end(event_recv_back);
 #endif
@@ -1110,7 +1228,9 @@ void* receive_remote_tasks(void* arg) {
         }
     }
 }
+#pragma endregion Thread Receive
 
+#pragma region Thread Send / Service
 void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank ) {
 #if OFFLOADING_STRATEGY_AGGRESSIVE
     int input_r = 0, input_l = 0;
@@ -1222,8 +1342,8 @@ void* service_thread_action(void *arg) {
     int offload_triggered = 0;
     int last_known_sum_outstanding = -1;
 
-    int transported_load_values[2];
-    int * buffer_load_values = (int*) malloc(sizeof(int)*2*chameleon_comm_size);
+    int transported_load_values[3];
+    int * buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
 
     DBP("service_thread_action (enter)\n");
     while(true) {
@@ -1231,6 +1351,20 @@ void* service_thread_action(void *arg) {
         request_manager_send.progressRequests();
 
         TargetTaskEntryTy* cur_task = nullptr;
+
+        #if THREAD_ACTIVATION
+        while (_flag_comm_threads_sleeping) {
+            // dont do anything if the thread is sleeping
+            usleep(20);
+            // DBP("service_thread_action - thread sleeping\n");
+            if(_flag_abort_threads) {
+                DBP("service_thread_action (abort)\n");
+                free(buffer_load_values);
+                int ret_val = 0;
+                pthread_exit(&ret_val);
+            }
+        }
+        #endif
 
         // ================= Load / Outstanding Jobs Section =================
         // exchange work load here before reaching the abort section
@@ -1243,10 +1377,13 @@ void* service_thread_action(void *arg) {
             VT_begin(event_exchange_outstanding);
 #endif
             _mtx_load_exchange.lock();
-            transported_load_values[0] = _outstanding_jobs_local;
-            transported_load_values[1] = _load_info_local;
+            int tmp_val = _num_threads_idle.load() < _num_threads_involved_in_taskwait ? 1 : 0;
+            // DBP("service_thread_action - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
+            transported_load_values[0] = tmp_val;
+            transported_load_values[1] = _outstanding_jobs_local;
+            transported_load_values[2] = _load_info_local;
             _mtx_load_exchange.unlock();
-            MPI_Iallgather(&transported_load_values[0], 2, MPI_INT, buffer_load_values, 2, MPI_INT, chameleon_comm_load, &request_out);
+            MPI_Iallgather(&transported_load_values[0], 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, &request_out);
             request_created = 1;
 #ifdef TRACE
             VT_end(event_exchange_outstanding);
@@ -1261,17 +1398,26 @@ void* service_thread_action(void *arg) {
 #endif
             // sum up that stuff
             // DBP("service_thread_action - gathered new load info\n");
+            int32_t old_val_n_ranks = _num_ranks_not_completely_idle;
+            int32_t sum_ranks_not_completely_idle = 0;
             int32_t sum_outstanding = 0;
             int32_t sum_load = 0;
             for(int j = 0; j < chameleon_comm_size; j++) {
-                _outstanding_jobs_ranks[j]  = buffer_load_values[j*2];
-                _load_info_ranks[j]         = buffer_load_values[(j*2)+1];
-                sum_outstanding             += _outstanding_jobs_ranks[j];
-                sum_load                    += _load_info_ranks[j];
+                // DBP("service_thread_action - values for rank %d: all_in_tw=%d, outstanding_jobs=%d, load=%d\n", j, buffer_load_values[j*2], buffer_load_values[(j*2)+1], buffer_load_values[(j*2)+2]);
+                int tmp_tw                              = buffer_load_values[j*3];
+                _outstanding_jobs_ranks[j]              = buffer_load_values[(j*3)+1];
+                _load_info_ranks[j]                     = buffer_load_values[(j*3)+2];
+                sum_outstanding                         += _outstanding_jobs_ranks[j];
+                sum_load                                += _load_info_ranks[j];
+                sum_ranks_not_completely_idle           += tmp_tw;
                 // DBP("load info from rank %d = %d\n", j, _load_info_ranks[j]);
             }
-            _outstanding_jobs_sum           = sum_outstanding;
-            _load_info_sum                  = sum_load;
+
+            _num_ranks_not_completely_idle      = sum_ranks_not_completely_idle;
+            if(old_val_n_ranks != sum_ranks_not_completely_idle)
+                DBP("service_thread_action - new _num_ranks_not_completely_idle: %d\n", sum_ranks_not_completely_idle);
+            _outstanding_jobs_sum               = sum_outstanding;
+            _load_info_sum                      = sum_load;
             // DBP("complete summed load = %d\n", _load_info_sum);
             // set flag that exchange has happend
             if(!_comm_thread_load_exchange_happend)
@@ -1308,6 +1454,14 @@ void* service_thread_action(void *arg) {
             int ret_val = 0;
             pthread_exit(&ret_val);
         }
+
+        #if THREAD_ACTIVATION
+        // if threads have been put to sleep start from beginning to end up in sleep mode
+        if(_flag_comm_threads_sleeping) {
+            DBP("service_thread_action - thread went to sleep again\n");
+            continue;
+        }
+        #endif
 
 #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
         // ================= Offloading Section =================
@@ -1410,7 +1564,7 @@ void* service_thread_action(void *arg) {
                 tmp_size_buff += cur_task->arg_sizes[i];
             }
         }
-        DBP("service_thread_action - sending back data to rank %d with tag %d\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag);
+        DBP("service_thread_action - sending back data to rank %d with tag %d for (task_id=%d)\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag, cur_task->task_id);
         // allocate memory
         void * buff = malloc(tmp_size_buff);
         char* cur_ptr = (char*)buff;
@@ -1446,7 +1600,9 @@ void* service_thread_action(void *arg) {
         _mtx_load_exchange.unlock();
     }
 }
+#pragma endregion Thread Send / Service
 
+#pragma region Helper Functions
 void trigger_update_outstanding() {
     _outstanding_jobs_local = _num_local_tasks_outstanding + _num_stolen_tasks_outstanding;
     DBP("trigger_update_outstanding - current oustanding jobs: %d, current_local_load = %d\n", _outstanding_jobs_local.load(), _load_info_local);
@@ -1482,6 +1638,7 @@ void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx) 
             is_lit,
             is_from);
 }
+#pragma endregion Helper Functions
 
 #ifdef __cplusplus
 }

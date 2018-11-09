@@ -5,6 +5,7 @@
 #include <mpi.h>
 
 #include "chameleon.h"
+#include "chameleon_common.h"
 #include "request_manager.h"
 
 // Special version with 2 ranks where master (rank 0) is always offloading to rank 1
@@ -29,13 +30,17 @@
 
 // determines how data (arguments) is packed and send during offloading
 #ifndef OFFLOAD_DATA_PACKING_TYPE
-#define OFFLOAD_DATA_PACKING_TYPE 1     // 0 = pack meta data and arguments to gether and send it with a single message (requires copy to buffer)
-// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separate send for each mapped argument
+#define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments to gether and send it with a single message (requires copy to buffer)
+// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
 #endif
 
 // Create a separate thread for offloads that expect mapped data to be transfered back
 #ifndef OFFLOAD_CREATE_SEPARATE_THREAD
 #define OFFLOAD_CREATE_SEPARATE_THREAD 0
+#endif
+
+#ifndef THREAD_ACTIVATION
+#define THREAD_ACTIVATION 1
 #endif
 
 //Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
@@ -105,6 +110,15 @@ extern std::list<int32_t> _unfinished_locally_created_tasks;
 
 // Threading section
 extern int _comm_thread_load_exchange_happend;
+
+// variables to indicate when it is save to break out of taskwait
+extern std::mutex _mtx_taskwait;
+extern int _flag_comm_threads_sleeping;
+extern int _num_threads_involved_in_taskwait;
+// extern int _num_threads_entered_taskwait;
+extern std::atomic<int32_t> _num_threads_entered_taskwait;
+extern std::atomic<int32_t> _num_threads_idle;
+extern int _num_ranks_not_completely_idle;
 
 #ifdef __cplusplus
 extern "C" {

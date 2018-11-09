@@ -2,6 +2,7 @@
 #define _CHAMELEON_STATS_H_
 
 #include "chameleon.h"
+#include "chameleon_common.h"
 
 #ifndef CHAM_STATS_RECORD
 #define CHAM_STATS_RECORD 1

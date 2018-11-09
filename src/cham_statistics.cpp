@@ -1,5 +1,6 @@
 #include "cham_statistics.h"
 #include "chameleon.h"
+#include "chameleon_common.h"
 
 std::atomic<int>     _num_executed_tasks_local(0);
 std::atomic<int>     _num_executed_tasks_stolen(0);

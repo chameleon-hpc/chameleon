@@ -3,6 +3,8 @@
 #include <stdexcept>
 
 #include "chameleon.h"
+#include "chameleon_common.h"
+#include "chameleon_common.cpp"
 #include "commthread.h"
 #include "cham_statistics.h"
 
@@ -52,6 +54,22 @@ int32_t process_remote_task();
 #pragma endregion Forward Declarations
 
 #pragma region Init / Finalize / Helper
+TargetTaskEntryTy* CreateTargetTaskEntryTy(
+        void *p_tgt_entry_ptr, 
+        void **p_tgt_args, 
+        ptrdiff_t *p_tgt_offsets, 
+        int64_t *p_tgt_arg_types, 
+        int32_t p_arg_num) {
+
+    TargetTaskEntryTy *tmp_task = new TargetTaskEntryTy(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
+    return tmp_task;
+}
+
+void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
+    task->idx_image = img_idx;
+    task->entry_image_offset = entry_image_offset;
+}
+
 /* 
  * Function verify_initialized
  * Verifies whether library has already been initialized or not.

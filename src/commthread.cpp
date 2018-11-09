@@ -1,4 +1,8 @@
 #include "commthread.h"
+#include "chameleon_common.h"
+#include "chameleon_common.cpp"
+#include "cham_statistics.h"
+
 #include <pthread.h>
 #include <signal.h>
 #include <numeric>
@@ -7,8 +11,6 @@
 #include <omp.h>
 #include <algorithm>
 #include <unordered_map>
-
-#include "cham_statistics.h"
 
 #ifdef TRACE
 #include "VT.h"

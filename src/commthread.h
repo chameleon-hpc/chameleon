@@ -38,7 +38,7 @@
 #endif
 
 #ifndef THREAD_ACTIVATION
-#define THREAD_ACTIVATION 0
+#define THREAD_ACTIVATION 1
 #endif
 
 // communicator for remote task requests

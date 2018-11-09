@@ -137,7 +137,9 @@ void* offload_action(void *task);
 static void send_handler(void* buffer, int tag, int rank);
 static void receive_handler(void* buffer, int tag, int rank);
 static void send_back_handler(void* buffer, int tag, int rank);
+#if !OFFLOAD_CREATE_SEPARATE_THREAD
 static void receive_back_handler(void* buffer, int tag, int rank);
+#endif
 
 #pragma region Start/Stop/Pin Communication Threads
 int32_t start_communication_threads() {
@@ -345,19 +347,22 @@ static void receive_handler(void* buffer, int tag, int source) {
 #ifdef TRACE
     VT_begin(event_receive_tasks);
 #endif
-	for(int32_t i=0; i<task->arg_num; i++) {
+    DBP("offload_action - receiving data from rank %d with tag: %d\n", source, tag);
+
+    for(int32_t i=0; i<task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         if(is_lit) {
             MPI_Irecv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[i]);
         } else {
 	        MPI_Irecv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[i]);
         }
+        print_arg_info("receive_handler - receiving argument", task, i);
     }
     request_manager_receive.submitRequests( tag, 
                                     source,
                                     task->arg_num, 
                                     requests,
-                                    MPI_BLOCKING,
+                                    true,             //TODO: we need to block before the task can be submitted!
                                     handler_noop);
 #ifdef TRACE
     VT_end(event_receive_tasks);
@@ -394,6 +399,7 @@ static void send_back_handler(void* buffer, int tag, int source) {
     free(buffer);
 }
 
+#if !OFFLOAD_CREATE_SEPARATE_THREAD
 static void receive_back_handler(void* buffer, int tag, int source) {
     DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", source, 
                                                                                    tag); 
@@ -401,8 +407,12 @@ static void receive_back_handler(void* buffer, int tag, int source) {
     _mtx_map_tag_to_task.lock();
     std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(tag);
     match = got != _map_tag_to_task.end();
+    if(match) {
+        _map_tag_to_task.erase(tag);
+    }
     _mtx_map_tag_to_task.unlock(); 
-    
+
+
     TargetTaskEntryTy *task_entry;
     if(match) {
         // copy results back to source pointers with memcpy
@@ -420,6 +430,7 @@ static void receive_back_handler(void* buffer, int tag, int source) {
                 cur_ptr += task_entry->arg_sizes[i];
             }
        }
+
    }
    free(buffer);
    _num_offloaded_tasks_outstanding--;
@@ -435,6 +446,7 @@ static void receive_back_handler(void* buffer, int tag, int source) {
    trigger_update_outstanding();
    _mtx_load_exchange.unlock();
 }
+#endif
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
 #ifdef TRACE
@@ -552,7 +564,15 @@ void* offload_action(void *v_entry) {
         else{
             MPI_Isend(entry->task_entry->arg_hst_pointers[i], entry->task_entry->arg_sizes[i], MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm, &requests[i+1]);
         } 
+        print_arg_info("offload_action - sending argument", entry->task_entry, i);
    }
+#endif
+#if !OFFLOAD_CREATE_SEPARATE_THREAD
+    if(has_outputs) {
+        _mtx_map_tag_to_task.lock();
+        _map_tag_to_task.insert(std::make_pair(tmp_tag, entry->task_entry));
+        _mtx_map_tag_to_task.unlock();
+    }
 #endif
     request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
                                 requests,
@@ -632,13 +652,8 @@ void* offload_action(void *v_entry) {
         _num_local_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
-#else
-        _mtx_map_tag_to_task.lock();
-        _map_tag_to_task.insert(std::make_pair(tmp_tag, entry->task_entry));
-        _mtx_map_tag_to_task.unlock();
-//TODO: examine
 #endif
-    } else {
+    } /*else {
         // mark locally created task finished
         _mtx_unfinished_locally_created_tasks.lock();
         _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
@@ -649,7 +664,7 @@ void* offload_action(void *v_entry) {
         _num_local_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
-    }
+    }*/
 
     DBP("offload_action (exit)\n");
     return nullptr;
@@ -929,7 +944,7 @@ TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer, int mpi_tag) {
     task->arg_num = ((int32_t *) cur_ptr)[0];
     cur_ptr += sizeof(int32_t);
 
-    DBP("decode_send_buffer (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+    DBP("decode_send_buffer_metadata (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
 
     // we need a mapping to process local task entry points
     intptr_t local_img_base     = _image_base_addresses[task->idx_image];
@@ -961,7 +976,7 @@ TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer, int mpi_tag) {
             void * new_mem = malloc(task->arg_sizes[i]);
             task->arg_hst_pointers[i] = new_mem;
         }
-        print_arg_info("decode_send_buffer", task, i);
+        print_arg_info("decode_send_buffer_metadata", task, i);
     }
 #ifdef TRACE
     VT_end(event_decode);
@@ -1033,13 +1048,10 @@ void* receive_remote_tasks(void* arg) {
         if( flag_open_request_receiveBack ) {
             bool match = false;
 	        _mtx_map_tag_to_task.lock();
-            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
-            match = got != _map_tag_to_task.end();
-            // remove entry from map again
-            if(match) {
-                _map_tag_to_task.erase(cur_status_receiveBack.MPI_TAG);
-            }
-            _mtx_map_tag_to_task.unlock();
+                std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
+                match = got != _map_tag_to_task.end();
+                //entry is removed in receiveBackHandler!
+                _mtx_map_tag_to_task.unlock();
             // receive data back
 	        if(match) {
 	            MPI_Get_count(&cur_status_receiveBack, MPI_BYTE, &recv_buff_size);

@@ -196,6 +196,10 @@ int32_t start_communication_threads() {
 }
 
 int32_t wake_up_comm_threads() {
+    // check wether communication threads have already been started. Otherwise do so.
+    // Usually that should not be necessary if done in init
+    // start_communication_threads();
+
     // if threads already awake
     if(!_flag_comm_threads_sleeping)
         return CHAM_SUCCESS;

@@ -50,6 +50,7 @@ extern "C" {
 int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
 // int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
 int32_t execute_target_task(TargetTaskEntryTy *task);
+int32_t process_local_task();
 int32_t process_remote_task();
 #pragma endregion Forward Declarations
 
@@ -133,9 +134,11 @@ int32_t chameleon_init() {
     _task_id_counter = 0;
 
     // dummy target region to force binary loading, use host offloading for that purpose
-    #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
+    // #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
+    #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
-        DBP("chameleon_init - dummy region\n");
+        // DBP("chameleon_init - dummy region\n");
+        printf("chameleon_init - dummy region\n");
     }
 
     #if THREAD_ACTIVATION
@@ -191,7 +194,38 @@ int32_t chameleon_finalize() {
 }
 #pragma endregion Init / Finalize / Helper
 
-#pragma region Distributed Taskwait
+#pragma region Distributed Taskwait + Taskyield
+/*
+ * Taskyield will execute either a "offloadable" target task or a regular OpenMP task
+ * (Background: Dependecies currently not fully covered. 
+ *              Idea: wrap target task with standard OpenMP task with depencencies.
+ *              Inside that we need to use a wait and yield approach.
+ *              Thus we need to be able to execute either a normal or a target task in this yield.)
+ */
+int32_t chameleon_taskyield() {
+    int32_t res = CHAM_FAILURE;
+
+    // ========== Prio 1: try to execute a standard OpenMP task because that might create new target tasks
+    // DBP("Trying to run OpenMP Task\n");
+    #pragma omp taskyield
+
+    // ========== Prio 2: try to execute stolen tasks to overlap computation and communication
+    if(!_stolen_remote_tasks.empty()) {
+        res = process_remote_task();
+        // if task has been executed successfully start from beginning
+        if(res == CHAM_REMOTE_TASK_SUCCESS)
+            return CHAM_REMOTE_TASK_SUCCESS;
+    }
+    
+    // ========== Prio 3: work on local tasks
+    if(!_local_tasks.empty()) {
+        res = process_local_task();
+        if(res == CHAM_LOCAL_TASK_SUCCESS)
+            return CHAM_LOCAL_TASK_SUCCESS;
+    }
+    return CHAM_FAILURE;
+}
+
 #if !FORCE_OFFLOAD_MASTER_WORKER
 /* 
  * Function chameleon_distributed_taskwait
@@ -203,15 +237,9 @@ int32_t chameleon_finalize() {
  * Also provides the possibility for a nowait if there is a delay caused by stopping the comm threads
  */
 int32_t chameleon_distributed_taskwait(int nowait) {
-#ifdef TRACE
-    static int event_process_local = -1;
-    static const std::string event_process_local_name = "process_local";
-    if( event_process_local == -1)
-        int ierr = VT_funcdef(event_process_local_name.c_str(), VT_NOCLASS, &event_process_local);
-#endif
-    DBP("chameleon_distributed_taskwait (enter)\n");
     verify_initialized();
-
+    DBP("chameleon_distributed_taskwait (enter)\n");
+    
     #if THREAD_ACTIVATION
     // need to wake threads up if not already done
     wake_up_comm_threads();
@@ -233,6 +261,26 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // as long as there are local tasks run this loop
     while(true) {
         int32_t res = CHAM_SUCCESS;
+
+        #if THREAD_ACTIVATION
+        // ========== Prio 5: work on a regular OpenMP task
+        // make sure that we get info about outstanding tasks with dependences
+        // to avoid that we miss some tasks
+        if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
+        {
+            // of course only do that once for the thread :)
+            if(!this_thread_idle) {
+                // increment idle counter again
+                _num_threads_idle++;
+                this_thread_idle = 1;
+            }
+        } else {
+            #pragma omp taskyield
+            // increment attemps that might result in
+            this_thread_num_attemps_standard_task++;
+        }
+        #endif
+
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
             
@@ -285,71 +333,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             this_thread_num_attemps_standard_task = 0;
             #endif
 
-            TargetTaskEntryTy *cur_task = chameleon_pop_task();
-            if(cur_task == nullptr)
-            {
-                continue;
-            }
-            
-            if(cur_task) {
-                // execute region now
-                DBP("chameleon_distributed_taskwait - local task execution\n");
-
-#if CHAM_STATS_RECORD
-                double cur_time = omp_get_wtime();
-#endif
-#ifdef TRACE
-                VT_begin(event_process_local);
-#endif
-                res = execute_target_task(cur_task);
-#ifdef TRACE
-                VT_end(event_process_local);
-#endif
-#if CHAM_STATS_RECORD
-                cur_time = omp_get_wtime()-cur_time;
-                atomic_add_dbl(_time_task_execution_local_sum, cur_time);
-                _time_task_execution_local_count++;
-#endif
-                // mark locally created task finished
-                _mtx_unfinished_locally_created_tasks.lock();
-                _unfinished_locally_created_tasks.remove(cur_task->task_id);
-                _mtx_unfinished_locally_created_tasks.unlock();
-
-                // it is save to decrement counter after local execution
-                _mtx_load_exchange.lock();
-                _num_local_tasks_outstanding--;
-                _load_info_local--;
-                trigger_update_outstanding();
-                _mtx_load_exchange.unlock();
-
-#if OFFLOAD_BLOCKING
-                _offload_blocked = 0;
-#endif
-
-#if CHAM_STATS_RECORD
-                _num_executed_tasks_local++;
-#endif
-            }
+            // try to execute a local task
+            res = process_local_task();
         }
-
-        #if THREAD_ACTIVATION
-        // ========== Prio 5: work on a regular OpenMP task
-        // make sure that we get info about outstanding tasks with dependences
-        // to avoid that we miss some tasks
-        if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
-        {
-            // of course only do that once for the thread :)
-            if(!this_thread_idle) {
-                // increment idle counter again
-                _num_threads_idle++;
-                this_thread_idle = 1;
-            }
-        } else {
-            #pragma omp taskyield
-            // increment attemps that might result in
-            this_thread_num_attemps_standard_task++;
-        }
-        #endif
     }
 
     #if THREAD_ACTIVATION
@@ -702,13 +688,13 @@ inline int32_t process_remote_task() {
     double cur_time = omp_get_wtime();
 #endif
     int32_t res = execute_target_task(remote_task);
+    if(res != CHAM_SUCCESS)
+        handle_error_en(1, "execute_target_task - remote");
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
     _time_task_execution_stolen_count++;
 #endif
-    if(res != CHAM_SUCCESS)
-        handle_error_en(1, "execute_target_task - remote");
 
     // decrement load counter
     _mtx_load_exchange.lock();
@@ -740,6 +726,59 @@ inline int32_t process_remote_task() {
     VT_end(event_process_remote);
 #endif
     return CHAM_REMOTE_TASK_SUCCESS;
+}
+
+inline int32_t process_local_task() {
+    TargetTaskEntryTy *cur_task = chameleon_pop_task();
+    if(!cur_task)
+        return CHAM_LOCAL_TASK_NONE;
+
+#ifdef TRACE
+    static int event_process_local = -1;
+    static const std::string event_process_local_name = "process_local";
+    if( event_process_local == -1)
+        int ierr = VT_funcdef(event_process_local_name.c_str(), VT_NOCLASS, &event_process_local);
+#endif
+
+    // execute region now
+    DBP("process_local_task - local task execution\n");
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime();
+#endif
+#ifdef TRACE
+    VT_begin(event_process_local);
+#endif
+    int32_t res = execute_target_task(cur_task);
+    if(res != CHAM_SUCCESS)
+        handle_error_en(1, "execute_target_task - local");
+#ifdef TRACE
+    VT_end(event_process_local);
+#endif
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_task_execution_local_sum, cur_time);
+    _time_task_execution_local_count++;
+#endif
+    // mark locally created task finished
+    _mtx_unfinished_locally_created_tasks.lock();
+    _unfinished_locally_created_tasks.remove(cur_task->task_id);
+    _mtx_unfinished_locally_created_tasks.unlock();
+
+    // it is save to decrement counter after local execution
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding--;
+    _load_info_local--;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+
+#if OFFLOAD_BLOCKING
+    _offload_blocked = 0;
+#endif
+
+#if CHAM_STATS_RECORD
+    _num_executed_tasks_local++;
+#endif
+    return CHAM_LOCAL_TASK_SUCCESS;
 }
 #pragma endregion Fcns for Lookups and Execution
 

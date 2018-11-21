@@ -34,11 +34,8 @@ extern std::atomic<long> mem_allocated;
 #ifndef RELP
 #define RELP( ... )                                                                                         \
   {                                                                                                        \
-     \
-     _mtx_relp.lock(); \
     fprintf(stderr, "ChameleonLib R#%d T#%d (OS_TID:%ld): --> ", chameleon_comm_rank, omp_get_thread_num(), syscall(SYS_gettid));      \
     fprintf(stderr, __VA_ARGS__);                                                                           \
-    _mtx_relp.unlock(); \
      \
   }
 #endif

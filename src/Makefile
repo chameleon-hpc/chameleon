@@ -1,9 +1,9 @@
-#INSTALL_DIR=~/chameleon
-INSTALL_DIR=~/install/chameleon-lib/1.0
+INSTALL_DIR=~/chameleon
+#INSTALL_DIR=~/install/chameleon-lib/1.0
 #INSTALL_DIR=~/install/chameleon-lib/1.0-zero-copy
 
 MPICXX_TRACE ?= mpiicpc
-COMP_FILES=chameleon.cpp commthread.cpp cham_statistics.cpp chameleon_common.cpp
+COMP_FILES=chameleon.cpp commthread.cpp cham_statistics.cpp chameleon_common.cpp request_manager.cpp
 
 default: release
 

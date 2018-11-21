@@ -1,6 +1,7 @@
 #include <ffi.h>
 #include <mpi.h>
 #include <stdexcept>
+#include <algorithm>
 
 #include "chameleon.h"
 #include "chameleon_common.h"

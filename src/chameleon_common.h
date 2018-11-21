@@ -31,14 +31,6 @@ extern std::mutex _mtx_relp;
 extern std::atomic<long> mem_allocated;
 #endif
 
-#ifndef DBP
-#ifdef CHAM_DEBUG
-#define DBP( ... ) { RELP(__VA_ARGS__); }
-#else
-#define DBP( ... ) { }
-#endif
-#endif
-
 #ifndef RELP
 #define RELP( ... )                                                                                         \
   {                                                                                                        \
@@ -46,6 +38,14 @@ extern std::atomic<long> mem_allocated;
     fprintf(stderr, __VA_ARGS__);                                                                           \
      \
   }
+#endif
+
+#ifndef DBP
+#ifdef CHAM_DEBUG
+#define DBP( ... ) { RELP(__VA_ARGS__); }
+#else
+#define DBP( ... ) { }
+#endif
 #endif
 
 #define handle_error_en(en, msg) \

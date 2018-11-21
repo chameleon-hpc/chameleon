@@ -64,9 +64,13 @@ enum chameleon_result_types {
     CHAM_SUCCESS = 0,
     CHAM_FAILURE = 1,
 
-    CHAM_REMOTE_TASK_NONE = 2,
-    CHAM_REMOTE_TASK_SUCCESS = 3,
-    CHAM_REMOTE_TASK_FAILURE = 4    
+    CHAM_LOCAL_TASK_NONE = 2,
+    CHAM_LOCAL_TASK_SUCCESS = 3,
+    CHAM_LOCAL_TASK_FAILURE = 4,
+
+    CHAM_REMOTE_TASK_NONE = 5,
+    CHAM_REMOTE_TASK_SUCCESS = 6,
+    CHAM_REMOTE_TASK_FAILURE = 7    
 };
 
 enum chameleon_task_status {

@@ -128,6 +128,8 @@ int32_t wake_up_comm_threads();
 
 int32_t put_comm_threads_to_sleep();
 
+int32_t chameleon_taskyield();
+
 #ifdef __cplusplus
 }
 #endif

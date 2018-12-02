@@ -141,13 +141,8 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
-#if OFFLOAD_DATA_PACKING_TYPE == 0
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
 TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag);
-#elif OFFLOAD_DATA_PACKING_TYPE == 1
-void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size);
-TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer, int mpi_tag);
-#endif
 
 short pin_thread_to_last_core();
 void* offload_action(void *task);
@@ -424,12 +419,7 @@ static void receive_handler(void* buffer, int tag, int source) {
     double cur_time_decode, cur_time;
     cur_time_decode = omp_get_wtime();
 #endif
-
-#if OFFLOAD_DATA_PACKING_TYPE == 0
     task = decode_send_buffer(buffer, tag);
-#elif OFFLOAD_DATA_PACKING_TYPE == 1
-	task = decode_send_buffer_metadata(buffer, tag);
-#endif
 #if CHAM_STATS_RECORD
     cur_time_decode = omp_get_wtime()-cur_time_decode;
     atomic_add_dbl(_time_decode_sum, cur_time_decode);
@@ -622,13 +612,12 @@ void* offload_action(void *v_entry) {
     double cur_time;
     cur_time = omp_get_wtime();
 #endif
+    buffer = encode_send_buffer(entry->task_entry, &buffer_size);
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     // RELP("Packing Type: Buffer\n");
-    buffer = encode_send_buffer(entry->task_entry, &buffer_size);
     int n_requests = 1;
 #elif OFFLOAD_DATA_PACKING_TYPE == 1
-    // RELP("Packing Type: ZeroCopy\n");
-    buffer = encode_send_buffer_metadata(entry->task_entry, &buffer_size);
+    // RELP("Packing Type: Zero Copy\n");
     int n_requests = 1 + entry->task_entry->arg_num;
 #endif
 #if CHAM_STATS_RECORD
@@ -678,8 +667,6 @@ void* offload_action(void *v_entry) {
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
-    //free(buffer); //Buffer is freed in handler
-
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
@@ -763,75 +750,6 @@ void* offload_action(void *v_entry) {
     return nullptr;
 }
 
-#if OFFLOAD_DATA_PACKING_TYPE == 1
-void * encode_send_buffer_metadata(TargetTaskEntryTy *task, int32_t *buffer_size) {
-#ifdef TRACE
-    static int event_encode = -1;
-    std::string event_encode_name = "encode";
-    if(event_encode == -1) 
-        int ierr = VT_funcdef(event_encode_name.c_str(), VT_NOCLASS, &event_encode);
-    VT_begin(event_encode);
-#endif 
-
-    DBP("encode_send_buffer_metadata (enter) - task_entry (task_id=%d) " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
-
-    // FORMAT:
-    //      1. target function pointer = address (intptr_t)
-    //      2. image index
-    //      3. offset of entry point inside image
-    //      4. number of arguments = int32_t
-    //      5. array with argument types = n_args * int64_t
-    //      6. array with argument offsets = n_args * int64_t
-    //      7. array with length of argument pointers = n_args * int64_t
-   int total_size = sizeof(intptr_t)           // 1. target entry pointer
-        + sizeof(int32_t)                       // 2. img index
-        + sizeof(ptrdiff_t)                     // 3. offset inside image
-        + sizeof(int32_t)                       // 4. number of arguments
-        + task->arg_num * sizeof(int64_t)       // 5. argument sizes
-        + task->arg_num * sizeof(ptrdiff_t)     // 6. offsets
-        + task->arg_num * sizeof(int64_t);       // 7. argument types
-	 
-    // allocate memory for transfer
-    char *buff = (char *) malloc(total_size);
-    char *cur_ptr = (char *)buff;
-
-    // 1. target entry address
-    ((intptr_t *) cur_ptr)[0] = (intptr_t) task->tgt_entry_ptr;
-    cur_ptr += sizeof(intptr_t);
-
-    // 2. img index
-    ((int32_t *) cur_ptr)[0] = task->idx_image;
-    cur_ptr += sizeof(int32_t);
-
-    // 3. offset
-    ((ptrdiff_t *) cur_ptr)[0] = task->entry_image_offset;
-    cur_ptr += sizeof(ptrdiff_t);
-
-    // 4. number of arguments
-    ((int32_t *) cur_ptr)[0] = task->arg_num;
-    cur_ptr += sizeof(int32_t);
-
-    // 5. argument sizes
-    memcpy(cur_ptr, &(task->arg_sizes[0]), task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-    // 6. offsets
-    memcpy(cur_ptr, &(task->arg_tgt_offsets[0]), task->arg_num * sizeof(ptrdiff_t));
-    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
-
-    // 7. argument types
-    memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-   
-    // set output size
-    *buffer_size = total_size;
-#ifdef TRACE
-    VT_end(event_encode);
-#endif
-    return buff;    
-}
-#elif OFFLOAD_DATA_PACKING_TYPE == 0
 void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #ifdef TRACE
     static int event_encode = -1;
@@ -862,9 +780,11 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
         + task->arg_num * sizeof(ptrdiff_t)     // 6. offsets
         + task->arg_num * sizeof(int64_t);      // 7. argument types
 
+#if OFFLOAD_DATA_PACKING_TYPE == 0
     for(int i = 0; i < task->arg_num; i++) {
         total_size += task->arg_sizes[i];
     }
+#endif
 
     // allocate memory for transfer
     char *buff = (char *) malloc(total_size);
@@ -898,6 +818,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
     cur_ptr += task->arg_num * sizeof(int64_t);
 
+#if OFFLOAD_DATA_PACKING_TYPE == 0
     // 8. loop through arguments and copy values
     for(int32_t i = 0; i < task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
@@ -913,6 +834,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
         }
         cur_ptr += task->arg_sizes[i];
     }
+#endif
 
     // set output size
     *buffer_size = total_size;
@@ -921,9 +843,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #endif
     return buff;    
 }
-#endif
 
-#if OFFLOAD_DATA_PACKING_TYPE == 0
 TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
 #ifdef TRACE
     static int event_decode = -1;
@@ -984,6 +904,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
+#if OFFLOAD_DATA_PACKING_TYPE == 0
         // copy value from host pointer directly
         if(is_lit) {
             intptr_t tmp_ptr = ((intptr_t *) cur_ptr)[0];
@@ -994,9 +915,15 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
             memcpy(new_mem, cur_ptr, task->arg_sizes[i]);
             task->arg_hst_pointers[i] = new_mem;
         }
-        
+#elif OFFLOAD_DATA_PACKING_TYPE == 1
+        // copy value from host pointer directly
+        if(!is_lit) {
+            // need to allocate new memory
+            void * new_mem = malloc(task->arg_sizes[i]);
+            task->arg_hst_pointers[i] = new_mem;
+        }
+#endif
         print_arg_info("decode_send_buffer", task, i);
-
         cur_ptr += task->arg_sizes[i];
     }
 #ifdef TRACE
@@ -1004,79 +931,6 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
 #endif 
     return task;
 }
-#elif OFFLOAD_DATA_PACKING_TYPE == 1
-TargetTaskEntryTy* decode_send_buffer_metadata(void * buffer, int mpi_tag) {
-#ifdef TRACE
-    static int event_decode = -1;
-    std::string event_decode_name = "decode";
-    if(event_decode == -1) 
-        int ierr = VT_funcdef(event_decode_name.c_str(), VT_NOCLASS, &event_decode);
-    VT_begin(event_decode);
-#endif 
-    // init new task
-    TargetTaskEntryTy* task = new TargetTaskEntryTy();
-    // actually we use the global task id as tag
-    task->task_id = mpi_tag;
-
-    // current pointer position
-    char *cur_ptr = (char*) buffer;
-
-    // 1. target function pointer
-    task->tgt_entry_ptr = ((intptr_t *) cur_ptr)[0];
-    cur_ptr += sizeof(intptr_t);
-
-    // 2. img index
-    task->idx_image = ((int32_t *) cur_ptr)[0];
-    cur_ptr += sizeof(int32_t);
-
-    // 3. offset
-    task->entry_image_offset = ((ptrdiff_t *) cur_ptr)[0];
-    cur_ptr += sizeof(ptrdiff_t);
-
-    // 4. number of arguments
-    task->arg_num = ((int32_t *) cur_ptr)[0];
-    cur_ptr += sizeof(int32_t);
-
-    DBP("decode_send_buffer_metadata (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
-
-    // we need a mapping to process local task entry points
-    intptr_t local_img_base     = _image_base_addresses[task->idx_image];
-    intptr_t local_entry        = local_img_base + task->entry_image_offset;
-    DBP("decode_send_buffer - mapping remote entry point from: " DPxMOD " to local: " DPxMOD "\n", DPxPTR(task->tgt_entry_ptr), DPxPTR(local_entry));
-    task->tgt_entry_ptr         = local_entry;
-
-    // resize data structure
-    task->ReSizeArrays(task->arg_num);
-    
-    // 5. argument sizes
-    memcpy(&(task->arg_sizes[0]), cur_ptr, task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-    // 6. argument types
-    memcpy(&(task->arg_tgt_offsets[0]), cur_ptr, task->arg_num * sizeof(ptrdiff_t));
-    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
-
-    // 7. offsets
-    memcpy(&(task->arg_types[0]), cur_ptr, task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-    for(int32_t i = 0; i < task->arg_num; i++) {
-        int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-
-        // copy value from host pointer directly
-        if(!is_lit) {
-            // need to allocate new memory
-            void * new_mem = malloc(task->arg_sizes[i]);
-            task->arg_hst_pointers[i] = new_mem;
-        }
-        print_arg_info("decode_send_buffer_metadata", task, i);
-    }
-#ifdef TRACE
-    VT_end(event_decode);
-#endif 
-    return task;
-}
-#endif
 #pragma endregion Offloading / Packing
 
 #pragma region Thread Receive
@@ -1113,7 +967,7 @@ void* receive_remote_tasks(void* arg) {
         MPI_Status cur_status_receive;
         int flag_open_request_receive = 0;
 
-        #if THREAD_ACTIVATION
+#if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
             // dont do anything if the thread is sleeping
             usleep(20);
@@ -1125,7 +979,7 @@ void* receive_remote_tasks(void* arg) {
                 pthread_exit(&ret_val);
             }
         }
-        #endif
+#endif
 
 #if OFFLOAD_CREATE_SEPARATE_THREAD
         while(!flag_open_request_receive) {
@@ -1147,11 +1001,11 @@ void* receive_remote_tasks(void* arg) {
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
-            #if THREAD_ACTIVATION
+#if THREAD_ACTIVATION
             if(_flag_comm_threads_sleeping) {
                 break;
             }
-            #endif
+#endif
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
 #if OFFLOAD_CREATE_SEPARATE_THREAD
         }
@@ -1159,13 +1013,13 @@ void* receive_remote_tasks(void* arg) {
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
         }
 
-        #if THREAD_ACTIVATION
+#if THREAD_ACTIVATION
         // if threads have been put to sleep start from beginning to end up in sleep mode
         if(_flag_comm_threads_sleeping) {
             DBP("receive_remote_tasks - thread went to sleep again\n");
             continue;
         }
-        #endif
+#endif
 
         if( flag_open_request_receiveBack ) {
             bool match = false;

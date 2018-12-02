@@ -551,7 +551,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
                     // if(!found) {
                         task->arg_sizes[i] = entry->size;
                         task->arg_hst_pointers[i] = entry->hst_ptr;
-                        print_arg_info_w_tgt("lookup_hst_pointers (first)", task, i);
+                        // print_arg_info_w_tgt("lookup_hst_pointers (first)", task, i);
                     // } else {
                     //     // temporary assignment to find more matches and errors
                     //     void * swap = task->arg_hst_pointers[i];
@@ -642,6 +642,8 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         // always apply offset in case of array sections
         ptrs[i] = (void *)((intptr_t)task->arg_hst_pointers[i] + task->arg_tgt_offsets[i]);
         args[i] = &ptrs[i];
+
+        print_arg_info_w_tgt("execute_target_task", task, i);
     }
     
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, task->arg_num, &ffi_type_void, &args_types[0]);

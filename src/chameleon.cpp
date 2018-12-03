@@ -252,7 +252,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // at least try to execute this amout of normal task after rank runs out of offloadable tasks
     // before assuming idle state
     // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 1;
+    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 10;
     int this_thread_num_attemps_standard_task = 0;
     #else
     // start communication threads here
@@ -643,7 +643,7 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         ptrs[i] = (void *)((intptr_t)task->arg_hst_pointers[i] + task->arg_tgt_offsets[i]);
         args[i] = &ptrs[i];
 
-        print_arg_info_w_tgt("execute_target_task", task, i);
+        print_arg_info("execute_target_task", task, i);
     }
     
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, task->arg_num, &ffi_type_void, &args_types[0]);

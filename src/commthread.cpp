@@ -1463,7 +1463,7 @@ void* service_thread_action(void *arg) {
 #pragma region Helper Functions
 void trigger_update_outstanding() {
     _outstanding_jobs_local = _num_local_tasks_outstanding + _num_stolen_tasks_outstanding;
-    DBP("trigger_update_outstanding - current oustanding jobs: %d, current_local_load = %d\n", _outstanding_jobs_local.load(), _load_info_local);
+    DBP("trigger_update_outstanding - current outstanding jobs: %d, current_local_load = %d\n", _outstanding_jobs_local.load(), _load_info_local);
 }
 
 void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {

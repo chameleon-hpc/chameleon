@@ -193,6 +193,13 @@ int32_t chameleon_finalize() {
     DBP("chameleon_finalize (exit)\n");
     return CHAM_SUCCESS;
 }
+
+void chameleon_print(int print_prefix, const char *prefix, int rank, ... ) {
+    va_list args;
+    va_start(args, rank);
+    chameleon_dbg_print_help(print_prefix, prefix, rank, args);
+    va_end (args);
+}
 #pragma endregion Init / Finalize / Helper
 
 #pragma region Distributed Taskwait + Taskyield
@@ -248,6 +255,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // increment counter to tell that another thread joined taskwait
     _num_threads_entered_taskwait++;
     int this_thread_idle = 0;
+    
+    int tmp_count_trip = 0;
+    int my_idle_order = -1;
 
     // at least try to execute this amout of normal task after rank runs out of offloadable tasks
     // before assuming idle state
@@ -272,13 +282,14 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             // of course only do that once for the thread :)
             if(!this_thread_idle) {
                 // increment idle counter again
-                _num_threads_idle++;
+                my_idle_order = ++_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
                 this_thread_idle = 1;
             }
         } else {
-            #pragma omp taskyield
-            // increment attemps that might result in
+            // increment attemps that might result in more target tasks
             this_thread_num_attemps_standard_task++;
+            #pragma omp taskyield
         }
         #endif
 
@@ -288,7 +299,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
-                _num_threads_idle--;
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
                 this_thread_idle = 0;
             }
             this_thread_num_attemps_standard_task = 0;
@@ -307,13 +319,19 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
-        int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
-        if(_num_threads_entered_taskwait >= _num_threads_involved_in_taskwait) {
-            if(     _comm_thread_load_exchange_happend && 
-                    _outstanding_jobs_sum == 0 && 
-                    cp_ranks_not_completely_idle == 0) {
+        if(_num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+            int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
+            if(exit_condition_met(0)) {
+                // DBP("chameleon_distributed_taskwait - break - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _num_threads_entered_taskwait.load(), _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
             }
+            // else {
+            //     tmp_count_trip++;
+            //    if(tmp_count_trip % 10000 == 0) {
+            //         DBP("chameleon_distributed_taskwait - idle - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _num_threads_entered_taskwait.load(), _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
+            //         tmp_count_trip = 0;
+            //     }
+            // }
         }
         #else
         //only abort if load exchange has happened at least once and there are no outstanding jobs left
@@ -328,7 +346,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
-                _num_threads_idle--;
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
                 this_thread_idle = 0;
             }
             this_thread_num_attemps_standard_task = 0;

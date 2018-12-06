@@ -139,6 +139,8 @@ int32_t stop_communication_threads();
 
 void trigger_update_outstanding();
 
+int exit_condition_met(int print);
+
 #ifdef __cplusplus
 }
 #endif

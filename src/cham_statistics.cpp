@@ -66,17 +66,18 @@ void cham_stats_init_stats() {
 
 void cham_stats_print_stats_w_mean(std::string name, double sum, int count) {
     if(count <= 0) {
-        printf("Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", chameleon_comm_rank, name.c_str(), sum, count, 0);
+        fprintf(stderr, "Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", chameleon_comm_rank, name.c_str(), sum, count, 0);
     } else {
-        printf("Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
+        fprintf(stderr, "Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
     }
 }
 
 void cham_stats_print_stats() {
-    printf("Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
-    printf("Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
-    printf("Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
-    printf("Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
+    _mtx_relp.lock();
+    fprintf(stderr, "Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
+    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
+    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
+    fprintf(stderr, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
 
     cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
@@ -86,6 +87,7 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
     cham_stats_print_stats_w_mean("_time_encode_sum", _time_encode_sum, _time_encode_count);
     cham_stats_print_stats_w_mean("_time_decode_sum", _time_decode_sum, _time_decode_count);
+    _mtx_relp.unlock();
 }
 
 /*

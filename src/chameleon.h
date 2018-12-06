@@ -130,6 +130,8 @@ int32_t put_comm_threads_to_sleep();
 
 int32_t chameleon_taskyield();
 
+void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
+
 #ifdef __cplusplus
 }
 #endif

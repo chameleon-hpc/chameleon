@@ -1,5 +1,7 @@
 #include "request_manager.h"
 
+#include <omp.h>
+
 #define MAX_REQUESTS 100
 
 RequestManager::RequestManager()
@@ -11,16 +13,28 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
                                 MPI_Request *requests,
                                 bool block, 
                                 std::function<void(void*, int, int)> handler,
+                                RequestType type,
                                 void* buffer) {
   if(block) {
+#if CHAM_STATS_RECORD
+     double time = -omp_get_wtime();
+#endif
      MPI_Waitall(n_requests, &requests[0], MPI_STATUSES_IGNORE);
+#if CHAM_STATS_RECORD
+     time += omp_get_wtime();
+     addTimingToStatistics(time, type); 
+#endif
      handler(buffer, tag, rank);
      //for(int i=0; i<buffers_to_delete.size(); i++) delete[] buffers_to_delete[i];
      return;
   }
  
   int gid=_groupId++;
-  RequestGroupData request_group_data = {buffer, handler, rank, tag};
+  double startStamp = 0;
+#if CHAM_STATS_RECORD
+  startStamp = omp_get_wtime();
+#endif
+  RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp};
   _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
   _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));
 
@@ -65,7 +79,10 @@ void RequestManager::progressRequests() {
     _outstanding_reqs_for_group[gid]--;
     _map_rid_to_request_data.erase(rid);
    
-    if(_outstanding_reqs_for_group[gid]==0) { 
+    if(_outstanding_reqs_for_group[gid]==0) {
+#if CHAM_STATS_RECORD 
+       double finishedStamp = omp_get_wtime();
+#endif
        _outstanding_reqs_for_group.erase(gid);
        RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
 
@@ -73,7 +90,11 @@ void RequestManager::progressRequests() {
        void* buffer = request_group_data.buffer;
        int tag = request_group_data.tag;
        int rank = request_group_data.rank;
-               
+       RequestType type = request_group_data.type;
+#if CHAM_STATS_RECORD
+       double startStamp = request_group_data.start_time;
+       addTimingToStatistics(finishedStamp-startStamp, type);
+#endif               
        handler(buffer, tag, rank);
 
        _map_id_to_request_group_data.erase(gid);
@@ -91,3 +112,25 @@ void RequestManager::progressRequests() {
 int RequestManager::getNumberOfOutstandingRequests() {
   return _request_queue.size();
 }
+
+#if CHAM_STATS_RECORD
+void RequestManager::addTimingToStatistics(double elapsed, RequestType type) {
+  switch(type) {
+    case send:
+        atomic_add_dbl(_time_comm_send_task_sum, elapsed);
+        break;        
+    case sendBack:
+        atomic_add_dbl(_time_comm_back_send_sum, elapsed);
+        break;
+    case recv:
+        atomic_add_dbl(_time_comm_recv_task_sum, elapsed);
+        break;
+    case recvData:
+        atomic_add_dbl(_time_comm_recv_task_sum, elapsed);
+        break;
+    case recvBack:
+        atomic_add_dbl(_time_comm_back_recv_sum, elapsed);
+        break;
+  }
+}
+#endif

@@ -425,11 +425,12 @@ static void receive_handler(void* buffer, int tag, int source) {
 #endif
 #if OFFLOAD_DATA_PACKING_TYPE == 1
     MPI_Request *requests = new MPI_Request[task->arg_num];
-#ifdef TRACE
-    VT_begin(event_receive_tasks);
-#endif
     DBP("offload_action - receiving data from rank %d with tag: %d\n", source, tag);
 
+
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime();
+#endif
     for(int32_t i=0; i<task->arg_num; i++) {
         int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
         if(is_lit) {
@@ -439,25 +440,19 @@ static void receive_handler(void* buffer, int tag, int source) {
         }
         print_arg_info("receive_handler - receiving argument", task, i);
     }
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_comm_recv_task_sum, cur_time);    
+#endif
     request_manager_receive.submitRequests( tag, 
                                     source,
                                     task->arg_num, 
                                     requests,
-                                    true,             //TODO: we need to block before the task can be submitted!
-                                    handler_noop);
-#ifdef TRACE
-    VT_end(event_receive_tasks);
-#endif
+                                    true,        //TODO: we need to block before the task can be submitted!      
+                                    handler_noop,
+                                    recvData);
 #endif
 
-#if CHAM_STATS_RECORD
-    //TODO: timing for MPI
-    //cur_time = omp_get_wtime()-cur_time;
-    //_mtx_time_comm_recv_task.lock();
-    //_time_comm_recv_task_sum += (cur_time-cur_time_decode);
-    //_time_comm_recv_task_count++;
-    //_mtx_time_comm_recv_task.unlock();
-#endif
     // set information for sending back results/updates if necessary
     task->source_mpi_rank   = source;
     task->source_mpi_tag    = tag;
@@ -656,16 +651,17 @@ void* offload_action(void *v_entry) {
         _mtx_map_tag_to_task.unlock();
     }
 #endif
-    request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
-                                requests,
-                                MPI_BLOCKING,
-                                send_handler,
-                                buffer);
 #if CHAM_STATS_RECORD                            
     cur_time = omp_get_wtime()-cur_time;
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
+    request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
+                                requests,
+                                MPI_BLOCKING,
+                                send_handler,
+                                send,
+                                buffer);
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
@@ -1041,16 +1037,17 @@ void* receive_remote_tasks(void* arg) {
                 MPI_Request request;
                 MPI_Irecv(buffer, recv_buff_size, MPI_BYTE, cur_status_receiveBack.MPI_SOURCE, cur_status_receiveBack.MPI_TAG,
                                                                                       chameleon_comm_mapped, &request);
-                request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, 1, 
-                                                        &request,
-                                                        MPI_BLOCKING,
-                                                        receive_back_handler,
-                                                        buffer);
 #if CHAM_STATS_RECORD
                 cur_time = omp_get_wtime()-cur_time;
                 atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
                 _time_comm_back_recv_count++;
 #endif
+                request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, 1, 
+                                                        &request,
+                                                        MPI_BLOCKING,
+                                                        receive_back_handler,
+                                                        recvBack,
+                                                        buffer);
       
 #ifdef TRACE
                 VT_end(event_recv_back);
@@ -1060,9 +1057,6 @@ void* receive_remote_tasks(void* arg) {
 #endif
         // receive new task
         if ( flag_open_request_receive ) {
-#if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
-#endif
 #ifdef TRACE
             VT_begin(event_receive_tasks);
 #endif
@@ -1071,13 +1065,22 @@ void* receive_remote_tasks(void* arg) {
      
             MPI_Request request = MPI_REQUEST_NULL;
             // now receive at least meta data
+#if CHAM_STATS_RECORD
+            cur_time = omp_get_wtime();
+#endif
             res = MPI_Irecv(buffer, recv_buff_size, MPI_BYTE, cur_status_receive.MPI_SOURCE, cur_status_receive.MPI_TAG, chameleon_comm, &request);
+#if CHAM_STATS_RECORD
+            cur_time = omp_get_wtime()-cur_time;
+            atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
+            _time_comm_recv_task_count++;
+#endif
             request_manager_receive.submitRequests( cur_status_receive.MPI_TAG, 
                                             cur_status_receive.MPI_SOURCE,
                                             1, 
                                             &request,
                                             MPI_BLOCKING,
                                             receive_handler,
+                                            recv,
                                             buffer);
 #ifdef TRACE
             VT_end(event_receive_tasks);
@@ -1394,13 +1397,12 @@ void* service_thread_action(void *arg) {
 #endif
         MPI_Request request;
         MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &request);
-        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, buff );
 #if CHAM_STATS_RECORD
         cur_time = omp_get_wtime()-cur_time;
         atomic_add_dbl(_time_comm_back_send_sum, cur_time);
         _time_comm_back_send_count++;
 #endif
-
+        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, sendBack, buff );
 
 #ifdef TRACE
         VT_end(event_send_back);

@@ -1,12 +1,16 @@
 #ifndef _REQUESTMANAGER_H_
 #define _REQUESTMANAGER_H_
 
+#include "cham_statistics.h"
+
 #include <mpi.h>
 #include <vector>
 #include <queue>
 #include <unordered_map>
 #include <atomic>
 #include <functional>
+
+enum RequestType {send, recv, recvData, sendBack, recvBack};
 
 class RequestManager {
   public:
@@ -15,6 +19,7 @@ class RequestManager {
                          MPI_Request *requests,
                          bool block,
                          std::function<void(void*, int, int)> handler,
+                         RequestType type,
                          void* buffer=NULL);
     void progressRequests();
     int getNumberOfOutstandingRequests();
@@ -25,6 +30,8 @@ class RequestManager {
         std::function<void(void*, int, int)> handler;
         int rank;
         int tag;
+        RequestType type;
+        double start_time;
     };
 
     struct RequestData {
@@ -32,6 +39,9 @@ class RequestManager {
         MPI_Request mpi_request;
     };
 
+#if CHAM_STATS_RECORD
+    void addTimingToStatistics(double elapsed, RequestType type);
+#endif
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     std::queue<int> _request_queue;

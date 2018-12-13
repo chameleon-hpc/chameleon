@@ -1072,11 +1072,12 @@ void* receive_remote_tasks(void* arg) {
 #if CHAM_STATS_RECORD
                 cur_time = omp_get_wtime();
 #endif   
-                MPI_Request *requests = new MPI_Request[task_entry->arg_num];         
+                MPI_Request *requests = new MPI_Request[task_entry->arg_num];  
+                int j = 0;
                 for(int i = 0; i < task_entry->arg_num; i++) {
                     if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                         MPI_Irecv(task_entry->arg_hst_pointers[i], task_entry->arg_sizes[i], MPI_BYTE, cur_status_receiveBack.MPI_SOURCE, cur_status_receiveBack.MPI_TAG,
-                                                                                     chameleon_comm_mapped, &requests[i]);
+                                                                                     chameleon_comm_mapped, &requests[j++]);
                     }
                 }
 #if CHAM_STATS_RECORD
@@ -1084,7 +1085,7 @@ void* receive_remote_tasks(void* arg) {
                 atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
                 _time_comm_back_recv_count++;
 #endif      
-		request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, task_entry->arg_num, 
+		request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, j, 
                                                         &requests[0],
                                                         MPI_BLOCKING,
                                                         receive_back_handler,
@@ -1455,12 +1456,14 @@ void* service_thread_action(void *arg) {
         double cur_time = omp_get_wtime();
 #endif
         MPI_Request *requests = new MPI_Request[cur_task->arg_num];
+        int j = 0;        
+
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &requests[i]);
+                MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &requests[j++]);
             }
         }
-        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, cur_task->arg_num, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr );
+        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, j, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr );
         delete[] requests;
 #if CHAM_STATS_RECORD
         cur_time = omp_get_wtime()-cur_time;

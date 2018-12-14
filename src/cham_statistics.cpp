@@ -4,6 +4,7 @@
 
 std::atomic<int>     _num_executed_tasks_local(0);
 std::atomic<int>     _num_executed_tasks_stolen(0);
+std::atomic<int>     _num_executed_tasks_replicated(0);
 std::atomic<int>     _num_tasks_offloaded(0);
 
 std::atomic<double>  _time_task_execution_local_sum(0.0);
@@ -11,6 +12,9 @@ std::atomic<int>     _time_task_execution_local_count(0);
 
 std::atomic<double>  _time_task_execution_stolen_sum(0.0);
 std::atomic<int>     _time_task_execution_stolen_count(0);
+
+std::atomic<double>  _time_task_execution_replicated_sum(0.0);
+std::atomic<int>     _time_task_execution_replicated_count(0);
 
 std::atomic<double>  _time_comm_send_task_sum(0.0);
 std::atomic<int>     _time_comm_send_task_count(0);
@@ -37,6 +41,7 @@ extern "C" {
 void cham_stats_init_stats() {
     _num_executed_tasks_local = 0;
     _num_executed_tasks_stolen = 0;
+    _num_executed_tasks_replicated = 0;
     _num_tasks_offloaded = 0;
 
     _time_task_execution_local_sum = 0.0;
@@ -44,6 +49,9 @@ void cham_stats_init_stats() {
 
     _time_task_execution_stolen_sum = 0.0;
     _time_task_execution_stolen_count = 0;
+
+    _time_task_execution_replicated_sum = 0.0;
+    _time_task_execution_replicated_count = 0;
 
     _time_comm_send_task_sum = 0.0;
     _time_comm_send_task_count = 0;
@@ -77,10 +85,12 @@ void cham_stats_print_stats() {
     fprintf(stderr, "Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
+    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_replicated\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated.load());
     fprintf(stderr, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
 
     cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
+    cham_stats_print_stats_w_mean("_time_task_execution_replicated_sum", _time_task_execution_replicated_sum, _time_task_execution_replicated_count);
     cham_stats_print_stats_w_mean("_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
     cham_stats_print_stats_w_mean("_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
     cham_stats_print_stats_w_mean("_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);

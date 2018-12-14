@@ -14,10 +14,14 @@
 
 extern std::atomic<int>     _num_executed_tasks_local;
 extern std::atomic<int>     _num_executed_tasks_stolen;
+extern std::atomic<int>     _num_executed_tasks_replicated;
 extern std::atomic<int>     _num_tasks_offloaded;
 
 extern std::atomic<double>  _time_task_execution_local_sum;
 extern std::atomic<int>     _time_task_execution_local_count;
+
+extern std::atomic<double>  _time_task_execution_replicated_sum;
+extern std::atomic<int>     _time_task_execution_replicated_count;
 
 extern std::atomic<double>  _time_task_execution_stolen_sum;
 extern std::atomic<int>     _time_task_execution_stolen_count;

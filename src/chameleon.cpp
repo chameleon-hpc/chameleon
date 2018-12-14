@@ -2,6 +2,7 @@
 #include <mpi.h>
 #include <stdexcept>
 #include <algorithm>
+#include <cassert>
 
 #include "chameleon.h"
 #include "chameleon_common.h"
@@ -53,6 +54,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
 int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_local_task();
 int32_t process_remote_task();
+int32_t process_replicated_task();
 #pragma endregion Forward Declarations
 
 #pragma region Init / Finalize / Helper
@@ -64,10 +66,13 @@ TargetTaskEntryTy* CreateTargetTaskEntryTy(
         int32_t p_arg_num) {
 
     TargetTaskEntryTy *tmp_task = new TargetTaskEntryTy(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
+    assert(tmp_task->mtx_execute_or_receive_back.load()==false);
+    
     return tmp_task;
 }
 
 void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
+    assert(task->mtx_execute_or_receive_back.load()==false);
     task->idx_image = img_idx;
     task->entry_image_offset = entry_image_offset;
 }
@@ -355,7 +360,29 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
             // try to execute a local task
             res = process_local_task();
+
+            // if task has been executed successfully start from beginning
+            if(res == CHAM_LOCAL_TASK_SUCCESS)
+                continue;
         }
+
+        // ========== Prio 4: work on replicated tasks
+        if(!_replicated_tasks.empty()) {
+            
+            #if THREAD_ACTIVATION
+            if(this_thread_idle) {
+                // decrement counter again
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+                this_thread_idle = 0;
+            }
+            this_thread_num_attemps_standard_task = 0;
+            #endif
+
+            // try to execute a local task
+            res = process_replicated_task();
+        }
+       
     }
 
     #if THREAD_ACTIVATION
@@ -484,6 +511,8 @@ void chameleon_free_data(void *tgt_ptr) {
 }
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task) {
+   //assert(task->mtx_execute_or_receive_back.load()==false);
+    
     DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
@@ -526,6 +555,8 @@ TargetTaskEntryTy* chameleon_pop_task() {
     }
     _mtx_local_tasks.unlock();
     DBP("chameleon_pop_task (exit)\n");
+    //assert(task->mtx_execute_or_receive_back.load()==false);
+    
     return task;
 }
 
@@ -546,6 +577,8 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
 
 #pragma region Fcns for Lookups and Execution
 int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
+    //assert(task->mtx_execute_or_receive_back.load()==false);
+    
     DBP("lookup_hst_pointers (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     for(int i = 0; i < task->arg_num; i++) {
         // get type and pointer
@@ -634,6 +667,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
     //     }
     // }
     // _mtx_data_entry.unlock();
+    //assert(task->mtx_execute_or_receive_back.load()==false);
 
     DBP("lookup_hst_pointers (exit)\n");
     return CHAM_SUCCESS;
@@ -678,6 +712,78 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
     ffi_call(&cif, entry, NULL, &args[0]);
 
     return CHAM_SUCCESS;
+}
+
+inline int32_t process_replicated_task() {
+    DBP("process_replicated_task (enter)\n");
+    TargetTaskEntryTy *replicated_task = nullptr;
+   
+    if(_replicated_tasks.empty())
+        return CHAM_REPLICATED_TASK_NONE;
+        
+    _mtx_replicated_tasks.lock();
+    // for safety need to check again after lock is aquired
+    if(_replicated_tasks.empty()) {
+        _mtx_replicated_tasks.unlock();
+        return CHAM_REPLICATED_TASK_NONE;
+    }
+
+    replicated_task = _replicated_tasks.front();
+    bool expected = false;
+    bool desired = true;
+ 
+    //atomic CAS   
+    if(replicated_task->mtx_execute_or_receive_back.compare_exchange_strong(expected, desired)) {
+    //if(true) {
+        //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
+        //remove task from queue
+        _replicated_tasks.pop_front();
+        _mtx_replicated_tasks.unlock();
+
+#ifdef TRACE
+        static int event_process_replicated = -1;
+        static const std::string event_process_replicated_name = "process_replicated";
+        if( event_process_replicated == -1) 
+            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated);
+        VT_begin(event_process_replicated);
+#endif  
+        
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif 
+        int32_t res = execute_target_task(replicated_task);
+        if(res != CHAM_SUCCESS)
+            handle_error_en(1, "execute_target_task - remote");
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+        _time_task_execution_replicated_count++;
+#endif
+
+        _num_replicated_tasks_outstanding--;
+#if CHAM_STATS_RECORD
+        _num_executed_tasks_replicated++;
+#endif
+ 
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
+
+#ifdef TRACE
+        VT_end(event_process_replicated);
+#endif       
+    }       
+    else{
+        // leave task in the queue as it either already has been received back (and task will be removed soon)
+        // or the receive back is in progress (and after completion, task will be removed)
+        _mtx_stolen_remote_tasks.unlock();
+        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
+    }
+
+    return CHAM_REPLICATED_TASK_SUCCESS;
+  
+    DBP("process_replicated_tasks (exit)\n");
 }
 
 inline int32_t process_remote_task() {

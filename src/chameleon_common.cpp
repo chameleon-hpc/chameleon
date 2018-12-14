@@ -32,6 +32,9 @@ struct TargetTaskEntryTy {
     int32_t source_mpi_rank = 0;
     int32_t source_mpi_tag = 0;
 
+    // Mutex for either execution or receiving back of a replicated task
+    std::atomic<bool> mtx_execute_or_receive_back;
+
     // Constructor 1: Called when creating new task during decoding
     TargetTaskEntryTy() {
         // here we dont need to give a task id in that case because it should be transfered from source
@@ -43,7 +46,9 @@ struct TargetTaskEntryTy {
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
-        int32_t p_arg_num) {
+        int32_t p_arg_num) : mtx_execute_or_receive_back(false) {
+            //mtx_execute_or_receive_back= false; 
+
             // generate a unique task id
             int tmp_counter = ++_task_id_counter;
             // int tmp_rank = chameleon_comm_rank;

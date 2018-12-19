@@ -50,7 +50,7 @@
 
 //Specify whether tasks should be offloaded aggressively after one performance update
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 0
+#define OFFLOADING_STRATEGY_AGGRESSIVE 1
 #endif
 
 // communicator for remote task requests
@@ -59,6 +59,8 @@ extern MPI_Comm chameleon_comm;
 extern MPI_Comm chameleon_comm_mapped;
 // communicator for load information
 extern MPI_Comm chameleon_comm_load;
+// communicator for task cancellation
+extern MPI_Comm chameleon_comm_cancel;
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
@@ -92,6 +94,9 @@ extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
 // list with stolen task entries that need output data transfer
 extern std::mutex _mtx_stolen_remote_tasks_send_back;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
+
+extern std::mutex _mtx_map_tag_to_stolen_task;
+extern std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
 
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
@@ -132,6 +137,8 @@ extern "C" {
 void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx);
 
 void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx);
+
+void cancel_offloaded_task(TargetTaskEntryTy *task);
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
 

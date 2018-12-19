@@ -24,6 +24,8 @@
 MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
 MPI_Comm chameleon_comm_mapped;
+// communicator for cancelling offloaded tasks
+MPI_Comm chameleon_comm_cancel;
 // communicator for load information
 MPI_Comm chameleon_comm_load;
 
@@ -33,6 +35,7 @@ int chameleon_comm_size = -1;
 //request manager for MPI requests
 RequestManager request_manager_receive;
 RequestManager request_manager_send;
+RequestManager request_manager_cancel;
 
 //"trash buffer" for late receives (i.e. a replicated task is already processed locally)
 void *trash_buffer = nullptr;
@@ -46,12 +49,12 @@ std::mutex _mtx_data_entry;
 std::list<OffloadingDataEntryTy*> _data_entries;
 
 // list with local task entries
-// these can either be executed here or offloaded to a different rank
+// these can either be executed here or offloaded to a different rank (i.e., become replicated tasks)
 std::mutex _mtx_local_tasks;
 std::list<TargetTaskEntryTy*> _local_tasks;
 std::atomic<int32_t> _num_local_tasks_outstanding(0);
 
-// list with stolen task entries that should be executed but may be cancelled 
+// list with stolen task entries that should be executed but may be cancelled if task is executed on origin rank
 std::mutex _mtx_stolen_remote_tasks;
 std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
 std::atomic<int32_t> _num_stolen_tasks_outstanding(0);
@@ -66,10 +69,14 @@ std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
 std::mutex _mtx_stolen_remote_tasks_send_back;
 std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
 
+// map that maps tag ids back to stolen tasks
+std::mutex _mtx_map_tag_to_stolen_task;
+std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
+
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
-// map that maps tag id's back to local tasks that have been offloaded
-std::mutex _mtx_map_tag_to_task;
-std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_task;
+// map that maps tag ids back to local tasks that have been offloaded
+std::mutex _mtx_map_tag_to_local_task;
+std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_local_task;
 #endif
 
 // ====== Info about outstanding jobs (local & stolen) ======
@@ -476,6 +483,10 @@ static void receive_handler(void* buffer, int tag, int source) {
     _stolen_remote_tasks.push_back(task);
     _mtx_stolen_remote_tasks.unlock();
 
+    _mtx_map_tag_to_stolen_task.lock();
+    _map_tag_to_stolen_task.insert(std::make_pair(tag, task));
+    _mtx_map_tag_to_stolen_task.unlock();
+
     _mtx_load_exchange.lock();
     _num_stolen_tasks_outstanding++;
     _load_info_local++;
@@ -495,13 +506,13 @@ static void receive_back_handler(void* buffer, int tag, int source) {
                                                                                    tag); 
 
     bool match = false;
-    _mtx_map_tag_to_task.lock();
-    std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(tag);
-    match = got != _map_tag_to_task.end();
+    _mtx_map_tag_to_local_task.lock();
+    std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_local_task.find(tag);
+    match = got != _map_tag_to_local_task.end();
     if(match) {
-        _map_tag_to_task.erase(tag);
+        _map_tag_to_local_task.erase(tag);
     }
-    _mtx_map_tag_to_task.unlock(); 
+    _mtx_map_tag_to_local_task.unlock(); 
 
     TargetTaskEntryTy *task_entry;
     if(match) {
@@ -546,6 +557,18 @@ static void receive_back_trash_handler(void* buffer, int tag, int source) {
 #pragma endregion
 
 #pragma region Offloading / Packing
+void cancel_offloaded_task(TargetTaskEntryTy *task) {
+    DBP("cancel_offloaded_task - canceling offloaded task, task_id: %d, target_rank: %d\n", task->task_id, task->target_mpi_rank);
+    MPI_Request request;
+    MPI_Isend(&task->task_id, 1, MPI_INTEGER, task->target_mpi_rank, 0, chameleon_comm_cancel, &request);
+    request_manager_cancel.submitRequests( 0, task->target_mpi_rank, 1, 
+                                           &request,
+                                           MPI_BLOCKING, 
+                                           handler_noop,
+                                           send,   // TODO: special request
+                                           nullptr);
+}
+
 int32_t offload_task_to_rank(OffloadEntryTy *entry) {
 #ifdef TRACE
     static int event_offload = -1;
@@ -563,11 +586,11 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     _mtx_load_exchange.unlock();
 
     _mtx_replicated_tasks.lock();
-    _replicated_tasks.push_front(entry->task_entry);
+    _replicated_tasks.push_back(entry->task_entry);
     _num_replicated_tasks_outstanding++;
     _mtx_replicated_tasks.unlock();
     
-    assert(entry->task_entry->mtx_execute_or_receive_back.load()==false);
+    assert(entry->task_entry->sync_commthread_lock.load()==false);
     
 
 #if OFFLOAD_CREATE_SEPARATE_THREAD
@@ -623,8 +646,11 @@ void* offload_action(void *v_entry) {
     int has_outputs = entry->task_entry->HasAtLeastOneOutput();
     DBP("offload_action (enter) - task_entry (task_id=%d) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", entry->task_entry->task_id, DPxPTR(entry->task_entry->tgt_entry_ptr), entry->task_entry->arg_num, entry->target_rank, has_outputs);
     
-    // use unique task entry as a tag
+    // use unique task id as a tag
     int tmp_tag = entry->task_entry->task_id;
+
+    // store target rank in task
+    entry->task_entry->target_mpi_rank = entry->target_rank;
 
     // encode buffer
     int32_t buffer_size = 0;
@@ -674,9 +700,9 @@ void* offload_action(void *v_entry) {
 #endif
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
     if(has_outputs) {
-        _mtx_map_tag_to_task.lock();
-        _map_tag_to_task.insert(std::make_pair(tmp_tag, entry->task_entry));
-        _mtx_map_tag_to_task.unlock();
+        _mtx_map_tag_to_local_task.lock();
+        _map_tag_to_local_task.insert(std::make_pair(tmp_tag, entry->task_entry));
+        _mtx_map_tag_to_local_task.unlock();
     }
 #endif
 #if CHAM_STATS_RECORD                            
@@ -987,9 +1013,12 @@ void* receive_remote_tasks(void* arg) {
     while(true) {
         request_manager_receive.progressRequests();
 
-        // first check transmission and make sure that buffer has enough memory
+        // check transmission and make sure that buffer has enough memory
         MPI_Status cur_status_receive;
         int flag_open_request_receive = 0;
+ 
+        MPI_Status cur_status_cancel;
+        int flag_open_request_cancel = 0;
 
 #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
@@ -1011,7 +1040,7 @@ void* receive_remote_tasks(void* arg) {
             MPI_Status cur_status_receiveBack;
             int flag_open_request_receiveBack = 0;
 
-            while(!flag_open_request_receive && !flag_open_request_receiveBack) {
+            while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
 #endif
                 usleep(5);
                 // check whether thread should be aborted
@@ -1035,6 +1064,7 @@ void* receive_remote_tasks(void* arg) {
             }
 #else
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
+            MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
         }
 
 #if THREAD_ACTIVATION
@@ -1044,13 +1074,55 @@ void* receive_remote_tasks(void* arg) {
             continue;
         }
 #endif
+    
+        if( flag_open_request_cancel ) {
+            int task_id = -1;
+            MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel.MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
+            DBP("receive_remote_tasks - received cancel request for task_id %d\n", task_id);
+ 
+            TargetTaskEntryTy *task = nullptr;
+            _mtx_map_tag_to_stolen_task.lock();
+            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_stolen_task.find(task_id);
+            bool match = got!=_map_tag_to_stolen_task.end();
+            _mtx_map_tag_to_stolen_task.unlock();
+            
+            if(match) {
+              task = got->second;
+              // TODO: we need to check if task is currently processed -> CAS again to reserve task either for processing or for removal from the queue
+              bool expected = false;
+              bool desired = true;
+ 
+              if(task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
+                DBP("receive_remote_tasks - cancelling task with task_id %d\n", task_id);
+                _mtx_stolen_remote_tasks.lock();
+                _stolen_remote_tasks.remove(task);
+                _mtx_stolen_remote_tasks.unlock();
+  
+                
+                _mtx_map_tag_to_stolen_task.lock();
+                _map_tag_to_stolen_task.erase(task->task_id);
+                _mtx_map_tag_to_stolen_task.unlock();  
+
+                // decrement load counter and ignore send back
+                _mtx_load_exchange.lock();
+                _load_info_local--;
+                _num_stolen_tasks_outstanding--;
+                trigger_update_outstanding();
+                _mtx_load_exchange.unlock();
+
+#if CHAM_STATS_RECORD
+                _num_tasks_canceled++;
+#endif       
+              } else {}//do nothing -> task either has been executed or is currently executed, process_remote_task will take care of cleaning up
+            }
+        }  
 
         if( flag_open_request_receiveBack ) {
             bool match = false;
-	        _mtx_map_tag_to_task.lock();
-            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_task.find(cur_status_receiveBack.MPI_TAG);
-            match = got != _map_tag_to_task.end();
-            _mtx_map_tag_to_task.unlock();
+	        _mtx_map_tag_to_local_task.lock();
+            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_local_task.find(cur_status_receiveBack.MPI_TAG);
+            match = got != _map_tag_to_local_task.end();
+            _mtx_map_tag_to_local_task.unlock();
 
             if(match) {
                 //get task and receive data directly into task data
@@ -1064,12 +1136,12 @@ void* receive_remote_tasks(void* arg) {
                 bool expected = false;
                 bool desired = true;
  
-                DBP("receive_remote_tasks - performing CAS for task with id %d, flag %d\n", task_entry->task_id, task_entry->mtx_execute_or_receive_back.load());
-                //assert(task_entry->mtx_execute_or_receive_back.load()==false);
+                DBP("receive_remote_tasks - performing CAS for task with id %d, flag %d\n", task_entry->task_id, task_entry->sync_commthread_lock.load());
+                //assert(task_entry->sync_commthread_lock.load()==false);
  
-                bool exchanged = task_entry->mtx_execute_or_receive_back.compare_exchange_strong(expected, desired);
+                bool exchanged = task_entry->sync_commthread_lock.compare_exchange_strong(expected, desired);
                 //assert(exchanged);
-                DBP("receive_remote_tasks - CAS: expected = %d, desired = %d, exchanged = %d", expected, desired, exchanged);
+                DBP("receive_remote_tasks - CAS: expected = %d, desired = %d, exchanged = %d\n", expected, desired, exchanged);
 
                 //atomic CAS   
                 if(exchanged) {
@@ -1283,6 +1355,7 @@ void* service_thread_action(void *arg) {
 
     DBP("service_thread_action (enter)\n");
     while(true) {
+        request_manager_cancel.progressRequests();
 
         request_manager_send.progressRequests();
 

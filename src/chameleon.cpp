@@ -138,11 +138,11 @@ int32_t chameleon_init() {
 
     // dummy target region to force binary loading, use host offloading for that purpose
     // #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
-    #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
+    /*#pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
         // DBP("chameleon_init - dummy region\n");
         printf("chameleon_init - dummy region\n");
-    }
+    }*/
 
     #if THREAD_ACTIVATION
     // start comm threads but in sleep mode

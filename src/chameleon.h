@@ -132,6 +132,10 @@ int32_t chameleon_taskyield();
 
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
+int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...);
+
+int32_t chameleon_determine_base_addresses(void * main_ptr);
+
 #ifdef __cplusplus
 }
 #endif

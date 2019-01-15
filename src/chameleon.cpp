@@ -2,6 +2,8 @@
 #include <mpi.h>
 #include <stdexcept>
 #include <algorithm>
+#include <dlfcn.h>
+#include <link.h>
 
 #include "chameleon.h"
 #include "chameleon_common.h"
@@ -199,6 +201,27 @@ void chameleon_print(int print_prefix, const char *prefix, int rank, ... ) {
     va_start(args, rank);
     chameleon_dbg_print_help(print_prefix, prefix, rank, args);
     va_end (args);
+}
+
+int32_t chameleon_determine_base_addresses(void * main_ptr) {
+    Dl_info info;
+    int rc;
+    link_map * map = (link_map *)malloc(1000*sizeof(link_map));
+    // struct link_map map;
+    rc = dladdr1(main_ptr, &info, (void**)&map, RTLD_DL_LINKMAP);
+    // printf("main dli_fname=%s; dli_fbase=%p\n", info.dli_fname, info.dli_fbase);
+    chameleon_set_image_base_address(99, (intptr_t)info.dli_fbase);
+    
+    // TODO: keep it simply for now and assume that target function is in main binary
+    // If it is necessary to apply different behavior each loaded library has to be covered and analyzed
+
+    // link_map * cur_entry = &map[0];
+    // while(cur_entry) {
+    //     printf("l_name = %s; l_addr=%ld; l_ld=%p\n", cur_entry->l_name, cur_entry->l_addr, (void*)cur_entry->l_ld);
+    //     cur_entry = cur_entry->l_next;
+    // }
+
+    return CHAM_SUCCESS;
 }
 #pragma endregion Init / Finalize / Helper
 
@@ -541,6 +564,61 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
     bool found = (std::find(_unfinished_locally_created_tasks.begin(), _unfinished_locally_created_tasks.end(), task_id) != _unfinished_locally_created_tasks.end());
     _mtx_unfinished_locally_created_tasks.unlock();
     return found ? 0 : 1;
+}
+
+int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {
+
+    // Format of variable input args should always be:
+    // 1. void* to data entry
+    // 2. size_t size of data
+    // 3. agument type specifier (also includes information whether it is literal or not)
+
+    std::vector<void *> arg_hst_pointers(num_args);
+    std::vector<int64_t> arg_sizes(num_args);
+    std::vector<int64_t> arg_types(num_args);
+    std::vector<void *> arg_tgt_pointers(num_args);
+    std::vector<ptrdiff_t> arg_tgt_offsets(num_args);
+
+    // maybe we need some kind of unique counter for tgt pointers to be compatible with current solution
+    va_list args;
+    va_start(args, num_args);
+    for(int i = 0; i < num_args; i++) {
+        void * cur_arg          = va_arg(args, void *);
+        int64_t cur_size        = va_arg(args, int64_t);
+        int64_t cur_type        = va_arg(args, int64_t);
+
+        arg_hst_pointers[i]     = cur_arg;
+        arg_sizes[i]            = cur_size;
+        arg_types[i]            = cur_type;
+
+        void * cur_tgt_entry;
+        if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
+            cur_tgt_entry       = cur_arg;
+        } else {
+            cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
+            chameleon_incr_mem_alloc(cur_size);
+        }
+        arg_tgt_pointers[i]     = cur_tgt_entry;
+        arg_tgt_offsets[i]      = 0;
+
+        // now call function to submit data
+        chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
+    }
+    va_end (args);
+
+    TargetTaskEntryTy *tmp_task = CreateTargetTaskEntryTy(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
+    // calculate offset to base address
+    intptr_t base_address = _image_base_addresses[99];
+    ptrdiff_t diff = (intptr_t) entry_point - base_address;
+    chameleon_set_img_idx_offset(tmp_task, 99, diff);
+    chameleon_add_task(tmp_task);
+
+    // // cleanup again
+    // for(int i = 0; i < num_args; i++) {
+    //     chameleon_free_data(arg_tgt_pointers[i]);
+    // }
+
+    return CHAM_SUCCESS;
 }
 #pragma endregion Fcns for Data and Tasks
 

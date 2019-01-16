@@ -112,7 +112,7 @@ extern int _comm_thread_load_exchange_happend;
 
 // variables to indicate when it is save to break out of taskwait
 extern std::mutex _mtx_taskwait;
-extern int _flag_comm_threads_sleeping;
+extern std::atomic<int> _flag_comm_threads_sleeping;
 extern int _num_threads_involved_in_taskwait;
 // extern int _num_threads_entered_taskwait;
 extern std::atomic<int32_t> _num_threads_entered_taskwait;

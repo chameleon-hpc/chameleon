@@ -96,11 +96,11 @@ std::mutex _mtx_comm_threads_ended;
 int _comm_threads_ended_count           = 0;
 
 // flag that signalizes comm threads to abort their work
-int _flag_abort_threads                 = 0;
+std::atomic<int> _flag_abort_threads(0);
 
 // variables to indicate when it is save to break out of taskwait
 std::mutex _mtx_taskwait;
-int _flag_comm_threads_sleeping             = 1;
+std::atomic<int> _flag_comm_threads_sleeping(1);
 
 int _num_threads_involved_in_taskwait       = INT_MAX;
 // int _num_threads_entered_taskwait           = 0; // maybe replace with atomic
@@ -208,7 +208,7 @@ int32_t wake_up_comm_threads() {
         return CHAM_SUCCESS;
     }
 
-    DBP("wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping);
+    DBP("wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
 
     #if CHAM_STATS_RECORD
         cham_stats_init_stats();
@@ -225,7 +225,7 @@ int32_t wake_up_comm_threads() {
     _flag_comm_threads_sleeping         = 0;
 
     _mtx_taskwait.unlock();
-    DBP("wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping);
+    DBP("wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
     return CHAM_SUCCESS;
 }
 
@@ -297,7 +297,7 @@ int32_t put_comm_threads_to_sleep() {
         return CHAM_SUCCESS;
     }
 
-    DBP("put_comm_threads_to_sleep (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping);
+    DBP("put_comm_threads_to_sleep (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
     #ifdef CHAM_DEBUG
         DBP("put_comm_threads_to_sleep - still mem_allocated = %ld\n", (long)mem_allocated);
         mem_allocated = 0;
@@ -956,6 +956,7 @@ void* receive_remote_tasks(void* arg) {
     //int cur_max_buff_size = MAX_BUFFER_SIZE_OFFLOAD_ENTRY;
     void * buffer;// = malloc(cur_max_buff_size);
     int recv_buff_size = 0;
+    int flag_set = 0;
  
     double cur_time;
 
@@ -968,6 +969,10 @@ void* receive_remote_tasks(void* arg) {
 
 #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
+            if(!flag_set) {
+                flag_set                        = 1;
+                DBP("receive_remote_tasks - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
+            }
             // dont do anything if the thread is sleeping
             usleep(20);
             // DBP("receive_remote_tasks - thread sleeping\n");
@@ -977,6 +982,10 @@ void* receive_remote_tasks(void* arg) {
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
+        }
+        if(flag_set) {
+            DBP("receive_remote_tasks - woke up again - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
+            flag_set = 0;
         }
 #endif
 

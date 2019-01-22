@@ -96,6 +96,8 @@ extern TargetTaskEntryTy* CreateTargetTaskEntryTy(
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num);
+        
+struct MapEntry;
 
 void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset);
 
@@ -133,6 +135,8 @@ int32_t chameleon_taskyield();
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
 int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...);
+
+int32_t chameleon_add_task_manual_fortran(void * entry_point, int num_args, void *args_info);
 
 int32_t chameleon_determine_base_addresses(void * main_ptr);
 

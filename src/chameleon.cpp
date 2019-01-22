@@ -55,6 +55,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
 int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_local_task();
 int32_t process_remote_task();
+int32_t add_task_manual( void *entry_func,int nargs, MapEntry *args); 
 #pragma endregion Forward Declarations
 
 #pragma region Init / Finalize / Helper
@@ -204,6 +205,7 @@ void chameleon_print(int print_prefix, const char *prefix, int rank, ... ) {
 }
 
 int32_t chameleon_determine_base_addresses(void * main_ptr) {
+    //printf("got address %p\n", main_ptr);
     Dl_info info;
     int rc;
     link_map * map = (link_map *)malloc(1000*sizeof(link_map));
@@ -564,6 +566,70 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
     bool found = (std::find(_unfinished_locally_created_tasks.begin(), _unfinished_locally_created_tasks.end(), task_id) != _unfinished_locally_created_tasks.end());
     _mtx_unfinished_locally_created_tasks.unlock();
     return found ? 0 : 1;
+}
+
+/*
+* As variadic function are not supported, this compatibility function is provided
+*/
+int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void *args_info) {
+    
+    MapEntry *args_entries = (MapEntry *) args_info;
+   
+    add_task_manual(entry_point, num_args, args_entries);
+}
+
+/*
+* Helper function that adds task when arguments are provided as an array of MapEntries
+*/
+int32_t add_task_manual( void *entry_point, int num_args, MapEntry *args) {
+
+    // Format of variable input args should always be:
+    // 1. void* to data entry
+    // 2. size_t size of data
+    // 3. agument type specifier (also includes information whether it is literal or not)
+
+    std::vector<void *> arg_hst_pointers(num_args);
+    std::vector<int64_t> arg_sizes(num_args);
+    std::vector<int64_t> arg_types(num_args);
+    std::vector<void *> arg_tgt_pointers(num_args);
+    std::vector<ptrdiff_t> arg_tgt_offsets(num_args);
+
+    for(int i = 0; i < num_args; i++) {
+        void * cur_arg          = args[i].valptr;
+        int64_t cur_size        = args[i].size;
+        int64_t cur_type        = args[i].type;
+
+        arg_hst_pointers[i]     = cur_arg;
+        arg_sizes[i]            = cur_size;
+        arg_types[i]            = cur_type;
+
+        void * cur_tgt_entry;
+        if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
+            cur_tgt_entry       = cur_arg;
+        } else {
+            cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
+            chameleon_incr_mem_alloc(cur_size);
+        }
+        arg_tgt_pointers[i]     = cur_tgt_entry;
+        arg_tgt_offsets[i]      = 0;
+
+        // now call function to submit data
+        chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
+    }
+
+    TargetTaskEntryTy *tmp_task = CreateTargetTaskEntryTy(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
+    // calculate offset to base address
+    intptr_t base_address = _image_base_addresses[99];
+    ptrdiff_t diff = (intptr_t) entry_point - base_address;
+    chameleon_set_img_idx_offset(tmp_task, 99, diff);
+    chameleon_add_task(tmp_task);
+
+    // // cleanup again
+    // for(int i = 0; i < num_args; i++) {
+    //     chameleon_free_data(arg_tgt_pointers[i]);
+    // }
+
+    return CHAM_SUCCESS;
 }
 
 int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {

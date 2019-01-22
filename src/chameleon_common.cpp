@@ -111,5 +111,11 @@ struct OffloadingDataEntryTy {
         size = p_size;
     }
 };
+
+struct MapEntry{
+    void *valptr;
+    size_t size;
+    int type;
+};
 #pragma endregion
 #endif

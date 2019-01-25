@@ -6,15 +6,18 @@
 #define _GNU_SOURCE
 #endif
 
+#include <algorithm>
 #include <omp.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <iterator>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <sstream>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -88,4 +91,14 @@ static void chameleon_dbg_print(int rank, ... ) {
 
 #define handle_error_en(en, msg) \
            do { errno = en; RELP("ERROR: %s : %s\n", msg, strerror(en)); exit(EXIT_FAILURE); } while (0)
+
+template <class Container>
+static void split_string(const std::string& str, Container& cont, char delim = ' ')
+{
+    std::stringstream ss(str);
+    std::string token;
+    while (std::getline(ss, token, delim)) {
+        cont.push_back(token);
+    }
+}
 #endif

@@ -26,6 +26,8 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+#define CHAMELEON_VERSION 10
+
 // TODO: fix that to have only one place where that is defined
 // copy of OpenMP target argument types
 enum chameleon_tgt_map_type {

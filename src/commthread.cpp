@@ -4,6 +4,8 @@
 #include "cham_statistics.h"
 #include "cham_strategies.h"
 #include "request_manager.h"
+#include "chameleon_tools.h"
+#include "chameleon_tools_internal.h"
 
 #include <pthread.h>
 #include <signal.h>

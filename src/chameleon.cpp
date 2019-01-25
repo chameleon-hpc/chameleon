@@ -10,10 +10,8 @@
 #include "chameleon_common.cpp"
 #include "commthread.h"
 #include "cham_statistics.h"
-
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
-#endif
+#include "chameleon_tools.h"
+#include "chameleon_tools_internal.h"
 
 #ifdef TRACE
 #include "VT.h"
@@ -123,6 +121,9 @@ int32_t chameleon_init() {
 #ifdef CHAM_DEBUG
     mem_allocated = 0;
 #endif
+#if CHAMELEON_TOOL_SUPPORT
+    cham_t_init();
+#endif
 
     _mtx_load_exchange.lock();
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
@@ -191,6 +192,10 @@ int32_t chameleon_finalize() {
     #if THREAD_ACTIVATION
     stop_communication_threads();
     #endif
+
+#if CHAMELEON_TOOL_SUPPORT
+    cham_t_fini();
+#endif
 
     DBP("chameleon_finalize (exit)\n");
     return CHAM_SUCCESS;
@@ -511,6 +516,19 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
     lookup_hst_pointers(task);
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_create) {
+        // TODO: Dummy for now
+        cham_t_data_t rank_data;
+        rank_data.value = chameleon_comm_rank;
+        cham_t_data_t thread_data;
+        thread_data.value = syscall(SYS_gettid);
+        cham_t_data_t task_data;
+        task_data.value = task->task_id;
+        cham_t_enabled.cham_t_callback_task_create(task, &rank_data, &thread_data, &task_data);
+    }
+#endif
 
     // add to queue
     _mtx_local_tasks.lock();

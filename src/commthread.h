@@ -53,6 +53,10 @@
 #define OFFLOADING_STRATEGY_AGGRESSIVE 0
 #endif
 
+#ifndef CHAMELEON_TOOL_SUPPORT
+#define CHAMELEON_TOOL_SUPPORT 1
+#endif
+
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values

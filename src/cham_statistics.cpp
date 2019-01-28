@@ -30,6 +30,11 @@ std::atomic<int>     _time_encode_count(0);
 std::atomic<double>  _time_decode_sum(0.0);
 std::atomic<int>     _time_decode_count(0);
 
+#if CHAMELEON_TOOL_SUPPORT
+std::atomic<double>  _time_tool_get_thread_data_sum(0.0);
+std::atomic<int>     _time_tool_get_thread_data_count(0);
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +92,9 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
     cham_stats_print_stats_w_mean("_time_encode_sum", _time_encode_sum, _time_encode_count);
     cham_stats_print_stats_w_mean("_time_decode_sum", _time_decode_sum, _time_decode_count);
+#if CHAMELEON_TOOL_SUPPORT
+    cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count);
+#endif
     _mtx_relp.unlock();
 }
 

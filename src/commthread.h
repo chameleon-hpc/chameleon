@@ -8,55 +8,6 @@
 #include "chameleon_common.h"
 #include "request_manager.h"
 
-// Special version with 2 ranks where master (rank 0) is always offloading to rank 1
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
-#endif
-
-// Flag wether offloading in general is enabled or disabled
-#ifndef OFFLOAD_ENABLED
-#define OFFLOAD_ENABLED 1
-#endif
-
-// Allow offload as soon as sum of outstanding jobs has changed
-#ifndef OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
-#define OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED 1
-#endif
-
-// Just allow a single offload and block offload until a local or remote task has been executed and the local load has changed again
-#ifndef OFFLOAD_BLOCKING
-#define OFFLOAD_BLOCKING 0
-#endif
-
-// determines how data (arguments) is packed and send during offloading
-#ifndef OFFLOAD_DATA_PACKING_TYPE
-// #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
-#define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
-#endif
-
-// Create a separate thread for offloads that expect mapped data to be transfered back
-#ifndef OFFLOAD_CREATE_SEPARATE_THREAD
-#define OFFLOAD_CREATE_SEPARATE_THREAD 0
-#endif
-
-#ifndef THREAD_ACTIVATION
-#define THREAD_ACTIVATION 1
-#endif
-
-//Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
-#ifndef MPI_BLOCKING
-#define MPI_BLOCKING 0
-#endif
-
-//Specify whether tasks should be offloaded aggressively after one performance update
-#ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 0
-#endif
-
-#ifndef CHAMELEON_TOOL_SUPPORT
-#define CHAMELEON_TOOL_SUPPORT 1
-#endif
-
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values

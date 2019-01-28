@@ -7,7 +7,6 @@
 
 #include "chameleon.h"
 #include "chameleon_common.h"
-#include "chameleon_common.cpp"
 #include "commthread.h"
 #include "cham_statistics.h"
 #include "chameleon_tools.h"
@@ -519,14 +518,9 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_create) {
-        // TODO: Dummy for now
-        cham_t_data_t rank_data;
-        rank_data.value = chameleon_comm_rank;
-        cham_t_data_t thread_data;
-        thread_data.value = syscall(SYS_gettid);
-        cham_t_data_t task_data;
-        task_data.value = task->task_id;
-        cham_t_enabled.cham_t_callback_task_create(task, &rank_data, &thread_data, &task_data);
+        cham_t_data_t * r_data = cham_t_get_rank_data();
+        cham_t_data_t * t_data = cham_t_get_thread_data();
+        cham_t_enabled.cham_t_callback_task_create(task, r_data, t_data, &(task->task_data));
     }
 #endif
 

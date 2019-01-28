@@ -855,7 +855,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
     // init new task
     TargetTaskEntryTy* task = new TargetTaskEntryTy();
     // actually we use the global task id as tag
-    task->task_id = mpi_tag;
+    task->task_id           = mpi_tag;
+    task->is_remote_task    = 1;
 
     // current pointer position
     char *cur_ptr = (char*) buffer;

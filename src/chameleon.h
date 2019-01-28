@@ -85,6 +85,7 @@ enum chameleon_task_status {
 extern "C" {
 #endif
 
+// TODO rename to target_task_entry_t
 struct TargetTaskEntryTy;
 typedef struct TargetTaskEntryTy TargetTaskEntryTy;
 

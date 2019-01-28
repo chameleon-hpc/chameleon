@@ -94,9 +94,9 @@ void cham_t_init() {
     cham_t_enabled.enabled = 1;
 
     const char *cham_t_env_var = getenv("CHAMELEON_TOOL");
-    if (!cham_t_env_var || !strcmp(cham_t_env_var, ""))
-        cham_t_enabled.enabled = 0;
-    else if (!strcmp(cham_t_env_var, "disabled"))
+    // if (!cham_t_env_var || !strcmp(cham_t_env_var, ""))
+    //     cham_t_enabled.enabled = 0;
+    if (!strcmp(cham_t_env_var, "disabled"))
         cham_t_enabled.enabled = 0;
     else if (!strcmp(cham_t_env_var, "0"))
         cham_t_enabled.enabled = 0;
@@ -147,6 +147,9 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callbacks_t which, cham_t_
         case cham_t_callback_task_create:
             cham_t_enabled.cham_t_callback_task_create = (cham_t_callback_task_create_t)callback;
             break;
+        case cham_t_callback_task_schedule:
+            cham_t_enabled.cham_t_callback_task_schedule = (cham_t_callback_task_schedule_t)callback;
+            break;
         default:
             fprintf(stderr, "ERROR: Unable to set callback for specifier %d\n", which);
             return cham_t_set_error;
@@ -161,9 +164,9 @@ static int cham_t_get_callback(cham_t_callbacks_t which, cham_t_callback_t *call
 }
 
 cham_t_data_t * cham_t_get_thread_data(void) {
-#if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
-#endif
+// #if CHAM_STATS_RECORD
+//     double cur_time = omp_get_wtime();
+// #endif
     cham_t_data_t * thr_data = NULL;
     int32_t cur_gtid = __ch_get_gtid();
 #if CHAMELEON_TOOL_USE_MAP
@@ -179,28 +182,28 @@ cham_t_data_t * cham_t_get_thread_data(void) {
     } else {
         // create new item and save in map
         thr_data = (cham_t_data_t*) malloc(sizeof(cham_t_data_t));
-        thr_data->value = syscall(SYS_gettid);
+        // thr_data->value = syscall(SYS_gettid);
         __mtx_ch_thread_data.lock();
         __ch_thread_data[cur_gtid] = thr_data;
         __mtx_ch_thread_data.unlock();
         __ch_thread_data_initialized = 1;
     }
-#if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
-    _time_tool_get_thread_data_count++;
-#endif
+// #if CHAM_STATS_RECORD
+//     cur_time = omp_get_wtime()-cur_time;
+//     atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
+//     _time_tool_get_thread_data_count++;
+// #endif
     return thr_data;
 #else
-    if(!__ch_thread_data_initialized) {
-        __ch_thread_data[cur_gtid].value = syscall(SYS_gettid);
-        __ch_thread_data_initialized = 1;
-    }
-#if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
-    _time_tool_get_thread_data_count++;
-#endif
+    // if(!__ch_thread_data_initialized) {
+    //     __ch_thread_data[cur_gtid].value = syscall(SYS_gettid);
+    //     __ch_thread_data_initialized = 1;
+    // }
+// #if CHAM_STATS_RECORD
+//     cur_time = omp_get_wtime()-cur_time;
+//     atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
+//     _time_tool_get_thread_data_count++;
+// #endif
     return &(__ch_thread_data[cur_gtid]);
 #endif
 }

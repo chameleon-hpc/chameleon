@@ -100,6 +100,9 @@ typedef int (*cham_t_get_callback_t) (
     cham_t_callback_t *callback
 );
 
+typedef cham_t_data_t *(*cham_t_get_thread_data_t) (void);
+typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
+
 /*****************************************************************************
  * List of callbacks
  ****************************************************************************/

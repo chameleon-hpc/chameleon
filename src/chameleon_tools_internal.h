@@ -21,6 +21,9 @@ void cham_t_init(void);
 
 void cham_t_fini(void);
 
+cham_t_data_t * cham_t_get_thread_data(void);
+cham_t_data_t * cham_t_get_rank_data(void);
+
 #ifdef __cplusplus
 };
 #endif

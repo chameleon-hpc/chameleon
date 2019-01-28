@@ -1,6 +1,5 @@
 #include "commthread.h"
 #include "chameleon_common.h"
-#include "chameleon_common.cpp"
 #include "cham_statistics.h"
 #include "cham_strategies.h"
 #include "request_manager.h"

@@ -1,8 +1,9 @@
-
+#include "cham_statistics.h"
 #include "chameleon_common.h"
-#include "chameleon_common.cpp"
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
+#include <map>
+#include <omp.h>
 
 /*****************************************************************************
  * Forward declarations
@@ -15,11 +16,19 @@ typedef cham_t_start_tool_result_t *(*cham_t_start_tool_t)(unsigned int);
  ****************************************************************************/
 int _ch_t_initialized = 0;
 std::mutex _mtx_ch_t_initialized;
-// int _ch_t_initialized = 0;
-// std::mutex _mtx__ch_t_initialized;
 
 cham_t_callbacks_active_t cham_t_enabled;
 cham_t_start_tool_result_t *cham_t_start_tool_result = NULL;
+
+__thread int32_t __ch_thread_data_initialized = 0;
+cham_t_data_t __ch_rank_data;
+#if CHAMELEON_TOOL_USE_MAP
+std::map<int32_t, cham_t_data_t*> __ch_thread_data;
+std::mutex __mtx_ch_thread_data;
+#else
+// another version with fixed array using omp_get_max_threads
+cham_t_data_t * __ch_thread_data;
+#endif
 
 /*****************************************************************************
  * Functions
@@ -106,6 +115,13 @@ void cham_t_init() {
         } else {
             cham_t_enabled.enabled = 0;
         }
+        if(cham_t_enabled.enabled) {
+            __ch_rank_data.value = chameleon_comm_rank;
+#if !CHAMELEON_TOOL_USE_MAP
+            RELP("Initializing __ch_thread_data with %d entries\n", omp_get_max_threads());
+            __ch_thread_data = (cham_t_data_t*) malloc(omp_get_max_threads()*sizeof(cham_t_data_t));
+#endif
+        }
     }
     
     DBP("cham_t_init: cham_t_enabled = %d\n", cham_t_enabled.enabled);
@@ -144,11 +160,64 @@ static int cham_t_get_callback(cham_t_callbacks_t which, cham_t_callback_t *call
     return 0;
 }
 
+cham_t_data_t * cham_t_get_thread_data(void) {
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime();
+#endif
+    cham_t_data_t * thr_data = NULL;
+    int32_t cur_gtid = __ch_get_gtid();
+#if CHAMELEON_TOOL_USE_MAP
+    if(__ch_thread_data_initialized) {
+        // find item in map
+        std::map<int32_t, cham_t_data_t*>::iterator it;
+        __mtx_ch_thread_data.lock();
+        it = __ch_thread_data.find(cur_gtid);
+        if (it != __ch_thread_data.end()) {
+            thr_data = it->second;
+        }
+        __mtx_ch_thread_data.unlock();
+    } else {
+        // create new item and save in map
+        thr_data = (cham_t_data_t*) malloc(sizeof(cham_t_data_t));
+        thr_data->value = syscall(SYS_gettid);
+        __mtx_ch_thread_data.lock();
+        __ch_thread_data[cur_gtid] = thr_data;
+        __mtx_ch_thread_data.unlock();
+        __ch_thread_data_initialized = 1;
+    }
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
+    _time_tool_get_thread_data_count++;
+#endif
+    return thr_data;
+#else
+    if(!__ch_thread_data_initialized) {
+        __ch_thread_data[cur_gtid].value = syscall(SYS_gettid);
+        __ch_thread_data_initialized = 1;
+    }
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
+    _time_tool_get_thread_data_count++;
+#endif
+    return &(__ch_thread_data[cur_gtid]);
+#endif
+}
+
+cham_t_data_t * cham_t_get_rank_data(void) {
+    return &(__ch_rank_data);
+}
+
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
     if(!strcmp(s, "cham_t_set_callback"))
         return (cham_t_interface_fn_t)cham_t_set_callback;
     else if(!strcmp(s, "cham_t_get_callback"))
         return (cham_t_interface_fn_t)cham_t_get_callback;
+    else if(!strcmp(s, "cham_t_get_thread_data"))
+        return (cham_t_interface_fn_t)cham_t_get_thread_data;
+    else if(!strcmp(s, "cham_t_get_rank_data"))
+        return (cham_t_interface_fn_t)cham_t_get_rank_data;
     else
         fprintf(stderr, "ERROR: function lookup for name %s not possible.\n", s);
     return (cham_t_interface_fn_t)0;

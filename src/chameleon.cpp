@@ -120,6 +120,10 @@ int32_t chameleon_init() {
 #ifdef CHAM_DEBUG
     mem_allocated = 0;
 #endif
+
+    // initilize thread data here
+    __thread_data = (ch_thread_data_t*) malloc(omp_get_max_threads()*sizeof(ch_thread_data_t));
+
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_init();
 #endif
@@ -518,9 +522,7 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_create) {
-        cham_t_data_t * r_data = cham_t_get_rank_data();
-        cham_t_data_t * t_data = cham_t_get_thread_data();
-        cham_t_enabled.cham_t_callback_task_create(task, r_data, t_data, &(task->task_data));
+        cham_t_enabled.cham_t_callback_task_create(&(task->task_data), task);
     }
 #endif
 
@@ -731,6 +733,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
 
 int32_t execute_target_task(TargetTaskEntryTy *task) {
     DBP("execute_target_task (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
+    int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
     ffi_cif cif;
 
@@ -762,10 +765,63 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         return CHAM_FAILURE;
     }
 
+    TargetTaskEntryTy *prior_task = __thread_data[gtid].current_task;
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_schedule) {
+        if(prior_task) {
+            cham_t_enabled.cham_t_callback_task_schedule(
+                &(task->task_data), 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                task, 
+                cham_t_task_yield,
+                &(prior_task->task_data), 
+                prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                prior_task);
+        } else {
+            cham_t_enabled.cham_t_callback_task_schedule(
+                &(task->task_data), 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                task, 
+                cham_t_task_start,
+                nullptr, 
+                cham_t_task_local,
+                nullptr);
+        }
+    }
+#endif
+
+    __thread_data[gtid].current_task = task;
     void (*entry)(void);
     *((void**) &entry) = ((void*) task->tgt_entry_ptr);
     // use host pointers here
     ffi_call(&cif, entry, NULL, &args[0]);
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_schedule) {
+        if(prior_task) {
+            cham_t_enabled.cham_t_callback_task_schedule(
+                &(task->task_data), 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                task, 
+                cham_t_task_end,
+                &(prior_task->task_data), 
+                prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                prior_task);
+        } else {
+            cham_t_enabled.cham_t_callback_task_schedule(
+                &(task->task_data), 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                task, 
+                cham_t_task_end,
+                nullptr, 
+                cham_t_task_local,
+                nullptr);
+        }
+    }
+#endif
+    // switch back to prior task or null
+    __thread_data[gtid].current_task = prior_task;
 
     return CHAM_SUCCESS;
 }

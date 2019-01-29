@@ -165,6 +165,22 @@ typedef void (*cham_t_callback_task_schedule_t) (
     TargetTaskEntryTy * prior_task
 );
 
+// Encode custom tool data (if any has been set) for tasks that will be migrated to remote rank.
+// Ensures that this data is also send to remote rank and available in tool calls
+typedef void (*cham_t_callback_encode_task_tool_data_t) (
+    cham_t_data_t *task_data,
+    void *buffer,
+    int32_t *size
+);
+
+// Decode custom tool data (if any has been set) for tasks that have been migrated to remote rank.
+// Restore data in corresponding task_data struct
+typedef void (*cham_t_callback_decode_task_tool_data_t) (
+    cham_t_data_t *task_data,
+    void *buffer,
+    int32_t size
+);
+
 #pragma endregion
 
 #endif

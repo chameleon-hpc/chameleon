@@ -786,6 +786,10 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     }
 #endif
 
+#if CHAMELEON_TOOL_SUPPORT
+    // TODO: callback for encode task tool data
+#endif
+
     // allocate memory for transfer
     char *buff = (char *) malloc(total_size);
     char *cur_ptr = (char *)buff;
@@ -836,6 +840,10 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     }
 #endif
 
+#if CHAMELEON_TOOL_SUPPORT
+    // TODO: memcpy task tool data
+#endif
+
     // set output size
     *buffer_size = total_size;
 #ifdef TRACE
@@ -857,6 +865,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
     // actually we use the global task id as tag
     task->task_id           = mpi_tag;
     task->is_remote_task    = 1;
+    //task->task_data.value   = mpi_tag;
 
     // current pointer position
     char *cur_ptr = (char*) buffer;
@@ -927,6 +936,11 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
         print_arg_info("decode_send_buffer", task, i);
         cur_ptr += task->arg_sizes[i];
     }
+
+#if CHAMELEON_TOOL_SUPPORT
+    // TODO: memcpy task tool data
+#endif
+
 #ifdef TRACE
     VT_end(event_decode);
 #endif 

@@ -150,6 +150,12 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callbacks_t which, cham_t_
         case cham_t_callback_task_schedule:
             cham_t_enabled.cham_t_callback_task_schedule = (cham_t_callback_task_schedule_t)callback;
             break;
+        case cham_t_callback_encode_task_tool_data:
+            cham_t_enabled.cham_t_callback_encode_task_tool_data = (cham_t_callback_encode_task_tool_data_t)callback;
+            break;
+        case cham_t_callback_decode_task_tool_data:
+            cham_t_enabled.cham_t_callback_decode_task_tool_data = (cham_t_callback_decode_task_tool_data_t)callback;
+            break;
         default:
             fprintf(stderr, "ERROR: Unable to set callback for specifier %d\n", which);
             return cham_t_set_error;

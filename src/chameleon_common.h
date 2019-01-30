@@ -24,14 +24,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifndef DPxMOD
-#define DPxMOD "0x%0*" PRIxPTR
-#endif
-
-#ifndef DPxPTR
-#define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
-#endif
-
 #include <cstdint>
 #include <list>
 #include <mutex>
@@ -39,7 +31,6 @@
 #include <atomic>
 
 #include "chameleon.h"
-#include "chameleon_tools.h"
 
 // Special version with 2 ranks where master (rank 0) is always offloading to rank 1
 #ifndef FORCE_OFFLOAD_MASTER_WORKER
@@ -92,6 +83,10 @@
 
 #ifndef CHAMELEON_TOOL_USE_MAP
 #define CHAMELEON_TOOL_USE_MAP 0
+#endif
+
+#if CHAMELEON_TOOL_SUPPORT
+#include "chameleon_tools.h"
 #endif
 
 #pragma region Type Definitions

@@ -17,7 +17,7 @@ typedef cham_t_start_tool_result_t *(*cham_t_start_tool_t)(unsigned int);
 int _ch_t_initialized = 0;
 std::mutex _mtx_ch_t_initialized;
 
-cham_t_callbacks_active_t cham_t_enabled;
+cham_t_callbacks_active_t cham_t_status;
 cham_t_start_tool_result_t *cham_t_start_tool_result = NULL;
 
 __thread int32_t __ch_thread_data_initialized = 0;
@@ -91,31 +91,31 @@ void cham_t_init() {
     }
 
     // default: try to initilize tool, but possibility to disable it
-    cham_t_enabled.enabled = 1;
+    cham_t_status.enabled = 1;
 
     const char *cham_t_env_var = getenv("CHAMELEON_TOOL");
-    // if (!cham_t_env_var || !strcmp(cham_t_env_var, ""))
-    //     cham_t_enabled.enabled = 0;
-    if (!strcmp(cham_t_env_var, "disabled"))
-        cham_t_enabled.enabled = 0;
+    if (!cham_t_env_var || !strcmp(cham_t_env_var, ""))
+        cham_t_status.enabled = 1; // default: tool support enabled
+    else if (!strcmp(cham_t_env_var, "disabled"))
+        cham_t_status.enabled = 0;
     else if (!strcmp(cham_t_env_var, "0"))
-        cham_t_enabled.enabled = 0;
+        cham_t_status.enabled = 0;
 
     DBP("cham_t_init: CHAMELEN_TOOL = %s\n", cham_t_env_var);
     
-    if(cham_t_enabled.enabled)
+    if(cham_t_status.enabled)
     {
         // try to load tool
         cham_t_start_tool_result = cham_t_try_start_tool(CHAMELEON_VERSION);
         if (cham_t_start_tool_result) {
-            cham_t_enabled.enabled = !!cham_t_start_tool_result->initialize(cham_t_fn_lookup, &(cham_t_start_tool_result->tool_data));
-            if (!cham_t_enabled.enabled) {
+            cham_t_status.enabled = !!cham_t_start_tool_result->initialize(cham_t_fn_lookup, &(cham_t_start_tool_result->tool_data));
+            if (!cham_t_status.enabled) {
                 return;
             }
         } else {
-            cham_t_enabled.enabled = 0;
+            cham_t_status.enabled = 0;
         }
-        if(cham_t_enabled.enabled) {
+        if(cham_t_status.enabled) {
             __ch_rank_data.value = chameleon_comm_rank;
 #if !CHAMELEON_TOOL_USE_MAP
             RELP("Initializing __ch_thread_data with %d entries\n", omp_get_max_threads());
@@ -124,14 +124,14 @@ void cham_t_init() {
         }
     }
     
-    DBP("cham_t_init: cham_t_enabled = %d\n", cham_t_enabled.enabled);
+    DBP("cham_t_init: cham_t_status = %d\n", cham_t_status.enabled);
 
     _ch_t_initialized = 1;
     _mtx_ch_t_initialized.unlock();
 }
 
 void cham_t_fini() {
-    if (cham_t_enabled.enabled && cham_t_start_tool_result) {
+    if (cham_t_status.enabled && cham_t_start_tool_result) {
         DBP("cham_t_fini: enter\n");
         cham_t_start_tool_result->finalize(&(cham_t_start_tool_result->tool_data));
     }
@@ -145,16 +145,16 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callbacks_t which, cham_t_
     // printf("Setting callback %d\n", tmp_val);
     switch(tmp_val) {
         case cham_t_callback_task_create:
-            cham_t_enabled.cham_t_callback_task_create = (cham_t_callback_task_create_t)callback;
+            cham_t_status.cham_t_callback_task_create = (cham_t_callback_task_create_t)callback;
             break;
         case cham_t_callback_task_schedule:
-            cham_t_enabled.cham_t_callback_task_schedule = (cham_t_callback_task_schedule_t)callback;
+            cham_t_status.cham_t_callback_task_schedule = (cham_t_callback_task_schedule_t)callback;
             break;
         case cham_t_callback_encode_task_tool_data:
-            cham_t_enabled.cham_t_callback_encode_task_tool_data = (cham_t_callback_encode_task_tool_data_t)callback;
+            cham_t_status.cham_t_callback_encode_task_tool_data = (cham_t_callback_encode_task_tool_data_t)callback;
             break;
         case cham_t_callback_decode_task_tool_data:
-            cham_t_enabled.cham_t_callback_decode_task_tool_data = (cham_t_callback_decode_task_tool_data_t)callback;
+            cham_t_status.cham_t_callback_decode_task_tool_data = (cham_t_callback_decode_task_tool_data_t)callback;
             break;
         default:
             fprintf(stderr, "ERROR: Unable to set callback for specifier %d\n", which);

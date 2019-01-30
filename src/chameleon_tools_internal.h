@@ -8,6 +8,8 @@ typedef struct cham_t_callbacks_active_s {
     unsigned int enabled : 1;
     
     // list of callback pointers
+    cham_t_callback_thread_init_t               cham_t_callback_thread_init             = nullptr;
+    cham_t_callback_thread_finalize_t           cham_t_callback_thread_finalize         = nullptr;
     cham_t_callback_task_create_t               cham_t_callback_task_create             = nullptr;
     cham_t_callback_task_schedule_t             cham_t_callback_task_schedule           = nullptr;
     cham_t_callback_encode_task_tool_data_t     cham_t_callback_encode_task_tool_data   = nullptr;

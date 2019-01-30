@@ -57,12 +57,12 @@ enum chameleon_tgt_map_type {
   CHAM_OMP_TGT_MAPTYPE_MEMBER_OF       = 0xffff000000000000
 };
 
-enum chameleon_device_ids {
+typedef enum chameleon_device_ids_t {
   CHAMELEON_HOST    = 1001,
   CHAMELEON_MPI     = 1002,
-};
+} chameleon_device_ids_t;
 
-enum chameleon_result_types {
+typedef enum chameleon_result_types_t {
     CHAM_SUCCESS = 0,
     CHAM_FAILURE = 1,
 
@@ -73,13 +73,13 @@ enum chameleon_result_types {
     CHAM_REMOTE_TASK_NONE = 5,
     CHAM_REMOTE_TASK_SUCCESS = 6,
     CHAM_REMOTE_TASK_FAILURE = 7    
-};
+} chameleon_result_types_t;
 
-enum chameleon_task_status {
+typedef enum chameleon_task_status_t {
     CHAM_TASK_STATUS_OPEN = 0,
     CHAM_TASK_STATUS_PROCESSING = 1,
     CHAM_TASK_STATUS_DONE = 2
-};
+} chameleon_task_status_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -106,9 +106,13 @@ int64_t chameleon_get_task_id(TargetTaskEntryTy *task);
 // ================================================================================
 int32_t chameleon_init();
 
+int32_t chameleon_thread_init();
+
 int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address);
 
 int32_t chameleon_finalize();
+
+int32_t chameleon_thread_finalize();
 
 int32_t chameleon_distributed_taskwait(int nowait);
 

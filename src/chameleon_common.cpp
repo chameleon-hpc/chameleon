@@ -3,10 +3,16 @@
 
 #include "chameleon_common.h"
 
+#pragma region Variables
 // atomic counter for task ids
 std::atomic<int32_t> _thread_counter(0);
 __thread int32_t __ch_gtid = -1;
 
+ch_thread_data_t*   __thread_data;
+ch_rank_data_t      __rank_data;
+#pragma endregion
+
+#pragma region Functions
 int32_t __ch_get_gtid() {
     if(__ch_gtid != -1)
         return __ch_gtid;
@@ -65,6 +71,5 @@ int TargetTaskEntryTy::HasAtLeastOneOutput() {
     }
     return 0;
 }
-
-ch_thread_data_t* __thread_data;
+#pragma endregion
 #endif

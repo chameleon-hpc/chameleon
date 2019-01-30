@@ -20,16 +20,6 @@ std::mutex _mtx_ch_t_initialized;
 cham_t_callbacks_active_t cham_t_status;
 cham_t_start_tool_result_t *cham_t_start_tool_result = NULL;
 
-__thread int32_t __ch_thread_data_initialized = 0;
-cham_t_data_t __ch_rank_data;
-#if CHAMELEON_TOOL_USE_MAP
-std::map<int32_t, cham_t_data_t*> __ch_thread_data;
-std::mutex __mtx_ch_thread_data;
-#else
-// another version with fixed array using omp_get_max_threads
-cham_t_data_t * __ch_thread_data;
-#endif
-
 /*****************************************************************************
  * Functions
  ****************************************************************************/
@@ -115,13 +105,6 @@ void cham_t_init() {
         } else {
             cham_t_status.enabled = 0;
         }
-        if(cham_t_status.enabled) {
-            __ch_rank_data.value = chameleon_comm_rank;
-#if !CHAMELEON_TOOL_USE_MAP
-            RELP("Initializing __ch_thread_data with %d entries\n", omp_get_max_threads());
-            __ch_thread_data = (cham_t_data_t*) malloc(omp_get_max_threads()*sizeof(cham_t_data_t));
-#endif
-        }
     }
     
     DBP("cham_t_init: cham_t_status = %d\n", cham_t_status.enabled);
@@ -140,10 +123,16 @@ void cham_t_fini() {
 /*****************************************************************************
  * callbacks
  ****************************************************************************/
-static cham_t_set_result_t cham_t_set_callback(cham_t_callbacks_t which, cham_t_callback_t callback) {
+static cham_t_set_result_t cham_t_set_callback(cham_t_callback_types_t which, cham_t_callback_t callback) {
     int tmp_val = (int) which;
     // printf("Setting callback %d\n", tmp_val);
     switch(tmp_val) {
+        case cham_t_callback_thread_init:
+            cham_t_status.cham_t_callback_thread_init = (cham_t_callback_thread_init_t)callback;
+            break;
+        case cham_t_callback_thread_finalize:
+            cham_t_status.cham_t_callback_thread_finalize = (cham_t_callback_thread_finalize_t)callback;
+            break;
         case cham_t_callback_task_create:
             cham_t_status.cham_t_callback_task_create = (cham_t_callback_task_create_t)callback;
             break;
@@ -163,59 +152,22 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callbacks_t which, cham_t_
     return cham_t_set_always;
 }
 
-static int cham_t_get_callback(cham_t_callbacks_t which, cham_t_callback_t *callback) {
+static int cham_t_get_callback(cham_t_callback_types_t which, cham_t_callback_t *callback) {
     // TODO: implement
-    // switch(which)
     return 0;
 }
 
 cham_t_data_t * cham_t_get_thread_data(void) {
-// #if CHAM_STATS_RECORD
-//     double cur_time = omp_get_wtime();
-// #endif
-    cham_t_data_t * thr_data = NULL;
     int32_t cur_gtid = __ch_get_gtid();
-#if CHAMELEON_TOOL_USE_MAP
-    if(__ch_thread_data_initialized) {
-        // find item in map
-        std::map<int32_t, cham_t_data_t*>::iterator it;
-        __mtx_ch_thread_data.lock();
-        it = __ch_thread_data.find(cur_gtid);
-        if (it != __ch_thread_data.end()) {
-            thr_data = it->second;
-        }
-        __mtx_ch_thread_data.unlock();
-    } else {
-        // create new item and save in map
-        thr_data = (cham_t_data_t*) malloc(sizeof(cham_t_data_t));
-        // thr_data->value = syscall(SYS_gettid);
-        __mtx_ch_thread_data.lock();
-        __ch_thread_data[cur_gtid] = thr_data;
-        __mtx_ch_thread_data.unlock();
-        __ch_thread_data_initialized = 1;
-    }
-// #if CHAM_STATS_RECORD
-//     cur_time = omp_get_wtime()-cur_time;
-//     atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
-//     _time_tool_get_thread_data_count++;
-// #endif
-    return thr_data;
-#else
-    // if(!__ch_thread_data_initialized) {
-    //     __ch_thread_data[cur_gtid].value = syscall(SYS_gettid);
-    //     __ch_thread_data_initialized = 1;
-    // }
-// #if CHAM_STATS_RECORD
-//     cur_time = omp_get_wtime()-cur_time;
-//     atomic_add_dbl(_time_tool_get_thread_data_sum, cur_time);
-//     _time_tool_get_thread_data_count++;
-// #endif
-    return &(__ch_thread_data[cur_gtid]);
-#endif
+    return &(__thread_data[cur_gtid].thread_tool_data);
 }
 
 cham_t_data_t * cham_t_get_rank_data(void) {
-    return &(__ch_rank_data);
+    return &(__rank_data.rank_tool_data);
+}
+
+cham_t_rank_info_t * cham_t_get_rank_info(void) {
+    return &(__rank_data.rank_tool_info);
 }
 
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
@@ -227,6 +179,8 @@ static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
         return (cham_t_interface_fn_t)cham_t_get_thread_data;
     else if(!strcmp(s, "cham_t_get_rank_data"))
         return (cham_t_interface_fn_t)cham_t_get_rank_data;
+    else if(!strcmp(s, "cham_t_get_rank_info"))
+        return (cham_t_interface_fn_t)cham_t_get_rank_info;
     else
         fprintf(stderr, "ERROR: function lookup for name %s not possible.\n", s);
     return (cham_t_interface_fn_t)0;

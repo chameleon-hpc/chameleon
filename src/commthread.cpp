@@ -770,8 +770,6 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     //      7. array with length of argument pointers = n_args * int64_t
     //      8. array with values
 
-    // TODO: Is it worth while to consider MPI packed data types??
-
     int total_size = sizeof(intptr_t)           // 1. target entry pointer
         + sizeof(int32_t)                       // 2. img index
         + sizeof(ptrdiff_t)                     // 3. offset inside image
@@ -787,7 +785,13 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT
-    // TODO: callback for encode task tool data
+    int32_t task_tool_buf_size = 0;
+    void *task_tool_buffer = nullptr;
+
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(task, &(task->task_data), &task_tool_buf_size);
+        total_size += sizeof(int32_t) + task_tool_buf_size; // size information + buffer size
+    }
 #endif
 
     // allocate memory for transfer
@@ -841,7 +845,16 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT
-    // TODO: memcpy task tool data
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        // remember size of buffer
+        ((int32_t *) cur_ptr)[0] = task_tool_buf_size;
+        cur_ptr += sizeof(int32_t);
+
+        memcpy(cur_ptr, task_tool_buffer, task_tool_buf_size);
+        cur_ptr += task_tool_buf_size;
+        // clean up again
+        free(task_tool_buffer);
+    }
 #endif
 
     // set output size
@@ -849,7 +862,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #ifdef TRACE
     VT_end(event_encode);
 #endif
-    return buff;    
+    return buff;
 }
 
 TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
@@ -865,7 +878,6 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
     // actually we use the global task id as tag
     task->task_id           = mpi_tag;
     task->is_remote_task    = 1;
-    //task->task_data.value   = mpi_tag;
 
     // current pointer position
     char *cur_ptr = (char*) buffer;
@@ -925,6 +937,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
             memcpy(new_mem, cur_ptr, task->arg_sizes[i]);
             task->arg_hst_pointers[i] = new_mem;
         }
+        // increment pointer
+        cur_ptr += task->arg_sizes[i];
 #elif OFFLOAD_DATA_PACKING_TYPE == 1
         // copy value from host pointer directly
         if(!is_lit) {
@@ -934,11 +948,15 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
         }
 #endif
         print_arg_info("decode_send_buffer", task, i);
-        cur_ptr += task->arg_sizes[i];
     }
 
 #if CHAMELEON_TOOL_SUPPORT
-    // TODO: memcpy task tool data
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        // first get size of buffer
+        int32_t task_tool_buf_size = ((int32_t *) cur_ptr)[0];
+        cur_ptr += sizeof(int32_t);
+        cham_t_status.cham_t_callback_decode_task_tool_data(task, &(task->task_data), (void*)cur_ptr, task_tool_buf_size);
+    }
 #endif
 
 #ifdef TRACE

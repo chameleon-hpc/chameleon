@@ -85,13 +85,10 @@ enum chameleon_task_status {
 extern "C" {
 #endif
 
-// TODO rename to target_task_entry_t
+// TODO: rename to target_task_entry_t
+// TODO: define struct here that should be visible outside (C-style) + define internal wrapper with C++ stuff
 struct TargetTaskEntryTy;
 typedef struct TargetTaskEntryTy TargetTaskEntryTy;
-
-struct OffloadEntryTy;
-
-struct OffloadingDataEntryTy;
 
 extern TargetTaskEntryTy* CreateTargetTaskEntryTy(
         void *p_tgt_entry_ptr, 
@@ -101,6 +98,8 @@ extern TargetTaskEntryTy* CreateTargetTaskEntryTy(
         int32_t p_arg_num);
 
 void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset);
+
+int64_t chameleon_get_task_id(TargetTaskEntryTy *task);
 
 // ================================================================================
 // External functions (that can be called from source code or libomptarget)

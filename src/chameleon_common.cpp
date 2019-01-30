@@ -31,9 +31,6 @@ TargetTaskEntryTy::TargetTaskEntryTy(
     int tmp_counter = ++_task_id_counter;
     // int tmp_rank = chameleon_comm_rank;
     task_id = (chameleon_comm_rank << 16) | (tmp_counter);
-#if CHAMELEON_TOOL_SUPPORT
-    task_data.value = task_id;
-#endif
     // DBP("TargetTaskEntryTy - Created task with (task_id=%d)\n", task_id);
 
     tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;

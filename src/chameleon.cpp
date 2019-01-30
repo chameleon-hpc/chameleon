@@ -71,6 +71,10 @@ void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrd
     task->entry_image_offset = entry_image_offset;
 }
 
+int64_t chameleon_get_task_id(TargetTaskEntryTy *task) {
+    return task->task_id;
+}
+
 /* 
  * Function verify_initialized
  * Verifies whether library has already been initialized or not.
@@ -521,8 +525,8 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     lookup_hst_pointers(task);
 
 #if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_create) {
-        cham_t_enabled.cham_t_callback_task_create(&(task->task_data), task);
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_create) {
+        cham_t_status.cham_t_callback_task_create(task, &(task->task_data));
     }
 #endif
 
@@ -768,21 +772,21 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
     TargetTaskEntryTy *prior_task = __thread_data[gtid].current_task;
 
 #if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_schedule) {
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_schedule) {
         if(prior_task) {
-            cham_t_enabled.cham_t_callback_task_schedule(
-                &(task->task_data), 
+            cham_t_status.cham_t_callback_task_schedule(
+                task,
                 task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                task, 
+                &(task->task_data), 
                 cham_t_task_yield,
-                &(prior_task->task_data), 
+                prior_task,
                 prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                prior_task);
+                &(prior_task->task_data));
         } else {
-            cham_t_enabled.cham_t_callback_task_schedule(
-                &(task->task_data), 
-                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+            cham_t_status.cham_t_callback_task_schedule(
                 task, 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                &(task->task_data), 
                 cham_t_task_start,
                 nullptr, 
                 cham_t_task_local,
@@ -798,21 +802,21 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
     ffi_call(&cif, entry, NULL, &args[0]);
 
 #if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_enabled.enabled && cham_t_enabled.cham_t_callback_task_schedule) {
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_schedule) {
         if(prior_task) {
-            cham_t_enabled.cham_t_callback_task_schedule(
-                &(task->task_data), 
-                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+            cham_t_status.cham_t_callback_task_schedule(
                 task, 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                &(task->task_data), 
                 cham_t_task_end,
-                &(prior_task->task_data), 
+                prior_task,
                 prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                prior_task);
+                &(prior_task->task_data));
         } else {
-            cham_t_enabled.cham_t_callback_task_schedule(
-                &(task->task_data), 
-                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+            cham_t_status.cham_t_callback_task_schedule(
                 task, 
+                task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
+                &(task->task_data), 
                 cham_t_task_end,
                 nullptr, 
                 cham_t_task_local,

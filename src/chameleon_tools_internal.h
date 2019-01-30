@@ -15,7 +15,7 @@ typedef struct cham_t_callbacks_active_s {
 
 } cham_t_callbacks_active_t;
 
-extern cham_t_callbacks_active_t cham_t_enabled;
+extern cham_t_callbacks_active_t cham_t_status;
 
 #ifdef __cplusplus
 extern "C" {

@@ -14,8 +14,10 @@ typedef enum cham_t_callbacks_t {
     // cham_t_callback_thread_begin             = 1,
     // cham_t_callback_thread_end               = 2,
     // cham_t_callback_parallel_end             = 4,
-    cham_t_callback_task_create              = 5,
-    cham_t_callback_task_schedule            = 6
+    cham_t_callback_task_create              = 1,
+    cham_t_callback_encode_task_tool_data    = 2,
+    cham_t_callback_decode_task_tool_data    = 3,
+    cham_t_callback_task_schedule            = 4
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -108,6 +110,7 @@ typedef cham_t_interface_fn_t (*cham_t_function_lookup_t) (
 
 typedef void (*cham_t_callback_t) (void);
 
+// either interprete data type as value or pointer
 typedef union cham_t_data_t {
     uint64_t value;
     void *ptr;
@@ -151,31 +154,36 @@ typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
  * List of callbacks
  ****************************************************************************/
 typedef void (*cham_t_callback_task_create_t) (
-    cham_t_data_t *task_data,
-    TargetTaskEntryTy * task
+    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_t_data_t *task_data
 );
 
 typedef void (*cham_t_callback_task_schedule_t) (
-    cham_t_data_t *new_task_data,
-    cham_t_task_flag_t new_task_flag,
-    TargetTaskEntryTy * new_task,
+    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_t_task_flag_t task_flag,
+    cham_t_data_t *task_data,
     cham_t_task_schedule_type_t schedule_type,
-    cham_t_data_t *prior_task_data,
+    TargetTaskEntryTy * prior_task,             // opaque data type for internal task
     cham_t_task_flag_t prior_task_flag,
-    TargetTaskEntryTy * prior_task
+    cham_t_data_t *prior_task_data
 );
 
-// Encode custom tool data (if any has been set) for tasks that will be migrated to remote rank.
-// Ensures that this data is also send to remote rank and available in tool calls
-typedef void (*cham_t_callback_encode_task_tool_data_t) (
+// Encode custom task tool data (if any has been set) for a task that will be migrated to remote rank.
+// Ensures that this data is also send to remote rank and available in tool calls.
+// Note: Only necessary when task specific data is required
+// Note: Only works in combination with cham_t_callback_decode_task_tool_data_t
+typedef void *(*cham_t_callback_encode_task_tool_data_t) (
+    TargetTaskEntryTy * task,                   // opaque data type for internal task
     cham_t_data_t *task_data,
-    void *buffer,
     int32_t *size
 );
 
-// Decode custom tool data (if any has been set) for tasks that have been migrated to remote rank.
+// Decode custom task tool data (if any has been set) for a task that has been migrated to remote rank.
 // Restore data in corresponding task_data struct
+// Note: Only necessary when task specific data is required
+// Note: Only works in combination with cham_t_callback_encode_task_tool_data_t
 typedef void (*cham_t_callback_decode_task_tool_data_t) (
+    TargetTaskEntryTy * task,                   // opaque data type for internal task
     cham_t_data_t *task_data,
     void *buffer,
     int32_t size

@@ -126,6 +126,13 @@ int32_t chameleon_init() {
 #endif
 
     // initilize thread data here
+    __rank_data.comm_rank = chameleon_comm_rank;
+    __rank_data.comm_size = chameleon_comm_size;
+#if CHAMELEON_TOOL_SUPPORT
+    // copy for tool calls
+    __rank_data.rank_tool_info.comm_rank = chameleon_comm_rank;
+    __rank_data.rank_tool_info.comm_size = chameleon_comm_size;
+#endif
     __thread_data = (ch_thread_data_t*) malloc(omp_get_max_threads()*sizeof(ch_thread_data_t));
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -160,6 +167,33 @@ int32_t chameleon_init() {
     // set flag to ensure that only a single thread is initializing
     _ch_is_initialized = 1;
     _mtx_ch_is_initialized.unlock();
+    return CHAM_SUCCESS;
+}
+
+int32_t chameleon_thread_init() {
+    if(!_ch_is_initialized) {
+        chameleon_init();
+    }
+    
+    // make sure basic stuff is initialized
+    int32_t gtid = __ch_get_gtid();
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_thread_init) {
+        cham_t_status.cham_t_callback_thread_init(&(__thread_data[gtid].thread_tool_data));
+    }
+#endif
+    return CHAM_SUCCESS;
+}
+
+int32_t chameleon_thread_finalize() {
+    // make sure basic stuff is initialized
+    int32_t gtid = __ch_get_gtid();
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_thread_finalize) {
+        cham_t_status.cham_t_callback_thread_finalize(&(__thread_data[gtid].thread_tool_data));
+    }
+#endif
     return CHAM_SUCCESS;
 }
 
@@ -203,6 +237,9 @@ int32_t chameleon_finalize() {
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_fini();
 #endif
+
+    // cleanup
+    free(__thread_data);
 
     DBP("chameleon_finalize (exit)\n");
     return CHAM_SUCCESS;

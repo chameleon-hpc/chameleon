@@ -10,14 +10,13 @@
 /*****************************************************************************
  * Enums
  ****************************************************************************/
-typedef enum cham_t_callbacks_t {
-    // cham_t_callback_thread_begin             = 1,
-    // cham_t_callback_thread_end               = 2,
-    // cham_t_callback_parallel_end             = 4,
-    cham_t_callback_task_create              = 1,
-    cham_t_callback_encode_task_tool_data    = 2,
-    cham_t_callback_decode_task_tool_data    = 3,
-    cham_t_callback_task_schedule            = 4
+typedef enum cham_t_callback_types_t {
+    cham_t_callback_thread_init                 = 1,
+    cham_t_callback_thread_finalize             = 2,
+    cham_t_callback_task_create                 = 3,
+    cham_t_callback_encode_task_tool_data       = 4,
+    cham_t_callback_decode_task_tool_data       = 5,
+    cham_t_callback_task_schedule               = 6
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -44,7 +43,7 @@ typedef enum cham_t_callbacks_t {
     // cham_t_callback_cancel                   = 30,
     // cham_t_callback_reduction                = 31,
     // cham_t_callback_dispatch                 = 32
-} cham_t_callbacks_t;
+} cham_t_callback_types_t;
 
 typedef enum cham_t_set_result_t {
     cham_t_set_error            = 0,
@@ -99,6 +98,11 @@ static void cham_t_sync_region_status_t_value(int type, char *buffer) {
     progress += sprintf(progress, "cham_t_sync_region_end");
 }
 
+typedef struct cham_t_rank_info_t {
+    int32_t comm_rank;
+    int32_t comm_size;
+} cham_t_rank_info_t;
+
 /*****************************************************************************
  * General definitions
  ****************************************************************************/
@@ -138,21 +142,31 @@ typedef struct cham_t_start_tool_result_t {
  * Getter / Setter
  ****************************************************************************/
 typedef cham_t_set_result_t (*cham_t_set_callback_t) (
-    cham_t_callbacks_t event,
+    cham_t_callback_types_t event,
     cham_t_callback_t callback
 );
 
 typedef int (*cham_t_get_callback_t) (
-    cham_t_callbacks_t event,
+    cham_t_callback_types_t event,
     cham_t_callback_t *callback
 );
 
 typedef cham_t_data_t *(*cham_t_get_thread_data_t) (void);
 typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
 
+typedef cham_t_rank_info_t *(*cham_t_get_rank_info_t) (void);
+
 /*****************************************************************************
  * List of callbacks
  ****************************************************************************/
+typedef void (*cham_t_callback_thread_init_t) (
+    cham_t_data_t *thread_data
+);
+
+typedef void (*cham_t_callback_thread_finalize_t) (
+    cham_t_data_t *thread_data
+);
+
 typedef void (*cham_t_callback_task_create_t) (
     TargetTaskEntryTy * task,                   // opaque data type for internal task
     cham_t_data_t *task_data

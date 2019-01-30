@@ -173,7 +173,21 @@ struct OffloadingDataEntryTy {
 typedef struct ch_thread_data_t {
     int32_t os_thread_id;
     TargetTaskEntryTy * current_task;
+
+#if CHAMELEON_TOOL_SUPPORT
+    cham_t_data_t thread_tool_data;
+#endif    
 } ch_thread_data_t;
+
+typedef struct ch_rank_data_t {
+    int32_t comm_rank;
+    int32_t comm_size;
+
+#if CHAMELEON_TOOL_SUPPORT
+    cham_t_data_t rank_tool_data;
+    cham_t_rank_info_t rank_tool_info;
+#endif    
+} ch_rank_data_t;
 #pragma endregion
 
 #pragma region Variables
@@ -190,7 +204,8 @@ extern int32_t __ch_get_gtid();
 
 extern std::mutex _mtx_relp;
 
-extern ch_thread_data_t* __thread_data;
+extern ch_thread_data_t*    __thread_data;
+extern ch_rank_data_t       __rank_data;
 
 #ifdef CHAM_DEBUG
 extern std::atomic<long> mem_allocated;

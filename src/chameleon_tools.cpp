@@ -145,6 +145,9 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callback_types_t which, ch
         case cham_t_callback_decode_task_tool_data:
             cham_t_status.cham_t_callback_decode_task_tool_data = (cham_t_callback_decode_task_tool_data_t)callback;
             break;
+        case cham_t_callback_sync_region:
+            cham_t_status.cham_t_callback_sync_region = (cham_t_callback_sync_region_t)callback;
+            break;
         default:
             fprintf(stderr, "ERROR: Unable to set callback for specifier %d\n", which);
             return cham_t_set_error;

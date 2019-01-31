@@ -121,7 +121,7 @@ typedef struct TargetTaskEntryTy {
     int32_t source_mpi_tag      = 0;
 
 #if CHAMELEON_TOOL_SUPPORT
-    cham_t_data_t task_data;
+    cham_t_data_t task_tool_data;
 #endif
 
     // Constructor 1: Called when creating new task during decoding

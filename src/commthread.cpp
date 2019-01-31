@@ -998,6 +998,7 @@ void* receive_remote_tasks(void* arg) {
             while(!flag_open_request_receive && !flag_open_request_receiveBack) {
 #endif
                 usleep(5);
+                request_manager_receive.progressRequests();            
                 // check whether thread should be aborted
                 if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
 

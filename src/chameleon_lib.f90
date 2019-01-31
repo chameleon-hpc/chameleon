@@ -53,7 +53,7 @@ contains
    implicit none
    procedure(),pointer, intent(in) :: entry
    integer(kind=c_int) :: nargs
-   type(map_entry),dimension(:), allocatable :: args
+   type(map_entry),dimension(:) :: args
    integer(kind=c_int) :: chameleon_add_task_manual
    
    chameleon_add_task_manual = chameleon_add_task_manual_fortran(c_funloc(entry), nargs, c_loc(args))

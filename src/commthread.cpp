@@ -789,7 +789,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     void *task_tool_buffer = nullptr;
 
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
-        task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(task, &(task->task_data), &task_tool_buf_size);
+        task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(task, &(task->task_tool_data), &task_tool_buf_size);
         total_size += sizeof(int32_t) + task_tool_buf_size; // size information + buffer size
     }
 #endif
@@ -955,7 +955,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
         // first get size of buffer
         int32_t task_tool_buf_size = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
-        cham_t_status.cham_t_callback_decode_task_tool_data(task, &(task->task_data), (void*)cur_ptr, task_tool_buf_size);
+        cham_t_status.cham_t_callback_decode_task_tool_data(task, &(task->task_tool_data), (void*)cur_ptr, task_tool_buf_size);
     }
 #endif
 

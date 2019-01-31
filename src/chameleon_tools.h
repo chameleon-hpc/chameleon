@@ -16,7 +16,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_task_create                 = 3,
     cham_t_callback_encode_task_tool_data       = 4,
     cham_t_callback_decode_task_tool_data       = 5,
-    cham_t_callback_task_schedule               = 6
+    cham_t_callback_task_schedule               = 6,
+    cham_t_callback_sync_region                 = 7
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -85,18 +86,25 @@ static void cham_t_task_flag_t_value(int type, char *buffer) {
     progress += sprintf(progress, "cham_t_task_replicated");
 }
 
+typedef enum cham_t_sync_region_type_t {
+    cham_t_sync_region_taskwait  = 1
+} cham_t_sync_region_type_t;
+
+static const char* cham_t_sync_region_type_t_values[] = {
+    NULL,
+    "cham_t_sync_region_taskwait"       // 1
+};
+
 typedef enum cham_t_sync_region_status_t {
-    cham_t_sync_region_start    = 0x00000001,
-    cham_t_sync_region_end      = 0x00000002
+    cham_t_sync_region_start    = 1,
+    cham_t_sync_region_end      = 2
 } cham_t_sync_region_status_t;
 
-static void cham_t_sync_region_status_t_value(int type, char *buffer) {
-  char *progress = buffer;
-  if (type & cham_t_sync_region_start)
-    progress += sprintf(progress, "cham_t_sync_region_start");
-  if (type & cham_t_sync_region_end)
-    progress += sprintf(progress, "cham_t_sync_region_end");
-}
+static const char* cham_t_sync_region_status_t_values[] = {
+    NULL,
+    "cham_t_sync_region_start",         // 1
+    "cham_t_sync_region_end"            // 2
+};
 
 typedef struct cham_t_rank_info_t {
     int32_t comm_rank;
@@ -169,7 +177,8 @@ typedef void (*cham_t_callback_thread_finalize_t) (
 
 typedef void (*cham_t_callback_task_create_t) (
     TargetTaskEntryTy * task,                   // opaque data type for internal task
-    cham_t_data_t *task_data
+    cham_t_data_t *task_data,
+    const void *codeptr_ra
 );
 
 typedef void (*cham_t_callback_task_schedule_t) (
@@ -201,6 +210,13 @@ typedef void (*cham_t_callback_decode_task_tool_data_t) (
     cham_t_data_t *task_data,
     void *buffer,
     int32_t size
+);
+
+typedef void (*cham_t_callback_sync_region_t) (
+    cham_t_sync_region_type_t sync_region_type,
+    cham_t_sync_region_status_t sync_region_status,
+    cham_t_data_t *thread_data,
+    const void *codeptr_ra
 );
 
 #pragma endregion

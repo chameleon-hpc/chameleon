@@ -340,6 +340,14 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // start communication threads here
     start_communication_threads();
     #endif
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
+        void *codeptr_ra = __builtin_return_address(0);
+        int32_t gtid = __ch_get_gtid();
+        cham_t_status.cham_t_callback_sync_region(cham_t_sync_region_taskwait, cham_t_sync_region_start, &(__thread_data[gtid].thread_tool_data) , codeptr_ra);
+    }
+#endif
     
     // as long as there are local tasks run this loop
     while(true) {
@@ -429,6 +437,14 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             res = process_local_task();
         }
     }
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
+        void *codeptr_ra = __builtin_return_address(0);
+        int32_t gtid = __ch_get_gtid();
+        cham_t_status.cham_t_callback_sync_region(cham_t_sync_region_taskwait, cham_t_sync_region_end, &(__thread_data[gtid].thread_tool_data) , codeptr_ra);
+    }
+#endif
 
     #if THREAD_ACTIVATION
     // put threads to sleep again after sync cycle
@@ -563,7 +579,8 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_create) {
-        cham_t_status.cham_t_callback_task_create(task, &(task->task_data));
+        void *codeptr_ra = __builtin_return_address(0);
+        cham_t_status.cham_t_callback_task_create(task, &(task->task_tool_data), codeptr_ra);
     }
 #endif
 
@@ -814,16 +831,16 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
             cham_t_status.cham_t_callback_task_schedule(
                 task,
                 task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(task->task_data), 
+                &(task->task_tool_data), 
                 cham_t_task_yield,
                 prior_task,
                 prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(prior_task->task_data));
+                &(prior_task->task_tool_data));
         } else {
             cham_t_status.cham_t_callback_task_schedule(
                 task, 
                 task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(task->task_data), 
+                &(task->task_tool_data), 
                 cham_t_task_start,
                 nullptr, 
                 cham_t_task_local,
@@ -844,16 +861,16 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
             cham_t_status.cham_t_callback_task_schedule(
                 task, 
                 task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(task->task_data), 
+                &(task->task_tool_data), 
                 cham_t_task_end,
                 prior_task,
                 prior_task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(prior_task->task_data));
+                &(prior_task->task_tool_data));
         } else {
             cham_t_status.cham_t_callback_task_schedule(
                 task, 
                 task->is_remote_task ? cham_t_task_remote : cham_t_task_local,
-                &(task->task_data), 
+                &(task->task_tool_data), 
                 cham_t_task_end,
                 nullptr, 
                 cham_t_task_local,

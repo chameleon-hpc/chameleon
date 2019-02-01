@@ -1334,9 +1334,13 @@ void* service_thread_action(void *arg) {
         #endif
 
 #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
+
+        _mtx_local_tasks.lock();
+        int cur_local_tasks = _local_tasks.size();
+        _mtx_local_tasks.unlock();
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
-        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
+        if(_comm_thread_load_exchange_happend && cur_local_tasks > 1 && !offload_triggered) {
 
 #if OFFLOAD_BLOCKING
             if(!_offload_blocked) {

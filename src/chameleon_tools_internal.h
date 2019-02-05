@@ -15,6 +15,7 @@ typedef struct cham_t_callbacks_active_s {
     cham_t_callback_encode_task_tool_data_t     cham_t_callback_encode_task_tool_data   = nullptr;
     cham_t_callback_decode_task_tool_data_t     cham_t_callback_decode_task_tool_data   = nullptr;
     cham_t_callback_sync_region_t               cham_t_callback_sync_region             = nullptr;
+    cham_t_callback_determine_local_load_t      cham_t_callback_determine_local_load    = nullptr;
 
 } cham_t_callbacks_active_t;
 

@@ -29,18 +29,15 @@ extern std::list<OffloadingDataEntryTy*> _data_entries;
 
 // list with local task entries
 // these can either be executed here or offloaded to a different rank
-extern std::mutex _mtx_local_tasks;
-extern std::list<TargetTaskEntryTy*> _local_tasks;
+extern thread_safe_task_list _local_tasks;
 extern std::atomic<int32_t> _num_local_tasks_outstanding;
 
 // list with stolen task entries that should be executed
-extern std::mutex _mtx_stolen_remote_tasks;
-extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+extern thread_safe_task_list _stolen_remote_tasks;
 extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
-extern std::mutex _mtx_stolen_remote_tasks_send_back;
-extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
+extern thread_safe_task_list _stolen_remote_tasks_send_back;
 
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;

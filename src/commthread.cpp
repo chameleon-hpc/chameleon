@@ -1382,7 +1382,6 @@ void* service_thread_action(void *arg) {
         }
         #endif
 
-// TODO: Remove force case or rewrite
 #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
@@ -1408,7 +1407,7 @@ void* service_thread_action(void *arg) {
 //                 int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
 //                 if(_load_info_ranks[tmp_idx] == 0) {
 //                     // Direct offload if thread found that has nothing to do
-//                     TargetTaskEntryTy *cur_task = chameleon_pop_task();
+//                     TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
 //                     if(cur_task == nullptr)
 //                         break;
 // #ifdef TRACE
@@ -1442,7 +1441,7 @@ void* service_thread_action(void *arg) {
                     if(r != chameleon_comm_rank) {
                         int targetOffloadedTasks = tasksToOffload[r];
                         for(int t=0; t<targetOffloadedTasks; t++) {
-                            TargetTaskEntryTy *cur_task = chameleon_pop_task();
+                            TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
                             if(cur_task) {
 #ifdef TRACE
                                 VT_end(event_offload_decision);

@@ -86,7 +86,6 @@ extern "C" {
 #endif
 
 // TODO: rename to target_task_entry_t
-// TODO: define struct here that should be visible outside (C-style) + define internal wrapper with C++ stuff
 struct TargetTaskEntryTy;
 typedef struct TargetTaskEntryTy TargetTaskEntryTy;
 
@@ -123,8 +122,6 @@ void chameleon_free_data(void *tgt_ptr);
 void chameleon_incr_mem_alloc(int64_t size);
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task);
-
-TargetTaskEntryTy* chameleon_pop_task();
 
 int32_t chameleon_get_last_local_task_id_added();
 

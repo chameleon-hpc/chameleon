@@ -478,7 +478,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
        
 //         // ========== Prio 3: work on local tasks
 //         if(!_local_tasks.empty()) {
-//             TargetTaskEntryTy *cur_task = chameleon_pop_task();
+//             TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
 //             if(cur_task == nullptr)
 //             {
 //                 continue;
@@ -601,11 +601,6 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
     _mtx_load_exchange.unlock();
 
     return CHAM_SUCCESS;
-}
-
-TargetTaskEntryTy* chameleon_pop_task() {
-    DBP("chameleon_pop_task (enter)\n");
-    return _local_tasks.pop_front();
 }
 
 int32_t chameleon_get_last_local_task_id_added() {
@@ -933,7 +928,7 @@ inline int32_t process_remote_task() {
 }
 
 inline int32_t process_local_task() {
-    TargetTaskEntryTy *cur_task = chameleon_pop_task();
+    TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
     if(!cur_task)
         return CHAM_LOCAL_TASK_NONE;
 

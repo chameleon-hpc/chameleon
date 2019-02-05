@@ -19,6 +19,7 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_task_schedule               = 6,
     cham_t_callback_sync_region                 = 7,
     cham_t_callback_determine_local_load        = 8,
+    cham_t_callback_compute_num_task_to_offload = 9
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -225,6 +226,12 @@ typedef int32_t (*cham_t_callback_determine_local_load_t) (
     int32_t num_ids_local,
     int64_t* task_ids_stolen,
     int32_t num_ids_stolen
+);
+
+// information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
+typedef void (*cham_t_callback_compute_num_task_to_offload_t) (
+    int32_t* num_tasks_to_offload_per_rank,
+    const int32_t* load_info_per_rank
 );
 
 #pragma endregion

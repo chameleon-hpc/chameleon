@@ -18,7 +18,9 @@
 
 #ifdef TRACE
 #include "VT.h"
-#endif 
+#endif
+
+#define CHAM_SPEEL_TIME_MICRO_SECS 20
 
 #pragma region Variables
 // communicator for remote task requests
@@ -308,7 +310,7 @@ int32_t put_comm_threads_to_sleep() {
     _flag_comm_threads_sleeping             = 1;
     // wait until thread sleeps
     while(!_comm_thread_service_stopped) {
-        usleep(10);
+        usleep(CHAM_SPEEL_TIME_MICRO_SECS);
     }
     // DBP("put_comm_threads_to_sleep - service thread stopped = %d\n", _comm_thread_service_stopped);
     _comm_threads_ended_count               = 0;
@@ -682,7 +684,7 @@ void* offload_action(void *v_entry) {
 
         while(!flag) {
             MPI_Iprobe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &flag, &cur_status);
-            usleep(20);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
         }
 
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
@@ -1003,7 +1005,7 @@ void* receive_remote_tasks(void* arg) {
                 DBP("receive_remote_tasks - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(20);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             // DBP("receive_remote_tasks - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
@@ -1026,7 +1028,7 @@ void* receive_remote_tasks(void* arg) {
 
             while(!flag_open_request_receive && !flag_open_request_receiveBack) {
 #endif
-                usleep(5);
+                usleep(CHAM_SPEEL_TIME_MICRO_SECS);
                 // check whether thread should be aborted
                 if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
 
@@ -1210,6 +1212,7 @@ void* service_thread_action(void *arg) {
 
     int transported_load_values[3];
     int * buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
+    std::vector<int32_t> tasksToOffload(chameleon_comm_size);
 
     DBP("service_thread_action (enter)\n");
     while(true) {
@@ -1226,7 +1229,7 @@ void* service_thread_action(void *arg) {
                 DBP("service_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(5);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             // DBP("service_thread_action - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("service_thread_action (abort)\n");
@@ -1379,6 +1382,7 @@ void* service_thread_action(void *arg) {
         }
         #endif
 
+// TODO: Remove force case or rewrite
 #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
@@ -1399,47 +1403,58 @@ void* service_thread_action(void *arg) {
             // - Sorted approach: rank with highest load should offload to rank with minimal load
             // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
             
-            // check other ranks whether there is a rank with low load; start at current position
-            for(int k = 1; k < chameleon_comm_size; k++) {
-                int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
-                if(_load_info_ranks[tmp_idx] == 0) {
-                    // Direct offload if thread found that has nothing to do
-                    TargetTaskEntryTy *cur_task = chameleon_pop_task();
-                    if(cur_task == nullptr)
-                        break;
-#ifdef TRACE
-            VT_end(event_offload_decision);
-#endif
-                    DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
-                    OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
-                    offload_task_to_rank(off_entry);
-                    offload_triggered = 1;
+//            // check other ranks whether there is a rank with low load; start at current position
+//            for(int k = 1; k < chameleon_comm_size; k++) {
+//                 int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
+//                 if(_load_info_ranks[tmp_idx] == 0) {
+//                     // Direct offload if thread found that has nothing to do
+//                     TargetTaskEntryTy *cur_task = chameleon_pop_task();
+//                     if(cur_task == nullptr)
+//                         break;
+// #ifdef TRACE
+//             VT_end(event_offload_decision);
+// #endif
+//                     DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
+//                     OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
+//                     offload_task_to_rank(off_entry);
+//                     offload_triggered = 1;
+// #if OFFLOAD_BLOCKING
+//                     _offload_blocked = 1;
+// #endif
+//                     break;
+//                 }
+//             }
 
-#if OFFLOAD_BLOCKING
-                    _offload_blocked = 1;
-#endif
-                    break;
-                }
-            }
             // only proceed if offloading not already performed
             if(!offload_triggered) {
-                std::vector<int32_t> tasksToOffload(chameleon_comm_size);
+                // reset values to zero
+                std::fill(tasksToOffload.begin(), tasksToOffload.end(), 0);
+#if CHAMELEON_TOOL_SUPPORT
+            if(cham_t_status.enabled && cham_t_status.cham_t_callback_compute_num_task_to_offload) {
+                cham_t_status.cham_t_callback_compute_num_task_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
+            } else {
                 computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
-                for(int r=0; r<tasksToOffload.size(); r++) { 
-                    int targetOffloadedTasks = tasksToOffload[r];
-                    for(int t=0; t<targetOffloadedTasks; t++) {       
-                        TargetTaskEntryTy *cur_task = chameleon_pop_task();
-                        if(cur_task) {
-#ifdef TRACE
-                            VT_end(event_offload_decision);
+            }
+#else 
+            computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
 #endif
-                            DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
-                            OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, r);
-                            offload_task_to_rank(off_entry);
-                            offload_triggered = 1;
+                for(int r=0; r<tasksToOffload.size(); r++) { 
+                    if(r != chameleon_comm_rank) {
+                        int targetOffloadedTasks = tasksToOffload[r];
+                        for(int t=0; t<targetOffloadedTasks; t++) {
+                            TargetTaskEntryTy *cur_task = chameleon_pop_task();
+                            if(cur_task) {
+#ifdef TRACE
+                                VT_end(event_offload_decision);
+#endif
+                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
+                                OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, r);
+                                offload_task_to_rank(off_entry);
+                                offload_triggered = 1;
 #if OFFLOAD_BLOCKING
                                 _offload_blocked = 1;
 #endif
+                            }
                         }
                     }
                 }
@@ -1456,7 +1471,7 @@ void* service_thread_action(void *arg) {
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
-            usleep(5);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             continue;
         }
 

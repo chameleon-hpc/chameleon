@@ -162,7 +162,7 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callback_types_t which, ch
 }
 
 static int cham_t_get_callback(cham_t_callback_types_t which, cham_t_callback_t *callback) {
-    // TODO: implement
+    // TODO: implement, but currently i dont see any reason/use case for that except unit testing
     return 0;
 }
 

@@ -17,7 +17,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_encode_task_tool_data       = 4,
     cham_t_callback_decode_task_tool_data       = 5,
     cham_t_callback_task_schedule               = 6,
-    cham_t_callback_sync_region                 = 7
+    cham_t_callback_sync_region                 = 7,
+    cham_t_callback_determine_local_load        = 8,
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -217,6 +218,13 @@ typedef void (*cham_t_callback_sync_region_t) (
     cham_t_sync_region_status_t sync_region_status,
     cham_t_data_t *thread_data,
     const void *codeptr_ra
+);
+
+typedef int32_t (*cham_t_callback_determine_local_load_t) (
+    int64_t* task_ids_local,
+    int32_t num_ids_local,
+    int64_t* task_ids_stolen,
+    int32_t num_ids_stolen
 );
 
 #pragma endregion

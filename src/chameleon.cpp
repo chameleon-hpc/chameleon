@@ -133,7 +133,8 @@ int32_t chameleon_init() {
     __rank_data.rank_tool_info.comm_rank = chameleon_comm_rank;
     __rank_data.rank_tool_info.comm_size = chameleon_comm_size;
 #endif
-    __thread_data = (ch_thread_data_t*) malloc(omp_get_max_threads()*sizeof(ch_thread_data_t));
+    // need +2 for safty measure to cover both communication threads
+    __thread_data = (ch_thread_data_t*) malloc((2+omp_get_max_threads())*sizeof(ch_thread_data_t));
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_init();
@@ -585,15 +586,14 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
 #endif
 
     // add to queue
-    _mtx_local_tasks.lock();
     _local_tasks.push_back(task);
-    // set last task added
+    // set id of last task added
     __last_task_id_added = task->task_id;
+
     _mtx_unfinished_locally_created_tasks.lock();
     _unfinished_locally_created_tasks.push_back(task->task_id);
     _mtx_unfinished_locally_created_tasks.unlock();
-    _mtx_local_tasks.unlock();
-
+    
     _mtx_load_exchange.lock();
     _load_info_local++;
     _num_local_tasks_outstanding++;
@@ -605,23 +605,7 @@ int32_t chameleon_add_task(TargetTaskEntryTy *task) {
 
 TargetTaskEntryTy* chameleon_pop_task() {
     DBP("chameleon_pop_task (enter)\n");
-    TargetTaskEntryTy* task = nullptr;
-
-    // we do not necessarily need the lock here
-    if(_local_tasks.empty()) {
-        DBP("chameleon_pop_task (exit)\n");
-        return task;
-    }
-
-    // get first task in queue
-    _mtx_local_tasks.lock();
-    if(!_local_tasks.empty()) {
-        task = _local_tasks.front();
-        _local_tasks.pop_front();
-    }
-    _mtx_local_tasks.unlock();
-    DBP("chameleon_pop_task (exit)\n");
-    return task;
+    return _local_tasks.pop_front();
 }
 
 int32_t chameleon_get_last_local_task_id_added() {
@@ -683,9 +667,10 @@ int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {
     intptr_t base_address = _image_base_addresses[99];
     ptrdiff_t diff = (intptr_t) entry_point - base_address;
     chameleon_set_img_idx_offset(tmp_task, 99, diff);
+    tmp_task->is_manual_task = 1;
     chameleon_add_task(tmp_task);
 
-    // // cleanup again
+    // // cleanup again, maybe not the right spot here but more on task finish event
     // for(int i = 0; i < num_args; i++) {
     //     chameleon_free_data(arg_tgt_pointers[i]);
     // }
@@ -890,11 +875,10 @@ inline int32_t process_remote_task() {
 
     if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
-        
-    _mtx_stolen_remote_tasks.lock();
+
+    remote_task = _stolen_remote_tasks.pop_front();
     // for safety need to check again after lock is aquired
-    if(_stolen_remote_tasks.empty()) {
-        _mtx_stolen_remote_tasks.unlock();
+    if(!remote_task) {
         return CHAM_REMOTE_TASK_NONE;
     }
 
@@ -905,10 +889,6 @@ inline int32_t process_remote_task() {
         int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
     VT_begin(event_process_remote);
 #endif
-    remote_task = _stolen_remote_tasks.front();
-    _stolen_remote_tasks.pop_front();
-    _mtx_stolen_remote_tasks.unlock();
-
     // execute region now
 #if CHAM_STATS_RECORD
     double cur_time = omp_get_wtime();
@@ -934,9 +914,7 @@ inline int32_t process_remote_task() {
 
     if(remote_task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
-        _mtx_stolen_remote_tasks_send_back.lock();
         _stolen_remote_tasks_send_back.push_back(remote_task);
-        _mtx_stolen_remote_tasks_send_back.unlock();
     } else {
         // we can now decrement outstanding counter because there is nothing to send back
         _mtx_load_exchange.lock();
@@ -996,6 +974,10 @@ inline int32_t process_local_task() {
     _load_info_local--;
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
+
+    if(cur_task->is_manual_task) {
+        // TODO: cleanup target pointers
+    }
 
 #if OFFLOAD_BLOCKING
     _offload_blocked = 0;

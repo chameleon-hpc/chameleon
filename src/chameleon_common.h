@@ -115,6 +115,7 @@ typedef struct TargetTaskEntryTy {
 
     int32_t is_remote_task      = 0;
     int32_t is_replicated_task  = 0;
+    int32_t is_manual_task      = 0;
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
@@ -188,6 +189,106 @@ typedef struct ch_rank_data_t {
     cham_t_rank_info_t rank_tool_info;
 #endif    
 } ch_rank_data_t;
+
+class thread_safe_task_list {
+    private:
+    
+    std::list<TargetTaskEntryTy*> task_list;
+    std::mutex m;
+    // size_t list_size = 0;
+    std::atomic<size_t> list_size = 0;
+
+    public:
+
+    thread_safe_task_list() { }
+
+    size_t size() {
+        return this->list_size.load();
+    }
+
+    bool empty() {
+        return this->list_size <= 0;
+    }
+
+    void push_back(TargetTaskEntryTy* task) {
+        this->m.lock();
+        this->task_list.push_back(task);
+        this->list_size++;
+        this->m.unlock();
+    }
+
+    TargetTaskEntryTy* pop_front() {
+        if(this->empty())
+            return nullptr;
+
+        TargetTaskEntryTy* ret_val = nullptr;
+
+        this->m.lock();
+        if(!this->empty()) {
+            this->list_size--;
+            ret_val = this->task_list.front();
+            this->task_list.pop_front();
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+
+    int64_t* get_task_ids(int32_t* num_ids) {
+        this->m.lock();
+        int64_t *vec = (int64_t *) malloc(this->task_list.size() * sizeof(int64_t));
+        *num_ids = this->task_list.size();
+        size_t count = 0;
+        for (std::list<TargetTaskEntryTy*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
+            vec[count] = (*it)->task_id;
+            count++;
+        }
+        this->m.unlock();
+        return vec;
+    }
+};
+
+template<class T>
+class thread_safe_list {
+    private:
+    
+    std::list<T> list;
+    std::mutex m;
+    // size_t list_size = 0;
+    std::atomic<size_t> list_size = 0;
+
+    public:
+
+    thread_safe_list() { }
+
+    size_t size() {
+        return this->list_size.load();
+    }
+
+    bool empty() {
+        return this->list_size <= 0;
+    }
+
+    void push_back(T* entry) {
+        this->m.lock();
+        this->list.push_back(entry);
+        this->list_size++;
+        this->m.unlock();
+    }
+
+    T pop_front() {
+        if(this->empty())
+            return NULL;
+
+        this->m.lock();
+        if(!this->empty()) {
+            this->list_size--;
+            ret_val = this->list.front();
+            this->list.pop_front();
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+};
 #pragma endregion
 
 #pragma region Variables

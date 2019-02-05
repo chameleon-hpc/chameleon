@@ -43,18 +43,15 @@ std::list<OffloadingDataEntryTy*> _data_entries;
 
 // list with local task entries
 // these can either be executed here or offloaded to a different rank
-std::mutex _mtx_local_tasks;
-std::list<TargetTaskEntryTy*> _local_tasks;
+thread_safe_task_list _local_tasks;
 std::atomic<int32_t> _num_local_tasks_outstanding(0);
 
 // list with stolen task entries that should be executed
-std::mutex _mtx_stolen_remote_tasks;
-std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+thread_safe_task_list _stolen_remote_tasks;
 std::atomic<int32_t> _num_stolen_tasks_outstanding(0);
 
 // list with stolen task entries that need output data transfer
-std::mutex _mtx_stolen_remote_tasks_send_back;
-std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
+thread_safe_task_list _stolen_remote_tasks_send_back;
 
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
 // map that maps tag id's back to local tasks that have been offloaded
@@ -460,9 +457,7 @@ static void receive_handler(void* buffer, int tag, int source) {
     task->source_mpi_tag    = tag;
 
     // add task to stolen list and increment counter
-    _mtx_stolen_remote_tasks.lock();
     _stolen_remote_tasks.push_back(task);
-    _mtx_stolen_remote_tasks.unlock();
 
     _mtx_load_exchange.lock();
     _num_stolen_tasks_outstanding++;
@@ -1257,11 +1252,29 @@ void* service_thread_action(void *arg) {
             VT_begin(event_exchange_outstanding);
 #endif
             _mtx_load_exchange.lock();
+            int32_t local_load_representation;
+            int32_t num_ids_local;
+            int64_t* ids_local = _local_tasks.get_task_ids(&num_ids_local);
+            int32_t num_ids_stolen;
+            int64_t* ids_stolen = _stolen_remote_tasks.get_task_ids(&num_ids_stolen);
+#if CHAMELEON_TOOL_SUPPORT
+            if(cham_t_status.enabled && cham_t_status.cham_t_callback_determine_local_load) {
+                local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+            } else {
+                local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+            }
+#else 
+            local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+#endif
+            // clean up again
+            free(ids_local);
+            free(ids_stolen);
+
             int tmp_val = _num_threads_idle.load() < _num_threads_involved_in_taskwait ? 1 : 0;
             // DBP("service_thread_action - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
             transported_load_values[0] = tmp_val;
             transported_load_values[1] = _outstanding_jobs_local.load();
-            transported_load_values[2] = _load_info_local;
+            transported_load_values[2] = local_load_representation;
             _mtx_load_exchange.unlock();
 
             if(_flag_comm_threads_sleeping) {
@@ -1447,15 +1460,11 @@ void* service_thread_action(void *arg) {
             continue;
         }
 
-        _mtx_stolen_remote_tasks_send_back.lock();
+        cur_task = _stolen_remote_tasks_send_back.pop_front();
         // need to check again
-        if(_stolen_remote_tasks_send_back.empty()) {
-            _mtx_stolen_remote_tasks_send_back.unlock();
+        if(!cur_task) {
             continue;
         }
-        cur_task = _stolen_remote_tasks_send_back.front();
-        _stolen_remote_tasks_send_back.pop_front();
-        _mtx_stolen_remote_tasks_send_back.unlock();
 
 #ifdef TRACE
         VT_begin(event_send_back);

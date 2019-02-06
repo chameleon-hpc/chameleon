@@ -970,9 +970,8 @@ inline int32_t process_local_task() {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
-    if(cur_task->is_manual_task) {
-        // TODO: cleanup target pointers
-    }
+    if(cur_task->is_manual_task)
+        free_manual_allocated_tgt_pointers(cur_task);
 
 #if OFFLOAD_BLOCKING
     _offload_blocked = 0;

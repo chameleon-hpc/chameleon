@@ -509,18 +509,21 @@ static void receive_back_handler(void* buffer, int tag, int source) {
        }
        free(buffer);
 #endif
-       _num_offloaded_tasks_outstanding--;
+        _num_offloaded_tasks_outstanding--;
 
-       // mark locally created task finished
-       _mtx_unfinished_locally_created_tasks.lock();
-       _unfinished_locally_created_tasks.remove(task_entry->task_id);
-       _mtx_unfinished_locally_created_tasks.unlock();
+        // mark locally created task finished
+        _mtx_unfinished_locally_created_tasks.lock();
+        _unfinished_locally_created_tasks.remove(task_entry->task_id);
+        _mtx_unfinished_locally_created_tasks.unlock();
 
-       // decrement counter if offloading + receiving results finished
-       _mtx_load_exchange.lock();
-       _num_local_tasks_outstanding--;
-       trigger_update_outstanding();
-       _mtx_load_exchange.unlock();
+        if(task_entry->is_manual_task)
+            free_manual_allocated_tgt_pointers(task_entry);
+
+        // decrement counter if offloading + receiving results finished
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
     }
 }
 #endif
@@ -657,6 +660,7 @@ void* offload_action(void *v_entry) {
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
+#if !OFFLOAD_CREATE_SEPARATE_THREAD
     request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
                                 requests,
                                 MPI_BLOCKING,
@@ -664,12 +668,13 @@ void* offload_action(void *v_entry) {
                                 send,
                                 buffer);
     delete[] requests;
+#endif
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
 
-    if(has_outputs) {
 #if OFFLOAD_CREATE_SEPARATE_THREAD
+    if(has_outputs) {
 #ifdef TRACE
         static int event_offload_wait_recv = -1;
         std::string event_offload_wait_recv_name = "offload_wait_recv";
@@ -719,30 +724,22 @@ void* offload_action(void *v_entry) {
 #ifdef TRACE
         VT_end(event_offload_wait_recv);
 #endif
-        // mark locally created task finished
-        _mtx_unfinished_locally_created_tasks.lock();
-        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
-        _mtx_unfinished_locally_created_tasks.unlock();
+    }
 
-        // decrement counter if offloading + receiving results finished
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
+    // mark locally created task finished
+    _mtx_unfinished_locally_created_tasks.lock();
+    _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
+    _mtx_unfinished_locally_created_tasks.unlock();
+
+    if(entry->task_entry->is_manual_task)
+        free_manual_allocated_tgt_pointers(entry->task_entry);
+
+    // decrement counter if offloading + receiving results finished
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding--;
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
 #endif
-    } /*else {
-        // mark locally created task finished
-        _mtx_unfinished_locally_created_tasks.lock();
-        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
-        _mtx_unfinished_locally_created_tasks.unlock();
-
-        // decrement counter if offloading finished
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
-    }*/
-
     DBP("offload_action (exit)\n");
     return nullptr;
 }
@@ -1551,6 +1548,18 @@ void* service_thread_action(void *arg) {
 #pragma endregion Thread Send / Service
 
 #pragma region Helper Functions
+void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task) {
+    // clean up manually allocated target pointers
+    if(task->is_manual_task) {
+        for(int i = 0; i < task->arg_num; i++) {
+            int is_lit = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            if(!is_lit) {
+                free(task->arg_tgt_pointers[i]);
+            }
+        }
+    }
+}
+
 int exit_condition_met(int print) {
     if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;

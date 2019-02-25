@@ -31,9 +31,13 @@ struct TargetTaskEntryTy {
     // Some special settings for stolen tasks
     int32_t source_mpi_rank = 0;
     int32_t source_mpi_tag = 0;
+    int32_t target_mpi_rank = -1;
+
+    // Mutex for either execution or receiving back/cancellation of a replicated task
+    std::atomic<bool> sync_commthread_lock;
 
     // Constructor 1: Called when creating new task during decoding
-    TargetTaskEntryTy() {
+    TargetTaskEntryTy() : sync_commthread_lock(false) {
         // here we dont need to give a task id in that case because it should be transfered from source
     }
 
@@ -43,7 +47,9 @@ struct TargetTaskEntryTy {
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
-        int32_t p_arg_num) {
+        int32_t p_arg_num) : sync_commthread_lock(false) {
+            //sync_commthread_lock= false; 
+
             // generate a unique task id
             int tmp_counter = ++_task_id_counter;
             // int tmp_rank = chameleon_comm_rank;

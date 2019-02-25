@@ -18,6 +18,12 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#ifndef CHAM_REPLICATION_MODE
+#define CHAM_REPLICATION_MODE 0 //no replication
+//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
+#endif
+
 #ifndef DPxMOD
 #define DPxMOD "0x%0*" PRIxPTR
 #endif
@@ -70,7 +76,12 @@ enum chameleon_result_types {
 
     CHAM_REMOTE_TASK_NONE = 5,
     CHAM_REMOTE_TASK_SUCCESS = 6,
-    CHAM_REMOTE_TASK_FAILURE = 7    
+    CHAM_REMOTE_TASK_FAILURE = 7,  
+
+    CHAM_REPLICATED_TASK_NONE = 8,
+    CHAM_REPLICATED_TASK_SUCCESS = 9,
+    CHAM_REPLICATED_TASK_ALREADY_AVAILABLE = 10,
+    CHAM_REPLICATED_TASK_FAILURE = 11 
 };
 
 enum chameleon_task_status {

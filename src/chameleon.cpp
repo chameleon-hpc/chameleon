@@ -2,6 +2,7 @@
 #include <mpi.h>
 #include <stdexcept>
 #include <algorithm>
+#include <cassert>
 #include <dlfcn.h>
 #include <link.h>
 
@@ -56,6 +57,7 @@ int32_t execute_target_task(TargetTaskEntryTy *task);
 int32_t process_local_task();
 int32_t process_remote_task();
 int32_t add_task_manual( void *entry_func,int nargs, MapEntry *args); 
+int32_t process_replicated_task();
 #pragma endregion Forward Declarations
 
 #pragma region Init / Finalize / Helper
@@ -67,10 +69,13 @@ TargetTaskEntryTy* CreateTargetTaskEntryTy(
         int32_t p_arg_num) {
 
     TargetTaskEntryTy *tmp_task = new TargetTaskEntryTy(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
+    assert(tmp_task->sync_commthread_lock.load()==false);
+    
     return tmp_task;
 }
 
 void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
+    assert(task->sync_commthread_lock.load()==false);
     task->idx_image = img_idx;
     task->entry_image_offset = entry_image_offset;
 }
@@ -119,6 +124,8 @@ int32_t chameleon_init() {
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_mapped");
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_load);
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_load");
+    err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_cancel);
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_cancel");
 
     DBP("chameleon_init\n");
 #ifdef CHAM_DEBUG
@@ -389,7 +396,32 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
             // try to execute a local task
             res = process_local_task();
+
+#if CHAM_REPLICATION_MODE>0
+            // if task has been executed successfully start from beginning
+            if(res == CHAM_LOCAL_TASK_SUCCESS)
+                continue;
+#endif
         }
+
+#if CHAM_REPLICATION_MODE>0
+        // ========== Prio 4: work on replicated tasks
+        if(!_replicated_tasks.empty()) {
+            
+            #if THREAD_ACTIVATION
+            if(this_thread_idle) {
+                // decrement counter again
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+                this_thread_idle = 0;
+            }
+            this_thread_num_attemps_standard_task = 0;
+            #endif
+
+            // try to execute a local task
+            res = process_replicated_task();
+        }
+#endif       
     }
 
     #if THREAD_ACTIVATION
@@ -520,7 +552,7 @@ void chameleon_free_data(void *tgt_ptr) {
     _mtx_data_entry.unlock();
 }
 
-int32_t chameleon_add_task(TargetTaskEntryTy *task) {
+int32_t chameleon_add_task(TargetTaskEntryTy *task) {  
     DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
@@ -847,13 +879,95 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
     return CHAM_SUCCESS;
 }
 
+inline int32_t process_replicated_task() {
+    DBP("process_replicated_task (enter)\n");
+    TargetTaskEntryTy *replicated_task = nullptr;
+   
+    if(_replicated_tasks.empty())
+        return CHAM_REPLICATED_TASK_NONE;
+        
+    _mtx_replicated_tasks.lock();
+    // for safety need to check again after lock is aquired
+    if(_replicated_tasks.empty()) {
+        _mtx_replicated_tasks.unlock();
+        return CHAM_REPLICATED_TASK_NONE;
+    }
+
+    replicated_task = _replicated_tasks.back();
+    bool expected = false;
+    bool desired = true;
+ 
+    //atomic CAS   
+    if(replicated_task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
+        //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
+        //remove task from queue
+        _replicated_tasks.pop_back();
+        _mtx_replicated_tasks.unlock();
+
+#ifdef TRACE
+        static int event_process_replicated = -1;
+        static const std::string event_process_replicated_name = "process_replicated";
+        if( event_process_replicated == -1) 
+            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated);
+        VT_begin(event_process_replicated);
+#endif  
+        
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif 
+
+#if CHAM_REPLICATION_MODE==2
+        //cancel task on remote ranks
+        cancel_offloaded_task(replicated_task);
+#endif
+
+        int32_t res = execute_target_task(replicated_task);
+        if(res != CHAM_SUCCESS)
+            handle_error_en(1, "execute_target_task - remote");
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+        _time_task_execution_replicated_count++;
+#endif
+
+        _num_replicated_tasks_outstanding--;
+#if CHAM_STATS_RECORD
+        _num_executed_tasks_replicated++;
+#endif
+      
+        // mark locally created task finished
+        _mtx_unfinished_locally_created_tasks.lock();
+        _unfinished_locally_created_tasks.remove(replicated_task->task_id);
+        _mtx_unfinished_locally_created_tasks.unlock();
+ 
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
+
+#ifdef TRACE
+        VT_end(event_process_replicated);
+#endif       
+    }       
+    else{
+        // leave task in the queue as it either already has been received back (and task will be removed soon)
+        // or the receive back is in progress (and after completion, task will be removed)
+        _mtx_replicated_tasks.unlock();
+        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
+    }
+
+    return CHAM_REPLICATED_TASK_SUCCESS;
+  
+    DBP("process_replicated_tasks (exit)\n");
+}
+
 inline int32_t process_remote_task() {
     DBP("process_remote_task (enter)\n");
     TargetTaskEntryTy *remote_task = nullptr;
 
     if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
-        
+
     _mtx_stolen_remote_tasks.lock();
     // for safety need to check again after lock is aquired
     if(_stolen_remote_tasks.empty()) {
@@ -869,10 +983,18 @@ inline int32_t process_remote_task() {
     VT_begin(event_process_remote);
 #endif
     remote_task = _stolen_remote_tasks.front();
-    _stolen_remote_tasks.pop_front();
-    _mtx_stolen_remote_tasks.unlock();
-
-    // execute region now
+           
+    bool expected = false;
+    bool desired = true;
+ 
+    //atomic CAS   
+    if(remote_task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
+        //now we can actually safely execute the remote task (we have reserved it, so it can't be cancelled anymore)
+        //remove task from queue
+        _stolen_remote_tasks.pop_front();
+        _mtx_stolen_remote_tasks.unlock();
+  
+        // execute region now
 #if CHAM_STATS_RECORD
     double cur_time = omp_get_wtime();
 #endif
@@ -884,36 +1006,50 @@ inline int32_t process_remote_task() {
     atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
     _time_task_execution_stolen_count++;
 #endif
+ 
+        _mtx_map_tag_to_stolen_task.lock();
+        _map_tag_to_stolen_task.erase(remote_task->task_id);
+        _mtx_map_tag_to_stolen_task.unlock();  
 
-    // decrement load counter
-    _mtx_load_exchange.lock();
-    _load_info_local--;
-    // trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
+        // decrement load counter
+        _mtx_load_exchange.lock();
+        _load_info_local--;
+        // trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
 
 #if OFFLOAD_BLOCKING
-    _offload_blocked = 0;
+        _offload_blocked = 0;
 #endif
 
-    if(remote_task->HasAtLeastOneOutput()) {
-        // just schedule it for sending back results if there is at least 1 output
-        _mtx_stolen_remote_tasks_send_back.lock();
-        _stolen_remote_tasks_send_back.push_back(remote_task);
-        _mtx_stolen_remote_tasks_send_back.unlock();
-    } else {
-        // we can now decrement outstanding counter because there is nothing to send back
-        _mtx_load_exchange.lock();
-        _num_stolen_tasks_outstanding--;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
-    }
+        if(remote_task->HasAtLeastOneOutput()) {
+            // just schedule it for sending back results if there is at least 1 output
+            _mtx_stolen_remote_tasks_send_back.lock();
+            _stolen_remote_tasks_send_back.push_back(remote_task);
+            _mtx_stolen_remote_tasks_send_back.unlock();
+        } else {
+            // we can now decrement outstanding counter because there is nothing to send back
+            _mtx_load_exchange.lock();
+            _num_stolen_tasks_outstanding--;
+            trigger_update_outstanding();
+            _mtx_load_exchange.unlock();
+        }
+
+        //_mtx_map_tag_to_stolen_task.lock();
+        //_map_tag_to_stolen_task.insert(std::make_pair(remote_task->task_id, remote_task));
+        //_mtx_map_tag_to_stolen_task.unlock();
 
 #if CHAM_STATS_RECORD
-    _num_executed_tasks_stolen++;
+        _num_executed_tasks_stolen++;
 #endif
 #ifdef TRACE
-    VT_end(event_process_remote);
+        VT_end(event_process_remote);
 #endif
+    }
+    else {
+        //entry is left in queue
+        _mtx_stolen_remote_tasks.unlock();
+        //TODO: new event flag as return value needed?
+    }
     return CHAM_REMOTE_TASK_SUCCESS;
 }
 

@@ -59,12 +59,14 @@ extern MPI_Comm chameleon_comm;
 extern MPI_Comm chameleon_comm_mapped;
 // communicator for load information
 extern MPI_Comm chameleon_comm_load;
+// communicator for task cancellation
+extern MPI_Comm chameleon_comm_cancel;
 
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
-extern RequestManager request_manager_send;
-extern RequestManager request_manager_receive;
+//extern RequestManager request_manager_send;
+//extern RequestManager request_manager_receive;
 
 extern std::vector<intptr_t> _image_base_addresses;
 
@@ -83,9 +85,18 @@ extern std::mutex _mtx_stolen_remote_tasks;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
 extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
 
+// list of replicated (i.e. offloaded) tasks
+// they can be executed either on the remote rank or on the local rank
+extern std::mutex _mtx_replicated_tasks;
+extern std::list<TargetTaskEntryTy*> _replicated_tasks;
+extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
+
 // list with stolen task entries that need output data transfer
 extern std::mutex _mtx_stolen_remote_tasks_send_back;
 extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
+
+extern std::mutex _mtx_map_tag_to_stolen_task;
+extern std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
 
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
@@ -126,6 +137,8 @@ extern "C" {
 void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx);
 
 void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx);
+
+void cancel_offloaded_task(TargetTaskEntryTy *task);
 
 int32_t offload_task_to_rank(OffloadEntryTy *entry);
 

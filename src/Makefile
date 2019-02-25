@@ -53,10 +53,13 @@ release:
 	cp chameleon_lib.mod $(INSTALL_DIR)/include/
 trace:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
-	$(MPI_CXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -o libchameleon.so $(CXX_COMP_FILES) $(LINKER_FLAGS) -trace
+	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
+	$(MPIF90) -g -O3 -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -c chameleon_lib.f90 
+	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS) -trace	
 	
 	cp chameleon.h $(INSTALL_DIR)/include/
 	cp libchameleon.so $(INSTALL_DIR)/lib/
+	cp chameleon_lib.mod $(INSTALL_DIR)/include/
 
 trace-debug:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start

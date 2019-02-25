@@ -270,6 +270,15 @@ int32_t chameleon_taskyield() {
  * Also provides the possibility for a nowait if there is a delay caused by stopping the comm threads
  */
 int32_t chameleon_distributed_taskwait(int nowait) {
+#ifdef TRACE
+    static int event_taskwait = -1;
+    std::string event_taskwait_name = "taskwait";
+    if(event_taskwait == -1) 
+        int ierr = VT_funcdef(event_taskwait_name.c_str(), VT_NOCLASS, &event_taskwait);
+
+     VT_begin(event_taskwait);
+#endif
+
     verify_initialized();
     DBP("chameleon_distributed_taskwait (enter)\n");
     
@@ -395,6 +404,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #pragma omp barrier
     }
 
+#ifdef TRACE
+    VT_end(event_taskwait);
+#endif
     return CHAM_SUCCESS;
 }
 #else
@@ -572,10 +584,21 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
 * As variadic function are not supported, this compatibility function is provided
 */
 int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void *args_info) {
-    
+
+#ifdef TRACE
+    static int event_add_task = -1;
+    static const std::string event_add_task_name = "add_task";
+    if( event_add_task == -1)
+        int ierr = VT_funcdef(event_add_task_name.c_str(), VT_NOCLASS, &event_add_task);
+    VT_begin(event_add_task);
+#endif
+  
     MapEntry *args_entries = (MapEntry *) args_info;
    
     add_task_manual(entry_point, num_args, args_entries);
+#ifdef TRACE
+    VT_end(event_add_task);
+#endif 
 }
 
 /*

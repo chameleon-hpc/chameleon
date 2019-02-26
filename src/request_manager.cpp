@@ -1,6 +1,7 @@
 #include "request_manager.h"
 
 #include <omp.h>
+#include <cassert>
 
 #define MAX_REQUESTS 100
 
@@ -19,7 +20,11 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
 #if CHAM_STATS_RECORD
      double time = -omp_get_wtime();
 #endif
-     MPI_Waitall(n_requests, &requests[0], MPI_STATUSES_IGNORE);
+     int ierr= MPI_Waitall(n_requests, &requests[0], MPI_STATUSES_IGNORE);
+     if(ierr!=MPI_SUCCESS) {
+        printf("MPI error: %d\n", ierr);
+     }
+     assert(ierr==MPI_SUCCESS);
 #if CHAM_STATS_RECORD
      time += omp_get_wtime();
      addTimingToStatistics(time, type); 

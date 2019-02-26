@@ -127,6 +127,12 @@ int32_t chameleon_init() {
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_cancel);
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_cancel");
 
+    MPI_Errhandler_set(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
+    MPI_Errhandler_set(chameleon_comm, MPI_ERRORS_RETURN);
+    MPI_Errhandler_set(chameleon_comm_mapped, MPI_ERRORS_RETURN);
+    MPI_Errhandler_set(chameleon_comm_cancel, MPI_ERRORS_RETURN);
+    MPI_Errhandler_set(chameleon_comm_load, MPI_ERRORS_RETURN);
+
     DBP("chameleon_init\n");
 #ifdef CHAM_DEBUG
     mem_allocated = 0;

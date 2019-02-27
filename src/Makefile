@@ -38,12 +38,19 @@ dbg:
 debug:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
 	$(MPICXX) -g -O0 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -DCHAM_DEBUG -c $(CXX_COMP_FILES) 
-	$(MPIF90) -g -O0 $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -DCHAM_DEBUG -c chameleon_lib.f90 
 	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS)
 	
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
 	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
 
+debug_fortran:
+	@# compile with target offloading to force image loading process, all target images should be loaded at program start
+	$(MPICXX) -g -O0 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -DCHAM_DEBUG -c $(CXX_COMP_FILES) 
+	$(MPIF90) -g -O0 $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -DCHAM_DEBUG -c chameleon_lib.f90 
+	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS)
+	
+	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
+	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
 release:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
 	@#$(MPICXX) -g -O3 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -o libchameleon.so $(CXX_COMP_FILES) $(LINKER_FLAGS)
@@ -66,10 +73,19 @@ release_fortran:
 trace:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
 	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
+	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS) -trace	
+	
+	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
+	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
+
+trace_fortran:
+	@# compile with target offloading to force image loading process, all target images should be loaded at program start
+	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
 	$(MPIF90) -g -O3 -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -c chameleon_lib.f90 
 	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS) -trace	
 	
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
+	cp $(FILES_COPY_INCLUDE_FORTRAN) $(INSTALL_DIR)/include/
 	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
 
 trace-debug:

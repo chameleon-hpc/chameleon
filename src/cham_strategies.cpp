@@ -98,4 +98,10 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
     }
 #endif
 }
+
+int32_t getDefaultLoadInformationForRank(int64_t* local_task_ids, int32_t num_ids_local, int64_t* stolen_task_ids, int32_t num_ids_stolen) {
+    // simply return number of tasks in queue
+    int32_t num_ids = num_ids_local + num_ids_stolen;
+    return num_ids;
+}
 #pragma endregion Strategies

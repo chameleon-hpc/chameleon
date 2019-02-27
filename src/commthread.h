@@ -8,51 +8,6 @@
 #include "chameleon_common.h"
 #include "request_manager.h"
 
-// Special version with 2 ranks where master (rank 0) is always offloading to rank 1
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
-#endif
-
-// Flag wether offloading in general is enabled or disabled
-#ifndef OFFLOAD_ENABLED
-#define OFFLOAD_ENABLED 1
-#endif
-
-// Allow offload as soon as sum of outstanding jobs has changed
-#ifndef OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
-#define OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED 1
-#endif
-
-// Just allow a single offload and block offload until a local or remote task has been executed and the local load has changed again
-#ifndef OFFLOAD_BLOCKING
-#define OFFLOAD_BLOCKING 0
-#endif
-
-// determines how data (arguments) is packed and send during offloading
-#ifndef OFFLOAD_DATA_PACKING_TYPE
-// #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
-#define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
-#endif
-
-// Create a separate thread for offloads that expect mapped data to be transfered back
-#ifndef OFFLOAD_CREATE_SEPARATE_THREAD
-#define OFFLOAD_CREATE_SEPARATE_THREAD 0
-#endif
-
-#ifndef THREAD_ACTIVATION
-#define THREAD_ACTIVATION 1
-#endif
-
-//Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
-#ifndef MPI_BLOCKING
-#define MPI_BLOCKING 0
-#endif
-
-//Specify whether tasks should be offloaded aggressively after one performance update
-#ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 0
-#endif
-
 // communicator for remote task requests
 extern MPI_Comm chameleon_comm;
 // communicator for sending back mapped values
@@ -76,24 +31,21 @@ extern std::list<OffloadingDataEntryTy*> _data_entries;
 
 // list with local task entries
 // these can either be executed here or offloaded to a different rank
-extern std::mutex _mtx_local_tasks;
-extern std::list<TargetTaskEntryTy*> _local_tasks;
+extern thread_safe_task_list _local_tasks;
 extern std::atomic<int32_t> _num_local_tasks_outstanding;
 
 // list with stolen task entries that should be executed
-extern std::mutex _mtx_stolen_remote_tasks;
-extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+extern thread_safe_task_list _stolen_remote_tasks;
 extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
 
 // list of replicated (i.e. offloaded) tasks
 // they can be executed either on the remote rank or on the local rank
 extern std::mutex _mtx_replicated_tasks;
-extern std::list<TargetTaskEntryTy*> _replicated_tasks;
+extern thread_safe_task_list _replicated_tasks;
 extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
-extern std::mutex _mtx_stolen_remote_tasks_send_back;
-extern std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
+extern thread_safe_task_list _stolen_remote_tasks_send_back;
 
 extern std::mutex _mtx_map_tag_to_stolen_task;
 extern std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
@@ -153,6 +105,8 @@ int32_t stop_communication_threads();
 void trigger_update_outstanding();
 
 int exit_condition_met(int print);
+
+void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task);
 
 #ifdef __cplusplus
 }

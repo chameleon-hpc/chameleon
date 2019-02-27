@@ -74,7 +74,7 @@
 
 //Specify whether tasks should be offloaded aggressively after one performance update
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 1
+#define OFFLOADING_STRATEGY_AGGRESSIVE 0
 #endif
 
 #ifndef CHAMELEON_TOOL_SUPPORT

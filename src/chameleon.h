@@ -32,6 +32,8 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+#define CHAMELEON_VERSION 10
+
 // TODO: fix that to have only one place where that is defined
 // copy of OpenMP target argument types
 enum chameleon_tgt_map_type {
@@ -61,12 +63,12 @@ enum chameleon_tgt_map_type {
   CHAM_OMP_TGT_MAPTYPE_MEMBER_OF       = 0xffff000000000000
 };
 
-enum chameleon_device_ids {
+typedef enum chameleon_device_ids_t {
   CHAMELEON_HOST    = 1001,
   CHAMELEON_MPI     = 1002,
-};
+} chameleon_device_ids_t;
 
-enum chameleon_result_types {
+typedef enum chameleon_result_types_t {
     CHAM_SUCCESS = 0,
     CHAM_FAILURE = 1,
 
@@ -82,18 +84,19 @@ enum chameleon_result_types {
     CHAM_REPLICATED_TASK_SUCCESS = 9,
     CHAM_REPLICATED_TASK_ALREADY_AVAILABLE = 10,
     CHAM_REPLICATED_TASK_FAILURE = 11 
-};
+} chameleon_result_types_t;
 
-enum chameleon_task_status {
+typedef enum chameleon_task_status_t {
     CHAM_TASK_STATUS_OPEN = 0,
     CHAM_TASK_STATUS_PROCESSING = 1,
     CHAM_TASK_STATUS_DONE = 2
-};
+} chameleon_task_status_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+// TODO: rename to target_task_entry_t
 struct TargetTaskEntryTy;
 typedef struct TargetTaskEntryTy TargetTaskEntryTy;
 
@@ -112,14 +115,20 @@ struct MapEntry;
 
 void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset);
 
+int64_t chameleon_get_task_id(TargetTaskEntryTy *task);
+
 // ================================================================================
 // External functions (that can be called from source code or libomptarget)
 // ================================================================================
 int32_t chameleon_init();
 
+int32_t chameleon_thread_init();
+
 int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address);
 
 int32_t chameleon_finalize();
+
+int32_t chameleon_thread_finalize();
 
 int32_t chameleon_distributed_taskwait(int nowait);
 
@@ -130,8 +139,6 @@ void chameleon_free_data(void *tgt_ptr);
 void chameleon_incr_mem_alloc(int64_t size);
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task);
-
-TargetTaskEntryTy* chameleon_pop_task();
 
 int32_t chameleon_get_last_local_task_id_added();
 

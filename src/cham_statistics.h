@@ -45,6 +45,11 @@ extern std::atomic<int>     _time_encode_count;
 extern std::atomic<double>  _time_decode_sum;
 extern std::atomic<int>     _time_decode_count;
 
+#if CHAMELEON_TOOL_SUPPORT
+extern std::atomic<double>  _time_tool_get_thread_data_sum;
+extern std::atomic<int>     _time_tool_get_thread_data_count;
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

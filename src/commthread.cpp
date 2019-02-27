@@ -1,9 +1,10 @@
 #include "commthread.h"
 #include "chameleon_common.h"
-#include "chameleon_common.cpp"
 #include "cham_statistics.h"
 #include "cham_strategies.h"
 #include "request_manager.h"
+#include "chameleon_tools.h"
+#include "chameleon_tools_internal.h"
 
 #include <pthread.h>
 #include <signal.h>
@@ -17,7 +18,9 @@
 
 #ifdef TRACE
 #include "VT.h"
-#endif 
+#endif
+
+#define CHAM_SPEEL_TIME_MICRO_SECS 20
 
 #pragma region Variables
 // communicator for remote task requests
@@ -50,28 +53,20 @@ std::list<OffloadingDataEntryTy*> _data_entries;
 
 // list with local task entries
 // these can either be executed here or offloaded to a different rank (i.e., become replicated tasks)
-std::mutex _mtx_local_tasks;
-std::list<TargetTaskEntryTy*> _local_tasks;
+thread_safe_task_list _local_tasks;
 std::atomic<int32_t> _num_local_tasks_outstanding(0);
 
 // list with stolen task entries that should be executed but may be cancelled if task is executed on origin rank
-std::mutex _mtx_stolen_remote_tasks;
-std::list<TargetTaskEntryTy*> _stolen_remote_tasks;
+thread_safe_task_list _stolen_remote_tasks;
 std::atomic<int32_t> _num_stolen_tasks_outstanding(0);
 
 // list with replicated (i.e. offloaded) task entries
 // these can either be executed remotely or locally
-std::mutex _mtx_replicated_tasks;
-std::list<TargetTaskEntryTy*> _replicated_tasks;
+thread_safe_task_list _replicated_tasks;
 std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
 
 // list with stolen task entries that need output data transfer
-std::mutex _mtx_stolen_remote_tasks_send_back;
-std::list<TargetTaskEntryTy*> _stolen_remote_tasks_send_back;
-
-// map that maps tag ids back to stolen tasks
-std::mutex _mtx_map_tag_to_stolen_task;
-std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
+thread_safe_task_list _stolen_remote_tasks_send_back;
 
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
 // map that maps tag ids back to local tasks that have been offloaded
@@ -330,7 +325,7 @@ int32_t put_comm_threads_to_sleep() {
     _flag_comm_threads_sleeping             = 1;
     // wait until thread sleeps
     while(!_comm_thread_service_stopped) {
-        usleep(10);
+        usleep(CHAM_SPEEL_TIME_MICRO_SECS);
     }
     // DBP("put_comm_threads_to_sleep - service thread stopped = %d\n", _comm_thread_service_stopped);
     _comm_threads_ended_count               = 0;
@@ -481,9 +476,7 @@ static void receive_handler(void* buffer, int tag, int source) {
     task->source_mpi_tag    = tag;
 
     // add task to stolen list and increment counter
-    _mtx_stolen_remote_tasks.lock();
     _stolen_remote_tasks.push_back(task);
-    _mtx_stolen_remote_tasks.unlock();
 
     _mtx_map_tag_to_stolen_task.lock();
     _map_tag_to_stolen_task.insert(std::make_pair(tag, task));
@@ -544,11 +537,14 @@ static void receive_back_handler(void* buffer, int tag, int source) {
        _unfinished_locally_created_tasks.remove(task_entry->task_id);
        _mtx_unfinished_locally_created_tasks.unlock();
 
-       // decrement counter if offloading + receiving results finished
-       _mtx_load_exchange.lock();
-       _num_local_tasks_outstanding--;
-       trigger_update_outstanding();
-       _mtx_load_exchange.unlock();
+        if(task_entry->is_manual_task)
+            free_manual_allocated_tgt_pointers(task_entry);
+
+        // decrement counter if offloading + receiving results finished
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
     }
 }
 #endif
@@ -587,11 +583,9 @@ int32_t offload_task_to_rank(OffloadEntryTy *entry) {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
-    _mtx_replicated_tasks.lock();
     _replicated_tasks.push_back(entry->task_entry);
     _num_replicated_tasks_outstanding++;
-    _mtx_replicated_tasks.unlock();
-    
+
     assert(entry->task_entry->sync_commthread_lock.load()==false);
     
 
@@ -712,6 +706,7 @@ void* offload_action(void *v_entry) {
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
+#if !OFFLOAD_CREATE_SEPARATE_THREAD
     request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
                                 requests,
                                 MPI_BLOCKING,
@@ -719,12 +714,13 @@ void* offload_action(void *v_entry) {
                                 send,
                                 buffer);
     delete[] requests;
+#endif
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
 
-    if(has_outputs) {
 #if OFFLOAD_CREATE_SEPARATE_THREAD
+    if(has_outputs) {
 #ifdef TRACE
         static int event_offload_wait_recv = -1;
         std::string event_offload_wait_recv_name = "offload_wait_recv";
@@ -739,7 +735,7 @@ void* offload_action(void *v_entry) {
 
         while(!flag) {
             MPI_Iprobe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &flag, &cur_status);
-            usleep(20);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
         }
 
         MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
@@ -779,24 +775,18 @@ void* offload_action(void *v_entry) {
         _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
         _mtx_unfinished_locally_created_tasks.unlock();
 
+
+    if(entry->task_entry->is_manual_task)
+        free_manual_allocated_tgt_pointers(entry->task_entry);
+
+
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
-#endif
-    } /*else {
-        // mark locally created task finished
-        _mtx_unfinished_locally_created_tasks.lock();
-        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
-        _mtx_unfinished_locally_created_tasks.unlock();
-
-        // decrement counter if offloading finished
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
-    }*/
+    }
+#endif 
 
     DBP("offload_action (exit)\n");
     return nullptr;
@@ -822,8 +812,6 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     //      7. array with length of argument pointers = n_args * int64_t
     //      8. array with values
 
-    // TODO: Is it worth while to consider MPI packed data types??
-
     int total_size = sizeof(intptr_t)           // 1. target entry pointer
         + sizeof(int32_t)                       // 2. img index
         + sizeof(ptrdiff_t)                     // 3. offset inside image
@@ -835,6 +823,16 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     for(int i = 0; i < task->arg_num; i++) {
         total_size += task->arg_sizes[i];
+    }
+#endif
+
+#if CHAMELEON_TOOL_SUPPORT
+    int32_t task_tool_buf_size = 0;
+    void *task_tool_buffer = nullptr;
+
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(task, &(task->task_tool_data), &task_tool_buf_size);
+        total_size += sizeof(int32_t) + task_tool_buf_size; // size information + buffer size
     }
 #endif
 
@@ -888,12 +886,25 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     }
 #endif
 
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        // remember size of buffer
+        ((int32_t *) cur_ptr)[0] = task_tool_buf_size;
+        cur_ptr += sizeof(int32_t);
+
+        memcpy(cur_ptr, task_tool_buffer, task_tool_buf_size);
+        cur_ptr += task_tool_buf_size;
+        // clean up again
+        free(task_tool_buffer);
+    }
+#endif
+
     // set output size
     *buffer_size = total_size;
 #ifdef TRACE
     VT_end(event_encode);
 #endif
-    return buff;    
+    return buff;
 }
 
 TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
@@ -907,7 +918,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
     // init new task
     TargetTaskEntryTy* task = new TargetTaskEntryTy();
     // actually we use the global task id as tag
-    task->task_id = mpi_tag;
+    task->task_id           = mpi_tag;
+    task->is_remote_task    = 1;
 
     // current pointer position
     char *cur_ptr = (char*) buffer;
@@ -967,6 +979,8 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
             memcpy(new_mem, cur_ptr, task->arg_sizes[i]);
             task->arg_hst_pointers[i] = new_mem;
         }
+        // increment pointer
+        cur_ptr += task->arg_sizes[i];
 #elif OFFLOAD_DATA_PACKING_TYPE == 1
         // copy value from host pointer directly
         if(!is_lit) {
@@ -976,8 +990,17 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
         }
 #endif
         print_arg_info("decode_send_buffer", task, i);
-        cur_ptr += task->arg_sizes[i];
     }
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+        // first get size of buffer
+        int32_t task_tool_buf_size = ((int32_t *) cur_ptr)[0];
+        cur_ptr += sizeof(int32_t);
+        cham_t_status.cham_t_callback_decode_task_tool_data(task, &(task->task_tool_data), (void*)cur_ptr, task_tool_buf_size);
+    }
+#endif
+
 #ifdef TRACE
     VT_end(event_decode);
 #endif 
@@ -1016,7 +1039,7 @@ void* receive_remote_tasks(void* arg) {
     while(true) {
         request_manager_receive.progressRequests();
 
-        // check transmission and make sure that buffer has enough memory
+        // first check transmission and make sure that buffer has enough memory
         MPI_Status cur_status_receive;
         int flag_open_request_receive = 0;
  
@@ -1030,7 +1053,7 @@ void* receive_remote_tasks(void* arg) {
                 DBP("receive_remote_tasks - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(20);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             // DBP("receive_remote_tasks - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
@@ -1053,7 +1076,7 @@ void* receive_remote_tasks(void* arg) {
 
             while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
 #endif
-                usleep(5);
+                usleep(CHAM_SPEEL_TIME_MICRO_SECS);
                 request_manager_receive.progressRequests();            
                 // check whether thread should be aborted
                 if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
@@ -1106,9 +1129,7 @@ void* receive_remote_tasks(void* arg) {
  
               if(task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
                 DBP("receive_remote_tasks - cancelling task with task_id %d\n", task_id);
-                _mtx_stolen_remote_tasks.lock();
                 _stolen_remote_tasks.remove(task);
-                _mtx_stolen_remote_tasks.unlock();
   
                 
                 _mtx_map_tag_to_stolen_task.lock();
@@ -1158,16 +1179,14 @@ void* receive_remote_tasks(void* arg) {
                 //atomic CAS   
                 if(exchanged) {
                     DBP("receive_remote_tasks - posting receive requests for task with id %d\n", task_entry->task_id);
-                    //remove from replicated task queue -> corresponds to local task cancellation
-                    _mtx_replicated_tasks.lock();                    
+                    //remove from replicated task queue -> corresponds to local task cancellation                   
                     _replicated_tasks.remove(task_entry);
-                    _mtx_replicated_tasks.unlock();
 
                     //we can safely receive back as usual
 #if OFFLOAD_DATA_PACKING_TYPE == 0
                     //entry is removed in receiveBackHandler!
                     // receive data back
-	                MPI_Get_count(&cur_status_receiveBack, MPI_BYTE, &recv_buff_size);
+	            MPI_Get_count(&cur_status_receiveBack, MPI_BYTE, &recv_buff_size);
                     buffer = malloc(recv_buff_size);
 #ifdef TRACE
                     VT_begin(event_recv_back);
@@ -1364,6 +1383,7 @@ void* service_thread_action(void *arg) {
 
     int transported_load_values[3];
     int * buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
+    std::vector<int32_t> tasksToOffload(chameleon_comm_size);
 
     DBP("service_thread_action (enter)\n");
     while(true) {
@@ -1381,7 +1401,7 @@ void* service_thread_action(void *arg) {
                 DBP("service_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(5);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             // DBP("service_thread_action - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("service_thread_action (abort)\n");
@@ -1407,11 +1427,29 @@ void* service_thread_action(void *arg) {
             VT_begin(event_exchange_outstanding);
 #endif
             _mtx_load_exchange.lock();
+            int32_t local_load_representation;
+            int32_t num_ids_local;
+            int64_t* ids_local = _local_tasks.get_task_ids(&num_ids_local);
+            int32_t num_ids_stolen;
+            int64_t* ids_stolen = _stolen_remote_tasks.get_task_ids(&num_ids_stolen);
+#if CHAMELEON_TOOL_SUPPORT
+            if(cham_t_status.enabled && cham_t_status.cham_t_callback_determine_local_load) {
+                local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+            } else {
+                local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+            }
+#else 
+            local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+#endif
+            // clean up again
+            free(ids_local);
+            free(ids_stolen);
+
             int tmp_val = _num_threads_idle.load() < _num_threads_involved_in_taskwait ? 1 : 0;
             // DBP("service_thread_action - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
             transported_load_values[0] = tmp_val;
             transported_load_values[1] = _outstanding_jobs_local.load();
-            transported_load_values[2] = _load_info_local;
+            transported_load_values[2] = local_load_representation;
             _mtx_load_exchange.unlock();
 
             if(_flag_comm_threads_sleeping) {
@@ -1517,13 +1555,9 @@ void* service_thread_action(void *arg) {
         #endif
 
 #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
-
-        _mtx_local_tasks.lock();
-        int cur_local_tasks = _local_tasks.size();
-        _mtx_local_tasks.unlock();
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
-        if(_comm_thread_load_exchange_happend && cur_local_tasks > 1 && !offload_triggered) {
+        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
 
 #if OFFLOAD_BLOCKING
             if(!_offload_blocked) {
@@ -1540,47 +1574,58 @@ void* service_thread_action(void *arg) {
             // - Sorted approach: rank with highest load should offload to rank with minimal load
             // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
             
-            // check other ranks whether there is a rank with low load; start at current position
-            for(int k = 1; k < chameleon_comm_size; k++) {
-                int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
-                if(_load_info_ranks[tmp_idx] == 0) {
-                    // Direct offload if thread found that has nothing to do
-                    TargetTaskEntryTy *cur_task = chameleon_pop_task();
-                    if(cur_task == nullptr)
-                        break;
-#ifdef TRACE
-            VT_end(event_offload_decision);
-#endif
-                    DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
-                    OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
-                    offload_task_to_rank(off_entry);
-                    offload_triggered = 1;
+//            // check other ranks whether there is a rank with low load; start at current position
+//            for(int k = 1; k < chameleon_comm_size; k++) {
+//                 int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
+//                 if(_load_info_ranks[tmp_idx] == 0) {
+//                     // Direct offload if thread found that has nothing to do
+//                     TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+//                     if(cur_task == nullptr)
+//                         break;
+// #ifdef TRACE
+//             VT_end(event_offload_decision);
+// #endif
+//                     DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
+//                     OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
+//                     offload_task_to_rank(off_entry);
+//                     offload_triggered = 1;
+// #if OFFLOAD_BLOCKING
+//                     _offload_blocked = 1;
+// #endif
+//                     break;
+//                 }
+//             }
 
-#if OFFLOAD_BLOCKING
-                    _offload_blocked = 1;
-#endif
-                    break;
-                }
-            }
             // only proceed if offloading not already performed
             if(!offload_triggered) {
-                std::vector<int32_t> tasksToOffload(chameleon_comm_size);
+                // reset values to zero
+                std::fill(tasksToOffload.begin(), tasksToOffload.end(), 0);
+#if CHAMELEON_TOOL_SUPPORT
+            if(cham_t_status.enabled && cham_t_status.cham_t_callback_compute_num_task_to_offload) {
+                cham_t_status.cham_t_callback_compute_num_task_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
+            } else {
                 computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
-                for(int r=0; r<tasksToOffload.size(); r++) { 
-                    int targetOffloadedTasks = tasksToOffload[r];
-                    for(int t=0; t<targetOffloadedTasks; t++) {       
-                        TargetTaskEntryTy *cur_task = chameleon_pop_task();
-                        if(cur_task) {
-#ifdef TRACE
-                            VT_end(event_offload_decision);
+            }
+#else 
+            computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
 #endif
-                            DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
-                            OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, r);
-                            offload_task_to_rank(off_entry);
-                            offload_triggered = 1;
+                for(int r=0; r<tasksToOffload.size(); r++) { 
+                    if(r != chameleon_comm_rank) {
+                        int targetOffloadedTasks = tasksToOffload[r];
+                        for(int t=0; t<targetOffloadedTasks; t++) {
+                            TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+                            if(cur_task) {
+#ifdef TRACE
+                                VT_end(event_offload_decision);
+#endif
+                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
+                                OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, r);
+                                offload_task_to_rank(off_entry);
+                                offload_triggered = 1;
 #if OFFLOAD_BLOCKING
                                 _offload_blocked = 1;
 #endif
+                            }
                         }
                     }
                 }
@@ -1597,19 +1642,15 @@ void* service_thread_action(void *arg) {
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
-            usleep(5);
+            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
             continue;
         }
 
-        _mtx_stolen_remote_tasks_send_back.lock();
+        cur_task = _stolen_remote_tasks_send_back.pop_front();
         // need to check again
-        if(_stolen_remote_tasks_send_back.empty()) {
-            _mtx_stolen_remote_tasks_send_back.unlock();
+        if(!cur_task) {
             continue;
         }
-        cur_task = _stolen_remote_tasks_send_back.front();
-        _stolen_remote_tasks_send_back.pop_front();
-        _mtx_stolen_remote_tasks_send_back.unlock();
 
 #ifdef TRACE
         VT_begin(event_send_back);
@@ -1682,6 +1723,18 @@ void* service_thread_action(void *arg) {
 #pragma endregion Thread Send / Service
 
 #pragma region Helper Functions
+void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task) {
+    // clean up manually allocated target pointers
+    if(task->is_manual_task) {
+        for(int i = 0; i < task->arg_num; i++) {
+            int is_lit = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            if(!is_lit) {
+                free(task->arg_tgt_pointers[i]);
+            }
+        }
+    }
+}
+
 int exit_condition_met(int print) {
     if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;

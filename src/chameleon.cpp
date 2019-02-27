@@ -998,14 +998,12 @@ inline int32_t process_replicated_task() {
     if(_replicated_tasks.empty())
         return CHAM_REPLICATED_TASK_NONE;
         
-    _mtx_replicated_tasks.lock();
-    // for safety need to check again after lock is aquired
-    if(_replicated_tasks.empty()) {
-        _mtx_replicated_tasks.unlock();
-        return CHAM_REPLICATED_TASK_NONE;
-    }
 
     replicated_task = _replicated_tasks.back();
+    
+    if(replicated_task==nullptr)
+        return CHAM_REPLICATED_TASK_NONE;
+
     bool expected = false;
     bool desired = true;
  
@@ -1014,7 +1012,6 @@ inline int32_t process_replicated_task() {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
         //remove task from queue
         _replicated_tasks.pop_back();
-        _mtx_replicated_tasks.unlock();
 
 #ifdef TRACE
         static int event_process_replicated = -1;
@@ -1064,7 +1061,6 @@ inline int32_t process_replicated_task() {
     else{
         // leave task in the queue as it either already has been received back (and task will be removed soon)
         // or the receive back is in progress (and after completion, task will be removed)
-        _mtx_replicated_tasks.unlock();
         return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
     }
 
@@ -1082,10 +1078,6 @@ inline int32_t process_remote_task() {
         return CHAM_REMOTE_TASK_NONE;
 
     remote_task = _stolen_remote_tasks.pop_front();
-    // for safety need to check again after lock is aquired
-    if(!remote_task) {
-        return CHAM_REMOTE_TASK_NONE;
-    }
 
 #ifdef TRACE
     static int event_process_remote = -1;

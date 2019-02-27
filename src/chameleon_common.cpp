@@ -31,7 +31,7 @@ TargetTaskEntryTy::TargetTaskEntryTy(
     void **p_tgt_args, 
     ptrdiff_t *p_tgt_offsets, 
     int64_t *p_tgt_arg_types, 
-    int32_t p_arg_num) {
+    int32_t p_arg_num) : sync_commthread_lock(false) {
         
     // generate a unique task id
     int tmp_counter = ++_task_id_counter;

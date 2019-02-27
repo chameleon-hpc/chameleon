@@ -40,7 +40,6 @@ extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
 
 // list of replicated (i.e. offloaded) tasks
 // they can be executed either on the remote rank or on the local rank
-extern std::mutex _mtx_replicated_tasks;
 extern thread_safe_task_list _replicated_tasks;
 extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
 

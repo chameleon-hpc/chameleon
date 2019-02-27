@@ -74,7 +74,7 @@
 
 //Specify whether tasks should be offloaded aggressively after one performance update
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
-#define OFFLOADING_STRATEGY_AGGRESSIVE 0
+#define OFFLOADING_STRATEGY_AGGRESSIVE 1
 #endif
 
 #ifndef CHAMELEON_TOOL_SUPPORT
@@ -123,7 +123,7 @@ typedef struct TargetTaskEntryTy {
     int32_t target_mpi_rank = -1;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
-    std::atomic<bool> sync_commthread_lock;
+    std::atomic<bool> sync_commthread_lock = false;
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t task_tool_data;
@@ -230,6 +230,7 @@ class thread_safe_task_list {
     void remove(TargetTaskEntryTy* task) {
         this->m.lock();
         this->task_list.remove(task);
+        this->list_size--;
         this->m.unlock();
     }
 

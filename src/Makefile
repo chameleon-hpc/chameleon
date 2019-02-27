@@ -9,7 +9,8 @@ CXX_COMPILE_FLAGS=-std=c++11 -fpic -shared
 F_COMP_FILES=chameleon_lib.f90
 F90_COMPILE_FLAGS=-fpic
 
-FILES_COPY_INCLUDE=chameleon.h chameleon_tools.h chameleon_lib.mod
+FILES_COPY_INCLUDE=chameleon.h chameleon_tools.h 
+FILE_COPY_INCLUDE_FORTRAN=chameleon_lib.mod
 FILES_COPY_LIB=libchameleon.so
 
 # ===== Clang compiler
@@ -47,12 +48,21 @@ release:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
 	@#$(MPICXX) -g -O3 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -o libchameleon.so $(CXX_COMP_FILES) $(LINKER_FLAGS)
 	$(MPICXX) -g -O3 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES) 
-	$(MPIF90) -g -O3 $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -c chameleon_lib.f90 
 	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS)	
 
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
 	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
 
+release_fortran:
+	@# compile with target offloading to force image loading process, all target images should be loaded at program start
+	@#$(MPICXX) -g -O3 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -o libchameleon.so $(CXX_COMP_FILES) $(LINKER_FLAGS)
+	$(MPICXX) -g -O3 $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES) 
+	$(MPIF90) -g -O3 $(FLAGS_OPENMP) $(F90_COMPILE_FLAGS) -c chameleon_lib.f90 
+	$(MPICXX) $(CXX_COMPILE_FLAGS) -shared *.o -o libchameleon.so $(LINKER_FLAGS)	
+
+	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
+	cp $(FILES_COPY_INCLUDE_FORTRAN) $(INSTALL_DIR)/include/
+	cp $(FILES_COPY_LIB) $(INSTALL_DIR)/lib/
 trace:
 	@# compile with target offloading to force image loading process, all target images should be loaded at program start
 	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(FLAGS_OPENMP) $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)

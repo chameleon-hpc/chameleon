@@ -69,6 +69,10 @@ std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
 thread_safe_task_list _stolen_remote_tasks_send_back;
 
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
+// map that maps tag ids back to stolen tasks
+std::mutex _mtx_map_tag_to_stolen_task;
+std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
+
 // map that maps tag ids back to local tasks that have been offloaded
 std::mutex _mtx_map_tag_to_local_task;
 std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_local_task;

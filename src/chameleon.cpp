@@ -687,7 +687,8 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
     add_task_manual(entry_point, num_args, args_entries);
 #ifdef TRACE
     VT_end(event_add_task);
-#endif 
+#endif
+    return CHAM_SUCCESS;
 }
 
 /*

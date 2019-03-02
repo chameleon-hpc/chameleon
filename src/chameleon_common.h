@@ -120,10 +120,10 @@ typedef struct TargetTaskEntryTy {
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
     int32_t source_mpi_tag      = 0;
-    int32_t target_mpi_rank = -1;
+    int32_t target_mpi_rank     = -1;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
-    std::atomic<bool> sync_commthread_lock = false;
+    std::atomic<bool> sync_commthread_lock;
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t task_tool_data;
@@ -206,11 +206,11 @@ class thread_safe_task_list {
     std::list<TargetTaskEntryTy*> task_list;
     std::mutex m;
     // size_t list_size = 0;
-    std::atomic<size_t> list_size = 0;
+    std::atomic<size_t> list_size;
 
     public:
 
-    thread_safe_task_list() { }
+    thread_safe_task_list() { list_size = 0; }
 
     size_t size() {
         return this->list_size.load();
@@ -313,11 +313,11 @@ class thread_safe_list {
     std::list<T> list;
     std::mutex m;
     // size_t list_size = 0;
-    std::atomic<size_t> list_size = 0;
+    std::atomic<size_t> list_size;
 
     public:
 
-    thread_safe_list() { }
+    thread_safe_list() { list_size = 0; }
 
     size_t size() {
         return this->list_size.load();
@@ -343,6 +343,8 @@ class thread_safe_list {
     T pop_front() {
         if(this->empty())
             return NULL;
+
+        T ret_val;
 
         this->m.lock();
         if(!this->empty()) {

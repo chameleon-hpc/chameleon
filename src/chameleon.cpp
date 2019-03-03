@@ -999,7 +999,6 @@ inline int32_t process_replicated_task() {
     if(_replicated_tasks.empty())
         return CHAM_REPLICATED_TASK_NONE;
         
-
     replicated_task = _replicated_tasks.back();
     
     if(replicated_task==nullptr)
@@ -1079,6 +1078,9 @@ inline int32_t process_remote_task() {
         return CHAM_REMOTE_TASK_NONE;
 
     remote_task = _stolen_remote_tasks.pop_front();
+
+    if(!remote_task)
+        return CHAM_REMOTE_TASK_NONE;
 
 #ifdef TRACE
     static int event_process_remote = -1;

@@ -18,12 +18,6 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#ifndef CHAM_REPLICATION_MODE
-#define CHAM_REPLICATION_MODE 0 //no replication
-//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
-//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
-#endif
-
 #ifndef DPxMOD
 #define DPxMOD "0x%0*" PRIxPTR
 #endif
@@ -96,26 +90,20 @@ typedef enum chameleon_task_status_t {
 extern "C" {
 #endif
 
-// TODO: rename to target_task_entry_t
-struct TargetTaskEntryTy;
-typedef struct TargetTaskEntryTy TargetTaskEntryTy;
+// opaque object representing migratable task
+struct cham_migratable_task_t;
+typedef struct cham_migratable_task_t cham_migratable_task_t;
 
-struct OffloadEntryTy;
-
-struct OffloadingDataEntryTy;
-
-extern TargetTaskEntryTy* CreateTargetTaskEntryTy(
+extern cham_migratable_task_t* CreateMigratableTask(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num);
-        
-struct MapEntry;
 
-void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset);
+void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset);
 
-int64_t chameleon_get_task_id(TargetTaskEntryTy *task);
+int64_t chameleon_get_task_id(cham_migratable_task_t *task);
 
 // ================================================================================
 // External functions (that can be called from source code or libomptarget)
@@ -138,7 +126,7 @@ void chameleon_free_data(void *tgt_ptr);
 
 void chameleon_incr_mem_alloc(int64_t size);
 
-int32_t chameleon_add_task(TargetTaskEntryTy *task);
+int32_t chameleon_add_task(cham_migratable_task_t *task);
 
 int32_t chameleon_get_last_local_task_id_added();
 

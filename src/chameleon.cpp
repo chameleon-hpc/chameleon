@@ -38,9 +38,9 @@ __thread int32_t __last_task_id_added = -1;
 // list with data that has been mapped in map clauses
 std::mutex _mtx_data_entry;
 #if DATA_ENTRY_APPROACH == 0
-std::list<OffloadingDataEntryTy*> _data_entries;
+std::list<migratable_data_entry_t*> _data_entries;
 #else
-std::unordered_map<void*, OffloadingDataEntryTy*> _data_entries;
+std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
 #endif
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
@@ -56,36 +56,36 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
-int32_t lookup_hst_pointers(TargetTaskEntryTy *task);
-// int32_t add_offload_entry(TargetTaskEntryTy *task, int rank);
-int32_t execute_target_task(TargetTaskEntryTy *task);
+int32_t lookup_hst_pointers(cham_migratable_task_t *task);
+// int32_t add_offload_entry(cham_migratable_task_t *task, int rank);
+int32_t execute_target_task(cham_migratable_task_t *task);
 int32_t process_local_task();
 int32_t process_remote_task();
-int32_t add_task_manual( void *entry_func,int nargs, MapEntry *args); 
+int32_t add_task_manual( void *entry_func,int nargs, map_data_entry_t *args); 
 int32_t process_replicated_task();
 #pragma endregion Forward Declarations
 
 #pragma region Init / Finalize / Helper
-TargetTaskEntryTy* CreateTargetTaskEntryTy(
+cham_migratable_task_t* CreateMigratableTask(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num) {
 
-    TargetTaskEntryTy *tmp_task = new TargetTaskEntryTy(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
+    cham_migratable_task_t *tmp_task = new cham_migratable_task_t(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
     assert(tmp_task->sync_commthread_lock.load()==false);
     
     return tmp_task;
 }
 
-void chameleon_set_img_idx_offset(TargetTaskEntryTy *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
+void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
     assert(task->sync_commthread_lock.load()==false);
     task->idx_image = img_idx;
     task->entry_image_offset = entry_image_offset;
 }
 
-int64_t chameleon_get_task_id(TargetTaskEntryTy *task) {
+int64_t chameleon_get_task_id(cham_migratable_task_t *task) {
     return task->task_id;
 }
 
@@ -538,7 +538,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
        
 //         // ========== Prio 3: work on local tasks
 //         if(!_local_tasks.empty()) {
-//             TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+//             cham_migratable_task_t *cur_task = _local_tasks.pop_front();
 //             if(cur_task == nullptr)
 //             {
 //                 continue;
@@ -547,7 +547,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 //             // force offloading to test MPI communication process (will be done by comm thread later)
 //             if(cur_task) {
 //                 // create temp entry and offload
-//                 OffloadEntryTy *off_entry = new OffloadEntryTy(cur_task, 1);
+//                 offload_entry_t *off_entry = new offload_entry_t(cur_task, 1);
 //                 res = offload_task_to_rank(off_entry);
 //             }
 //         } else {
@@ -614,7 +614,7 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     if(!found) {
         DBP("chameleon_submit_data - new entry for tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
         // add it to list
-        OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
+        migratable_data_entry_t *new_entry = new migratable_data_entry_t(tgt_ptr, hst_ptr, size);
         // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
         _data_entries.push_back(new_entry);
     }
@@ -622,11 +622,11 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
 #else
     // maybe we need to compare all parameters ==> then we need to come up with a splitted maps and a key generated from parameters
     _mtx_data_entry.lock();
-    std::unordered_map<void* ,OffloadingDataEntryTy*>::const_iterator got = _data_entries.find(tgt_ptr);
+    std::unordered_map<void* ,migratable_data_entry_t*>::const_iterator got = _data_entries.find(tgt_ptr);
     bool match = got!=_data_entries.end();
     if(!match) {
         DBP("chameleon_submit_data - new entry for tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
-        OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
+        migratable_data_entry_t *new_entry = new migratable_data_entry_t(tgt_ptr, hst_ptr, size);
         _data_entries.insert(std::make_pair(tgt_ptr, new_entry));
     }
     _mtx_data_entry.unlock();
@@ -670,7 +670,7 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 }
 
-int32_t chameleon_add_task(TargetTaskEntryTy *task) {
+int32_t chameleon_add_task(cham_migratable_task_t *task) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     // perform lookup in both cases (local execution & offload)
@@ -728,7 +728,7 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
     VT_begin(event_add_task);
 #endif
   
-    MapEntry *args_entries = (MapEntry *) args_info;
+    map_data_entry_t *args_entries = (map_data_entry_t *) args_info;
    
     add_task_manual(entry_point, num_args, args_entries);
 #ifdef TRACE
@@ -740,7 +740,7 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
 /*
 * Helper function that adds task when arguments are provided as an array of MapEntries
 */
-int32_t add_task_manual( void *entry_point, int num_args, MapEntry *args) {
+int32_t add_task_manual( void *entry_point, int num_args, map_data_entry_t *args) {
 
     // Format of variable input args should always be:
     // 1. void* to data entry
@@ -776,7 +776,7 @@ int32_t add_task_manual( void *entry_point, int num_args, MapEntry *args) {
         chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
     }
 
-    TargetTaskEntryTy *tmp_task = CreateTargetTaskEntryTy(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
+    cham_migratable_task_t *tmp_task = CreateMigratableTask(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
     // calculate offset to base address
     intptr_t base_address = _image_base_addresses[99];
     ptrdiff_t diff = (intptr_t) entry_point - base_address;
@@ -831,7 +831,7 @@ int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {
     }
     va_end (args);
 
-    TargetTaskEntryTy *tmp_task = CreateTargetTaskEntryTy(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
+    cham_migratable_task_t *tmp_task = CreateMigratableTask(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
     // calculate offset to base address
     intptr_t base_address = _image_base_addresses[99];
     ptrdiff_t diff = (intptr_t) entry_point - base_address;
@@ -849,7 +849,7 @@ int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {
 #pragma endregion Fcns for Data and Tasks
 
 #pragma region Fcns for Lookups and Execution
-int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
+int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
     DBP("lookup_hst_pointers (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     for(int i = 0; i < task->arg_num; i++) {
         // get type and pointer
@@ -883,10 +883,10 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
                     }
                 }
 #else
-                std::unordered_map<void* ,OffloadingDataEntryTy*>::const_iterator got = _data_entries.find(tmp_tgt_ptr);
+                std::unordered_map<void* ,migratable_data_entry_t*>::const_iterator got = _data_entries.find(tmp_tgt_ptr);
                 found = got!=_data_entries.end() ? 1 : 0;
                 if(found) {
-                    OffloadingDataEntryTy* entry    = got->second;
+                    migratable_data_entry_t* entry    = got->second;
                     task->arg_sizes[i]              = entry->size;
                     task->arg_hst_pointers[i]       = entry->hst_ptr;
                 }
@@ -944,7 +944,7 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
     return CHAM_SUCCESS;
 }
 
-int32_t execute_target_task(TargetTaskEntryTy *task) {
+int32_t execute_target_task(cham_migratable_task_t *task) {
     DBP("execute_target_task (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
@@ -978,7 +978,7 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
         return CHAM_FAILURE;
     }
 
-    TargetTaskEntryTy *prior_task = __thread_data[gtid].current_task;
+    cham_migratable_task_t *prior_task = __thread_data[gtid].current_task;
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_schedule) {
@@ -1041,7 +1041,7 @@ int32_t execute_target_task(TargetTaskEntryTy *task) {
 
 inline int32_t process_replicated_task() {
     DBP("process_replicated_task (enter)\n");
-    TargetTaskEntryTy *replicated_task = nullptr;
+    cham_migratable_task_t *replicated_task = nullptr;
    
     if(_replicated_tasks.empty())
         return CHAM_REPLICATED_TASK_NONE;
@@ -1122,7 +1122,7 @@ inline int32_t process_replicated_task() {
 inline int32_t process_remote_task() {
     DBP("process_remote_task (enter)\n");
     
-    TargetTaskEntryTy *remote_task = nullptr;
+    cham_migratable_task_t *remote_task = nullptr;
 
     if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
@@ -1188,7 +1188,7 @@ inline int32_t process_remote_task() {
 }
 
 inline int32_t process_local_task() {
-    TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+    cham_migratable_task_t *cur_task = _local_tasks.pop_front();
     if(!cur_task)
         return CHAM_LOCAL_TASK_NONE;
 

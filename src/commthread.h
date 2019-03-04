@@ -43,7 +43,7 @@ extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
 extern thread_safe_task_list _stolen_remote_tasks_send_back;
 
 extern std::mutex _mtx_map_tag_to_stolen_task;
-extern std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
+extern std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_stolen_task;
 
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
@@ -81,13 +81,13 @@ extern int _num_ranks_not_completely_idle;
 extern "C" {
 #endif
 
-void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx);
+void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx);
 
-void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx);
+void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int idx);
 
-void cancel_offloaded_task(TargetTaskEntryTy *task);
+void cancel_offloaded_task(cham_migratable_task_t *task);
 
-int32_t offload_task_to_rank(OffloadEntryTy *entry);
+int32_t offload_task_to_rank(offload_entry_t *entry);
 
 void* receive_remote_tasks(void *arg);
 
@@ -101,7 +101,7 @@ void trigger_update_outstanding();
 
 int exit_condition_met(int print);
 
-void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task);
+void free_manual_allocated_tgt_pointers(cham_migratable_task_t* task);
 
 #ifdef __cplusplus
 }

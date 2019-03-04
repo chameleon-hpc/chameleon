@@ -26,7 +26,7 @@ int32_t __ch_get_gtid() {
     return __ch_gtid;
 }
 
-TargetTaskEntryTy::TargetTaskEntryTy(
+cham_migratable_task_t::cham_migratable_task_t(
     void *p_tgt_entry_ptr, 
     void **p_tgt_args, 
     ptrdiff_t *p_tgt_offsets, 
@@ -37,7 +37,7 @@ TargetTaskEntryTy::TargetTaskEntryTy(
     int tmp_counter = ++_task_id_counter;
     // int tmp_rank = chameleon_comm_rank;
     task_id = (chameleon_comm_rank << 16) | (tmp_counter);
-    // DBP("TargetTaskEntryTy - Created task with (task_id=%d)\n", task_id);
+    // DBP("cham_migratable_task_t - Created task with (task_id=%d)\n", task_id);
 
     tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;
     arg_num = p_arg_num;
@@ -57,14 +57,14 @@ TargetTaskEntryTy::TargetTaskEntryTy(
     }
 }
 
-void TargetTaskEntryTy::ReSizeArrays(int32_t num_args) {
+void cham_migratable_task_t::ReSizeArrays(int32_t num_args) {
     arg_hst_pointers.resize(num_args);
     arg_sizes.resize(num_args);
     arg_types.resize(num_args);
     arg_tgt_offsets.resize(num_args);
 }
 
-int TargetTaskEntryTy::HasAtLeastOneOutput() {
+int cham_migratable_task_t::HasAtLeastOneOutput() {
     for(int i = 0; i < this->arg_num; i++) {
         if(this->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM)
             return 1;

@@ -37,6 +37,12 @@
 #define FORCE_OFFLOAD_MASTER_WORKER 0
 #endif
 
+// Whether to use a list of objects or unordered map for lookups
+#ifndef DATA_ENTRY_APPROACH
+// #define DATA_ENTRY_APPROACH 0 // list
+#define DATA_ENTRY_APPROACH 1 // unordered map
+#endif
+
 // Flag wether offloading in general is enabled or disabled
 #ifndef OFFLOAD_ENABLED
 #define OFFLOAD_ENABLED 1

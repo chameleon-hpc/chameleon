@@ -35,6 +35,14 @@ std::atomic<int32_t> _task_id_counter(0);
 // this is thread local storage
 __thread int32_t __last_task_id_added = -1;
 
+// list with data that has been mapped in map clauses
+std::mutex _mtx_data_entry;
+#if DATA_ENTRY_APPROACH == 0
+std::list<OffloadingDataEntryTy*> _data_entries;
+#else
+std::unordered_map<void*, OffloadingDataEntryTy*> _data_entries;
+#endif
+
 // list that holds task ids (created at the current rank) that are not finsihed yet
 std::mutex _mtx_unfinished_locally_created_tasks;
 std::list<int32_t> _unfinished_locally_created_tasks;
@@ -588,11 +596,17 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     DBP("chameleon_submit_data (enter) - tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
     verify_initialized();
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime()-cur_time;
+#endif
     // check list if already in
+#if DATA_ENTRY_APPROACH == 0
     _mtx_data_entry.lock();
     int found = 0;
     for(auto &entry : _data_entries) {
-        if(entry->tgt_ptr == tgt_ptr && entry->hst_ptr == hst_ptr && entry->size == size) {
+        // maybe we need to compare all parameters
+        // if(entry->tgt_ptr == tgt_ptr && entry->hst_ptr == hst_ptr && entry->size == size) {
+        if(entry->tgt_ptr == tgt_ptr) {
             found = 1;
             break;
         }
@@ -605,11 +619,32 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
         _data_entries.push_back(new_entry);
     }
     _mtx_data_entry.unlock();
+#else
+    // maybe we need to compare all parameters ==> then we need to come up with a splitted maps and a key generated from parameters
+    _mtx_data_entry.lock();
+    std::unordered_map<void* ,OffloadingDataEntryTy*>::const_iterator got = _data_entries.find(tgt_ptr);
+    bool match = got!=_data_entries.end();
+    if(!match) {
+        DBP("chameleon_submit_data - new entry for tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
+        OffloadingDataEntryTy *new_entry = new OffloadingDataEntryTy(tgt_ptr, hst_ptr, size);
+        _data_entries.insert(std::make_pair(tgt_ptr, new_entry));
+    }
+    _mtx_data_entry.unlock();
+#endif
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_data_submit_sum, cur_time);
+    _time_data_submit_count++;
+#endif
     DBP("chameleon_submit_data (exit)\n");
     return CHAM_SUCCESS;
 }
 
 void chameleon_free_data(void *tgt_ptr) {
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime()-cur_time;
+#endif
+#if DATA_ENTRY_APPROACH == 0
     _mtx_data_entry.lock();
     for(auto &entry : _data_entries) {
         if(entry->tgt_ptr == tgt_ptr) {
@@ -622,6 +657,17 @@ void chameleon_free_data(void *tgt_ptr) {
         }
     }
     _mtx_data_entry.unlock();
+#else
+    _mtx_data_entry.lock();
+    _data_entries.erase(tgt_ptr);
+    _mtx_data_entry.unlock();
+    free(tgt_ptr);
+#endif
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime()-cur_time;
+    atomic_add_dbl(_time_data_submit_sum, cur_time);
+    _time_data_submit_count++;
+#endif
 }
 
 int32_t chameleon_add_task(TargetTaskEntryTy *task) {
@@ -818,36 +864,17 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
             task->arg_sizes[i] = sizeof(void *);
             print_arg_info_w_tgt("lookup_hst_pointers", task, i);
         } else {
+#if CHAM_STATS_RECORD
+            double cur_time = omp_get_wtime()-cur_time;
+#endif
             // here we need to perform a pointer mapping to host pointer
             // because target pointers have already been freed and deleted
             int found = 0;
-            _mtx_data_entry.lock();
-            for(auto &entry : _data_entries) {
-                // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
-                if(entry->tgt_ptr == tmp_tgt_ptr) {
-                    // if(!found) {
-                        task->arg_sizes[i] = entry->size;
-                        task->arg_hst_pointers[i] = entry->hst_ptr;
-                        // print_arg_info_w_tgt("lookup_hst_pointers (first)", task, i);
-                    // } else {
-                    //     // temporary assignment to find more matches and errors
-                    //     void * swap = task->arg_hst_pointers[i];
-                    //     task->arg_hst_pointers[i] = entry->hst_ptr;
-                    //     print_arg_info_w_tgt("lookup_hst_pointers (next)", task, i);
-                    //     task->arg_hst_pointers[i] = swap;
-                    // }
-                    found = 1;
-                    break;
-                }
-            }
-            _mtx_data_entry.unlock();
-            if(!found) {
-                // There seems to be a race condition in internal mapping von source to target pointers (that might be reused) and the kernel call if using multiple threads 
-                // Workaround: wait a small amount of time and try again once more (i know it is ugly but hard to fix that race here)
-                usleep(1000);
+            int count = 0;
+            while(!found && count < 2) {
                 _mtx_data_entry.lock();
+#if DATA_ENTRY_APPROACH == 0                
                 for(auto &entry : _data_entries) {
-                    // printf("Checking Mapping Entry (" DPxMOD ")\n", DPxPTR(entry.tgt_ptr));
                     if(entry->tgt_ptr == tmp_tgt_ptr) {
                         task->arg_sizes[i] = entry->size;
                         task->arg_hst_pointers[i] = entry->hst_ptr;
@@ -855,8 +882,28 @@ int32_t lookup_hst_pointers(TargetTaskEntryTy *task) {
                         break;
                     }
                 }
+#else
+                std::unordered_map<void* ,OffloadingDataEntryTy*>::const_iterator got = _data_entries.find(tmp_tgt_ptr);
+                found = got!=_data_entries.end() ? 1 : 0;
+                if(found) {
+                    OffloadingDataEntryTy* entry    = got->second;
+                    task->arg_sizes[i]              = entry->size;
+                    task->arg_hst_pointers[i]       = entry->hst_ptr;
+                }
+#endif
                 _mtx_data_entry.unlock();
+                count++;
+                if(!found) {
+                    // There seems to be a race condition in internal mapping (libomptarget) from source to target pointers (that might be reused) and the kernel call if using multiple threads 
+                    // Workaround: wait a small amount of time and try again once more (i know it is ugly but hard to fix that race here)
+                    usleep(1000);
+                }
             }
+#if CHAM_STATS_RECORD
+            cur_time = omp_get_wtime()-cur_time;
+            atomic_add_dbl(_time_data_submit_sum, cur_time);
+            _time_data_submit_count++;
+#endif
             if(!found) {
                 // something went wrong here
                 RELP("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
@@ -1054,11 +1101,14 @@ inline int32_t process_replicated_task() {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 
+        if(replicated_task->is_manual_task)
+            free_manual_allocated_tgt_pointers(replicated_task);
+
 #ifdef TRACE
         VT_end(event_process_replicated);
-#endif       
-    }       
-    else{
+#endif
+    }
+    else {
         // leave task in the queue as it either already has been received back (and task will be removed soon)
         // or the receive back is in progress (and after completion, task will be removed)
         return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;

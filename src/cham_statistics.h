@@ -18,6 +18,9 @@ extern std::atomic<int>     _num_executed_tasks_replicated;
 extern std::atomic<int>     _num_tasks_offloaded;
 extern std::atomic<int>     _num_tasks_canceled;
 
+extern std::atomic<double>  _time_data_submit_sum;
+extern std::atomic<int>     _time_data_submit_count;
+
 extern std::atomic<double>  _time_task_execution_local_sum;
 extern std::atomic<int>     _time_task_execution_local_count;
 
@@ -54,7 +57,7 @@ extern std::atomic<int>     _time_tool_get_thread_data_count;
 extern "C" {
 #endif
 
-void cham_stats_init_stats();
+void cham_stats_reset_for_sync_cycle();
 void cham_stats_print_stats();
 double atomic_add_dbl(std::atomic<double> &f, double d);
 

@@ -47,10 +47,6 @@ int cur_trash_buffer_size = 0;
 // array that holds image base addresses
 std::vector<intptr_t> _image_base_addresses;
 
-// list with data that has been mapped in map clauses
-std::mutex _mtx_data_entry;
-std::list<OffloadingDataEntryTy*> _data_entries;
-
 // list with local task entries
 // these can either be executed here or offloaded to a different rank (i.e., become replicated tasks)
 thread_safe_task_list _local_tasks;
@@ -175,7 +171,7 @@ int32_t start_communication_threads() {
 
     #if !THREAD_ACTIVATION
     #if CHAM_STATS_RECORD
-        cham_stats_init_stats();
+        cham_stats_reset_for_sync_cycle();
     #endif
     #endif
 
@@ -230,7 +226,7 @@ int32_t wake_up_comm_threads() {
     DBP("wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
 
     #if CHAM_STATS_RECORD
-        cham_stats_init_stats();
+        cham_stats_reset_for_sync_cycle();
     #endif
     // determine or set values once
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
@@ -779,16 +775,14 @@ void* offload_action(void *v_entry) {
         _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
         _mtx_unfinished_locally_created_tasks.unlock();
 
-
-    if(entry->task_entry->is_manual_task)
-        free_manual_allocated_tgt_pointers(entry->task_entry);
-
-
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
+
+        if(entry->task_entry->is_manual_task)
+            free_manual_allocated_tgt_pointers(entry->task_entry);
     }
 #endif 
 
@@ -1733,7 +1727,7 @@ void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task) {
         for(int i = 0; i < task->arg_num; i++) {
             int is_lit = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
             if(!is_lit) {
-                free(task->arg_tgt_pointers[i]);
+                chameleon_free_data(task->arg_tgt_pointers[i]);
             }
         }
     }

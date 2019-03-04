@@ -8,6 +8,9 @@ std::atomic<int>     _num_executed_tasks_replicated(0);
 std::atomic<int>     _num_tasks_canceled(0);
 std::atomic<int>     _num_tasks_offloaded(0);
 
+std::atomic<double>  _time_data_submit_sum(0.0);
+std::atomic<int>     _time_data_submit_count(0);
+
 std::atomic<double>  _time_task_execution_local_sum(0.0);
 std::atomic<int>     _time_task_execution_local_count(0);
 
@@ -44,7 +47,7 @@ std::atomic<int>     _time_tool_get_thread_data_count(0);
 extern "C" {
 #endif
 
-void cham_stats_init_stats() {
+void cham_stats_reset_for_sync_cycle() {
     _num_executed_tasks_local = 0;
     _num_executed_tasks_stolen = 0;
     _num_executed_tasks_replicated = 0;
@@ -79,11 +82,15 @@ void cham_stats_init_stats() {
     _time_decode_count = 0;
 }
 
-void cham_stats_print_stats_w_mean(std::string name, double sum, int count) {
+void cham_stats_print_stats_w_mean(std::string name, double sum, int count, bool cummulative = false) {
+    std::string prefix = "Stats";
+    if(cummulative)
+        prefix = "Cumulative Stats";
+
     if(count <= 0) {
-        fprintf(stderr, "Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", chameleon_comm_rank, name.c_str(), sum, count, 0);
+        fprintf(stderr, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, 0);
     } else {
-        fprintf(stderr, "Stats R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
+        fprintf(stderr, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
     }
 }
 
@@ -105,8 +112,10 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
     cham_stats_print_stats_w_mean("_time_encode_sum", _time_encode_sum, _time_encode_count);
     cham_stats_print_stats_w_mean("_time_decode_sum", _time_decode_sum, _time_decode_count);
+
+    cham_stats_print_stats_w_mean("_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count, true);
 #if CHAMELEON_TOOL_SUPPORT
-    cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count);
+    cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
     _mtx_relp.unlock();
 }

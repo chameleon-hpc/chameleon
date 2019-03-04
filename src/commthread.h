@@ -25,10 +25,6 @@ extern int chameleon_comm_size;
 
 extern std::vector<intptr_t> _image_base_addresses;
 
-// list with data that has been mapped in map clauses
-extern std::mutex _mtx_data_entry;
-extern std::list<OffloadingDataEntryTy*> _data_entries;
-
 // list with local task entries
 // these can either be executed here or offloaded to a different rank
 extern thread_safe_task_list _local_tasks;

@@ -67,11 +67,11 @@ thread_safe_task_list _stolen_remote_tasks_send_back;
 #if !OFFLOAD_CREATE_SEPARATE_THREAD
 // map that maps tag ids back to stolen tasks
 std::mutex _mtx_map_tag_to_stolen_task;
-std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_stolen_task;
+std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_stolen_task;
 
 // map that maps tag ids back to local tasks that have been offloaded
 std::mutex _mtx_map_tag_to_local_task;
-std::unordered_map<int, TargetTaskEntryTy*> _map_tag_to_local_task;
+std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_local_task;
 #endif
 
 // ====== Info about outstanding jobs (local & stolen) ======
@@ -141,8 +141,8 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
-void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size);
-TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag);
+void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size);
+cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag);
 
 short pin_thread_to_last_core();
 void* offload_action(void *task);
@@ -426,7 +426,7 @@ static void send_handler(void* buffer, int tag, int source) {
 };
 
 static void receive_handler(void* buffer, int tag, int source) {
-    TargetTaskEntryTy *task = NULL;
+    cham_migratable_task_t *task = NULL;
 
 #if CHAM_STATS_RECORD
     double cur_time_decode, cur_time;
@@ -502,14 +502,14 @@ static void receive_back_handler(void* buffer, int tag, int source) {
 
     bool match = false;
     _mtx_map_tag_to_local_task.lock();
-    std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_local_task.find(tag);
+    std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_local_task.find(tag);
     match = got != _map_tag_to_local_task.end();
     if(match) {
         _map_tag_to_local_task.erase(tag);
     }
     _mtx_map_tag_to_local_task.unlock(); 
 
-    TargetTaskEntryTy *task_entry;
+    cham_migratable_task_t *task_entry;
     if(match) {
         task_entry = got->second;
 //only if data is packed, we need to copy it out
@@ -555,7 +555,7 @@ static void receive_back_trash_handler(void* buffer, int tag, int source) {
 #pragma endregion
 
 #pragma region Offloading / Packing
-void cancel_offloaded_task(TargetTaskEntryTy *task) {
+void cancel_offloaded_task(cham_migratable_task_t *task) {
     DBP("cancel_offloaded_task - canceling offloaded task, task_id: %d, target_rank: %d\n", task->task_id, task->target_mpi_rank);
     MPI_Request request;
     MPI_Isend(&task->task_id, 1, MPI_INTEGER, task->target_mpi_rank, 0, chameleon_comm_cancel, &request);
@@ -567,7 +567,7 @@ void cancel_offloaded_task(TargetTaskEntryTy *task) {
                                            nullptr);
 }
 
-int32_t offload_task_to_rank(OffloadEntryTy *entry) {
+int32_t offload_task_to_rank(offload_entry_t *entry) {
 #ifdef TRACE
     static int event_offload = -1;
     std::string event_offload_name = "offload_task";
@@ -630,7 +630,7 @@ void* offload_action(void *v_entry) {
     DBP("offload_action (create) - created new thread and pinned to last core\n");
 #endif
     // parse argument again, necessary since it can be used for thread and pure as well
-    OffloadEntryTy *entry = (OffloadEntryTy *) v_entry;
+    offload_entry_t *entry = (offload_entry_t *) v_entry;
 #ifdef TRACE
     static int event_offload_send = -1;
     std::string event_offload_send_name = "offload_send";
@@ -790,7 +790,7 @@ void* offload_action(void *v_entry) {
     return nullptr;
 }
 
-void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
+void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size) {
 #ifdef TRACE
     static int event_encode = -1;
     std::string event_encode_name = "encode";
@@ -905,7 +905,7 @@ void * encode_send_buffer(TargetTaskEntryTy *task, int32_t *buffer_size) {
     return buff;
 }
 
-TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
+cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag) {
 #ifdef TRACE
     static int event_decode = -1;
     std::string event_decode_name = "decode";
@@ -914,7 +914,7 @@ TargetTaskEntryTy* decode_send_buffer(void * buffer, int mpi_tag) {
     VT_begin(event_decode);
 #endif 
     // init new task
-    TargetTaskEntryTy* task = new TargetTaskEntryTy();
+    cham_migratable_task_t* task = new cham_migratable_task_t();
     // actually we use the global task id as tag
     task->task_id           = mpi_tag;
     task->is_remote_task    = 1;
@@ -1113,9 +1113,9 @@ void* receive_remote_tasks(void* arg) {
             MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel.MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
             DBP("receive_remote_tasks - received cancel request for task_id %d\n", task_id);
  
-            TargetTaskEntryTy *task = nullptr;
+            cham_migratable_task_t *task = nullptr;
             _mtx_map_tag_to_stolen_task.lock();
-            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_stolen_task.find(task_id);
+            std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_stolen_task.find(task_id);
             bool match = got!=_map_tag_to_stolen_task.end();
             _mtx_map_tag_to_stolen_task.unlock();
             
@@ -1151,13 +1151,13 @@ void* receive_remote_tasks(void* arg) {
         if( flag_open_request_receiveBack ) {
             bool match = false;
 	        _mtx_map_tag_to_local_task.lock();
-            std::unordered_map<int ,TargetTaskEntryTy*>::const_iterator got = _map_tag_to_local_task.find(cur_status_receiveBack.MPI_TAG);
+            std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_local_task.find(cur_status_receiveBack.MPI_TAG);
             match = got != _map_tag_to_local_task.end();
             _mtx_map_tag_to_local_task.unlock();
 
             if(match) {
                 //get task and receive data directly into task data
-	            TargetTaskEntryTy *task_entry;
+	            cham_migratable_task_t *task_entry;
                 task_entry = got->second;
 
                 DBP("receive_remote_tasks - receiving back task with id %d\n", task_entry->task_id);
@@ -1389,7 +1389,7 @@ void* service_thread_action(void *arg) {
 
         request_manager_send.progressRequests();
 
-        TargetTaskEntryTy* cur_task = nullptr;
+        cham_migratable_task_t* cur_task = nullptr;
 
         #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
@@ -1577,14 +1577,14 @@ void* service_thread_action(void *arg) {
 //                 int tmp_idx = (chameleon_comm_rank + k) % chameleon_comm_size;
 //                 if(_load_info_ranks[tmp_idx] == 0) {
 //                     // Direct offload if thread found that has nothing to do
-//                     TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+//                     cham_migratable_task_t *cur_task = _local_tasks.pop_front();
 //                     if(cur_task == nullptr)
 //                         break;
 // #ifdef TRACE
 //             VT_end(event_offload_decision);
 // #endif
 //                     DBP("OffloadingDecision: MyLoad: %d, Rank %d is empty, LastKnownSumOutstandingJobs: %d\n", cur_load, tmp_idx, last_known_sum_outstanding);
-//                     OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, tmp_idx);
+//                     offload_entry_t * off_entry = new offload_entry_t(cur_task, tmp_idx);
 //                     offload_task_to_rank(off_entry);
 //                     offload_triggered = 1;
 // #if OFFLOAD_BLOCKING
@@ -1611,13 +1611,13 @@ void* service_thread_action(void *arg) {
                     if(r != chameleon_comm_rank) {
                         int targetOffloadedTasks = tasksToOffload[r];
                         for(int t=0; t<targetOffloadedTasks; t++) {
-                            TargetTaskEntryTy *cur_task = _local_tasks.pop_front();
+                            cham_migratable_task_t *cur_task = _local_tasks.pop_front();
                             if(cur_task) {
 #ifdef TRACE
                                 VT_end(event_offload_decision);
 #endif
                                 DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
-                                OffloadEntryTy * off_entry = new OffloadEntryTy(cur_task, r);
+                                offload_entry_t * off_entry = new offload_entry_t(cur_task, r);
                                 offload_task_to_rank(off_entry);
                                 offload_triggered = 1;
 #if OFFLOAD_BLOCKING
@@ -1721,7 +1721,7 @@ void* service_thread_action(void *arg) {
 #pragma endregion Thread Send / Service
 
 #pragma region Helper Functions
-void free_manual_allocated_tgt_pointers(TargetTaskEntryTy* task) {
+void free_manual_allocated_tgt_pointers(cham_migratable_task_t* task) {
     // clean up manually allocated target pointers
     if(task->is_manual_task) {
         for(int i = 0; i < task->arg_num; i++) {
@@ -1750,7 +1750,7 @@ void trigger_update_outstanding() {
     DBP("trigger_update_outstanding - current outstanding jobs: %d, current_local_load = %d\n", _outstanding_jobs_local.load(), _load_info_local);
 }
 
-void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {
+void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx) {
     int64_t tmp_type    = task->arg_types[idx];
     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
     int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;
@@ -1765,7 +1765,7 @@ void print_arg_info(std::string prefix, TargetTaskEntryTy *task, int idx) {
             is_from);
 }
 
-void print_arg_info_w_tgt(std::string prefix, TargetTaskEntryTy *task, int idx) {
+void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int idx) {
     int64_t tmp_type    = task->arg_types[idx];
     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
     int is_from         = tmp_type & CHAM_OMP_TGT_MAPTYPE_FROM;

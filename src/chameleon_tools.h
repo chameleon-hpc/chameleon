@@ -178,17 +178,17 @@ typedef void (*cham_t_callback_thread_finalize_t) (
 );
 
 typedef void (*cham_t_callback_task_create_t) (
-    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_migratable_task_t * task,                   // opaque data type for internal task
     cham_t_data_t *task_data,
     const void *codeptr_ra
 );
 
 typedef void (*cham_t_callback_task_schedule_t) (
-    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_migratable_task_t * task,                   // opaque data type for internal task
     cham_t_task_flag_t task_flag,
     cham_t_data_t *task_data,
     cham_t_task_schedule_type_t schedule_type,
-    TargetTaskEntryTy * prior_task,             // opaque data type for internal task
+    cham_migratable_task_t * prior_task,             // opaque data type for internal task
     cham_t_task_flag_t prior_task_flag,
     cham_t_data_t *prior_task_data
 );
@@ -198,7 +198,7 @@ typedef void (*cham_t_callback_task_schedule_t) (
 // Note: Only necessary when task specific data is required
 // Note: Only works in combination with cham_t_callback_decode_task_tool_data_t
 typedef void *(*cham_t_callback_encode_task_tool_data_t) (
-    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_migratable_task_t * task,                   // opaque data type for internal task
     cham_t_data_t *task_data,
     int32_t *size
 );
@@ -208,7 +208,7 @@ typedef void *(*cham_t_callback_encode_task_tool_data_t) (
 // Note: Only necessary when task specific data is required
 // Note: Only works in combination with cham_t_callback_encode_task_tool_data_t
 typedef void (*cham_t_callback_decode_task_tool_data_t) (
-    TargetTaskEntryTy * task,                   // opaque data type for internal task
+    cham_migratable_task_t * task,                   // opaque data type for internal task
     cham_t_data_t *task_data,
     void *buffer,
     int32_t size

@@ -78,6 +78,12 @@
 #define MPI_BLOCKING 0
 #endif
 
+#ifndef CHAM_REPLICATION_MODE
+#define CHAM_REPLICATION_MODE 0 //no replication
+//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
+#endif
+
 //Specify whether tasks should be offloaded aggressively after one performance update
 #ifndef OFFLOADING_STRATEGY_AGGRESSIVE
 #define OFFLOADING_STRATEGY_AGGRESSIVE 0
@@ -96,7 +102,7 @@
 #endif
 
 #pragma region Type Definitions
-typedef struct TargetTaskEntryTy {
+typedef struct cham_migratable_task_t {
     // target entry point / function that holds the code that should be executed
     intptr_t tgt_entry_ptr;
     // we need index of image here as well since pointers are not matching for other ranks
@@ -137,10 +143,10 @@ typedef struct TargetTaskEntryTy {
 
     // Constructor 1: Called when creating new task during decoding
     // here we dont need to give a task id in that case because it should be transfered from source
-    TargetTaskEntryTy() { }
+    cham_migratable_task_t() { }
 
     // Constructor 2: Called from libomptarget plugin to create a new task
-    TargetTaskEntryTy(
+    cham_migratable_task_t(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
@@ -151,45 +157,45 @@ typedef struct TargetTaskEntryTy {
     
     int HasAtLeastOneOutput();
     
-} TargetTaskEntryTy;
+} cham_migratable_task_t;
 
-struct OffloadEntryTy {
-    TargetTaskEntryTy *task_entry;
+typedef struct offload_entry_t {
+    cham_migratable_task_t *task_entry;
     int32_t target_rank;
 
-    OffloadEntryTy(TargetTaskEntryTy *par_task_entry, int32_t par_target_rank) {
+    offload_entry_t(cham_migratable_task_t *par_task_entry, int32_t par_target_rank) {
         task_entry = par_task_entry;
         target_rank = par_target_rank;
     }
-};
+} offload_entry_t;
 
-struct OffloadingDataEntryTy {
+typedef struct migratable_data_entry_t {
     void *tgt_ptr;
     void *hst_ptr;
     int64_t size;
 
-    OffloadingDataEntryTy() {
+    migratable_data_entry_t() {
         tgt_ptr = nullptr;
         hst_ptr = nullptr;
         size = 0;
     }
 
-    OffloadingDataEntryTy(void *p_tgt_ptr, void *p_hst_ptr, int64_t p_size) {
+    migratable_data_entry_t(void *p_tgt_ptr, void *p_hst_ptr, int64_t p_size) {
         tgt_ptr = p_tgt_ptr;
         hst_ptr = p_hst_ptr;
         size = p_size;
     }
-};
+} migratable_data_entry_t;
 
-struct MapEntry{
+typedef struct map_data_entry_t{
     void *valptr;
     size_t size;
     int type;
-};
+} map_data_entry_t;
 
 typedef struct ch_thread_data_t {
     int32_t os_thread_id;
-    TargetTaskEntryTy * current_task;
+    cham_migratable_task_t * current_task;
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t thread_tool_data;
@@ -209,7 +215,7 @@ typedef struct ch_rank_data_t {
 class thread_safe_task_list {
     private:
     
-    std::list<TargetTaskEntryTy*> task_list;
+    std::list<cham_migratable_task_t*> task_list;
     std::mutex m;
     // size_t list_size = 0;
     std::atomic<size_t> list_size;
@@ -226,25 +232,25 @@ class thread_safe_task_list {
         return this->list_size <= 0;
     }
 
-    void push_back(TargetTaskEntryTy* task) {
+    void push_back(cham_migratable_task_t* task) {
         this->m.lock();
         this->task_list.push_back(task);
         this->list_size++;
         this->m.unlock();
     }
 
-    void remove(TargetTaskEntryTy* task) {
+    void remove(cham_migratable_task_t* task) {
         this->m.lock();
         this->task_list.remove(task);
         this->list_size--;
         this->m.unlock();
     }
 
-    TargetTaskEntryTy* pop_front() {
+    cham_migratable_task_t* pop_front() {
         if(this->empty())
             return nullptr;
 
-        TargetTaskEntryTy* ret_val = nullptr;
+        cham_migratable_task_t* ret_val = nullptr;
 
         this->m.lock();
         if(!this->empty()) {
@@ -256,11 +262,11 @@ class thread_safe_task_list {
         return ret_val;
     }
 
-    TargetTaskEntryTy* pop_back() {
+    cham_migratable_task_t* pop_back() {
         if(this->empty())
             return nullptr;
 
-        TargetTaskEntryTy* ret_val = nullptr;
+        cham_migratable_task_t* ret_val = nullptr;
 
         this->m.lock();
         if(!this->empty()) {
@@ -272,10 +278,10 @@ class thread_safe_task_list {
         return ret_val;
     }
 
-    TargetTaskEntryTy* back() {
+    cham_migratable_task_t* back() {
         if(this->empty())
             return nullptr;
-        TargetTaskEntryTy* ret_val = nullptr;
+        cham_migratable_task_t* ret_val = nullptr;
 
         this->m.lock();
         if(!this->empty()) {
@@ -285,10 +291,10 @@ class thread_safe_task_list {
         return ret_val;
     }
 
-    TargetTaskEntryTy* front() {
+    cham_migratable_task_t* front() {
         if(this->empty())
             return nullptr;
-        TargetTaskEntryTy* ret_val = nullptr;
+        cham_migratable_task_t* ret_val = nullptr;
 
         this->m.lock();
         if(!this->empty()) {
@@ -303,7 +309,7 @@ class thread_safe_task_list {
         int64_t *vec = (int64_t *) malloc(this->task_list.size() * sizeof(int64_t));
         *num_ids = this->task_list.size();
         size_t count = 0;
-        for (std::list<TargetTaskEntryTy*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
+        for (std::list<cham_migratable_task_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
             vec[count] = (*it)->task_id;
             count++;
         }

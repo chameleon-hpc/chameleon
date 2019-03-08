@@ -32,11 +32,6 @@
 
 #include "chameleon.h"
 
-// Special version with 2 ranks where master (rank 0) is always offloading to rank 1
-#ifndef FORCE_OFFLOAD_MASTER_WORKER
-#define FORCE_OFFLOAD_MASTER_WORKER 0
-#endif
-
 // Whether to use a list of objects or unordered map for lookups
 #ifndef DATA_ENTRY_APPROACH
 // #define DATA_ENTRY_APPROACH 0 // list
@@ -62,11 +57,6 @@
 #ifndef OFFLOAD_DATA_PACKING_TYPE
 // #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
 #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
-#endif
-
-// Create a separate thread for offloads that expect mapped data to be transfered back
-#ifndef OFFLOAD_CREATE_SEPARATE_THREAD
-#define OFFLOAD_CREATE_SEPARATE_THREAD 0
 #endif
 
 #ifndef THREAD_ACTIVATION

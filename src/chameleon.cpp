@@ -330,7 +330,6 @@ int32_t chameleon_taskyield() {
     return CHAM_FAILURE;
 }
 
-#if !FORCE_OFFLOAD_MASTER_WORKER
 /* 
  * Function chameleon_distributed_taskwait
  * Default distributed task wait function that will
@@ -521,71 +520,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
     return CHAM_SUCCESS;
 }
-#else
-// //!!!! Special version for 2 ranks where rank0 will always offload and rank 2 executes task for testing purposes
-// int32_t chameleon_distributed_taskwait(int nowait) {
-//     DBP("chameleon_distributed_taskwait (enter)\n");
-//     verify_initialized();
-
-//     // start communication threads here
-//     start_communication_threads();
-
-//     bool had_local_tasks = !_local_tasks.empty();
-   
-//     // as long as there are local tasks run this loop
-//     while(true) {
-//         int32_t res = CHAM_SUCCESS;
-       
-//         // ========== Prio 3: work on local tasks
-//         if(!_local_tasks.empty()) {
-//             cham_migratable_task_t *cur_task = _local_tasks.pop_front();
-//             if(cur_task == nullptr)
-//             {
-//                 continue;
-//             }
-
-//             // force offloading to test MPI communication process (will be done by comm thread later)
-//             if(cur_task) {
-//                 // create temp entry and offload
-//                 offload_entry_t *off_entry = new offload_entry_t(cur_task, 1);
-//                 res = offload_task_to_rank(off_entry);
-//             }
-//         } else {
-//             break;
-//         }
-//     }
-
-//     // rank 0 should wait until data comes back
-//     if(had_local_tasks) {
-//         while(_num_local_tasks_outstanding > 0)
-//         {
-//             usleep(1000);
-//         }
-//         // P0: for now return after offloads
-//         stop_communication_threads();
-//         return CHAM_SUCCESS;
-//     }
-
-   
-//     // P1: call function to recieve remote tasks
-//     while(true) {
-//         // only abort if load exchange has happened at least once and there are no outstanding jobs left
-//         if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
-//             break;
-//         }
-//         if(!_stolen_remote_tasks.empty()) {
-//             int32_t res = process_remote_task();
-//         }
-//         // sleep for 1 ms
-//         usleep(1000);
-//     }
-//     stop_communication_threads();
-   
-//     // TODO: need an implicit OpenMP or MPI barrier here?
-
-//     return CHAM_SUCCESS;
-// }
-#endif
 #pragma endregion Distributed Taskwait
 
 #pragma region Fcns for Data and Tasks

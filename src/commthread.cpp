@@ -64,7 +64,6 @@ std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
 // list with stolen task entries that need output data transfer
 thread_safe_task_list _stolen_remote_tasks_send_back;
 
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
 // map that maps tag ids back to stolen tasks
 std::mutex _mtx_map_tag_to_stolen_task;
 std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_stolen_task;
@@ -72,7 +71,6 @@ std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_stolen_task;
 // map that maps tag ids back to local tasks that have been offloaded
 std::mutex _mtx_map_tag_to_local_task;
 std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_local_task;
-#endif
 
 // ====== Info about outstanding jobs (local & stolen) ======
 // extern std::mutex _mtx_outstanding_jobs;
@@ -150,9 +148,7 @@ void* offload_action(void *task);
 static void send_handler(void* buffer, int tag, int rank);
 static void receive_handler(void* buffer, int tag, int rank);
 static void send_back_handler(void* buffer, int tag, int rank);
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
 static void receive_back_handler(void* buffer, int tag, int rank);
-#endif
 static void receive_back_trash_handler(void* buffer, int tag, int rank);
 
 #pragma endregion Forward Declarations
@@ -495,7 +491,6 @@ static void send_back_handler(void* buffer, int tag, int source) {
     free(buffer);
 }
 
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
 static void receive_back_handler(void* buffer, int tag, int source) {
     DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", source, 
                                                                                    tag); 
@@ -547,7 +542,6 @@ static void receive_back_handler(void* buffer, int tag, int source) {
         _mtx_load_exchange.unlock();
     }
 }
-#endif
 
 static void receive_back_trash_handler(void* buffer, int tag, int source) {
 
@@ -588,30 +582,9 @@ int32_t offload_task_to_rank(offload_entry_t *entry) {
 
     assert(entry->task_entry->sync_commthread_lock.load()==false);
     
-
-#if OFFLOAD_CREATE_SEPARATE_THREAD
-    // explicitly make thread joinable to be portable
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-    // Only create additional thread if there are output variables
-    if(has_outputs) {
-       pthread_t *tmp_new_thread = (pthread_t*)malloc(sizeof(pthread_t));
-       int err;
-       err = pthread_create(tmp_new_thread, &attr, offload_action, (void*)entry);
-       if(err != 0)
-           handle_error_en(err, "offload_task_to_rank - pthread_create");
-    } else {
-        // no addition thread needed
-        offload_action((void*)entry);
-        _num_offloaded_tasks_outstanding++;
-    }
-#else
     // directly use base function
     offload_action((void*)entry);
     _num_offloaded_tasks_outstanding++;
-#endif
 
 #if CHAM_STATS_RECORD
     _num_tasks_offloaded++;
@@ -625,10 +598,6 @@ int32_t offload_task_to_rank(offload_entry_t *entry) {
 }
 
 void* offload_action(void *v_entry) {
-#if OFFLOAD_CREATE_SEPARATE_THREAD
-    pin_thread_to_last_core();
-    DBP("offload_action (create) - created new thread and pinned to last core\n");
-#endif
     // parse argument again, necessary since it can be used for thread and pure as well
     offload_entry_t *entry = (offload_entry_t *) v_entry;
 #ifdef TRACE
@@ -694,19 +663,16 @@ void* offload_action(void *v_entry) {
         print_arg_info("offload_action - sending argument", entry->task_entry, i);
    }
 #endif
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
     if(has_outputs) {
         _mtx_map_tag_to_local_task.lock();
         _map_tag_to_local_task.insert(std::make_pair(tmp_tag, entry->task_entry));
         _mtx_map_tag_to_local_task.unlock();
     }
-#endif
 #if CHAM_STATS_RECORD                            
     cur_time = omp_get_wtime()-cur_time;
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
     request_manager_send.submitRequests(  tmp_tag, entry->target_rank, n_requests, 
                                 requests,
                                 MPI_BLOCKING,
@@ -714,77 +680,9 @@ void* offload_action(void *v_entry) {
                                 send,
                                 buffer);
     delete[] requests;
-#endif
 #ifdef TRACE
     VT_end(event_offload_send);
 #endif
-
-#if OFFLOAD_CREATE_SEPARATE_THREAD
-    if(has_outputs) {
-#ifdef TRACE
-        static int event_offload_wait_recv = -1;
-        std::string event_offload_wait_recv_name = "offload_wait_recv";
-        if(event_offload_wait_recv == -1) 
-            int ierr = VT_funcdef(event_offload_wait_recv_name.c_str(), VT_NOCLASS, &event_offload_wait_recv);
-        VT_begin(event_offload_wait_recv);
-#endif
-        DBP("offload_action - waiting for output data from rank %d for (task_id=%d)\n", entry->target_rank, tmp_tag);
-        MPI_Status cur_status;
-        int recv_buff_size;
-        int flag = 0;
-
-        while(!flag) {
-            MPI_Iprobe(entry->target_rank, tmp_tag, chameleon_comm_mapped, &flag, &cur_status);
-            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
-        }
-
-        MPI_Get_count(&cur_status, MPI_BYTE, &recv_buff_size);
-        // temp buffer to retreive output data from target rank to be able to update host pointers again
-        void * temp_buffer = malloc(recv_buff_size);
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime();
-#endif
-        MPI_Recv(temp_buffer, recv_buff_size, MPI_BYTE, entry->target_rank, tmp_tag, chameleon_comm_mapped, MPI_STATUS_IGNORE);
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime()-cur_time;
-        atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-        _time_comm_back_recv_count++;
-#endif
-        DBP("offload_action - receiving output data from rank %d for (task_id=%d)\n", entry->target_rank, tmp_tag);
-        // copy results back to source pointers with memcpy
-        char * cur_ptr = (char*) temp_buffer;
-        for(int i = 0; i < entry->task_entry->arg_num; i++) {
-            int is_lit      = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            int is_from     = entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
-
-            if(entry->task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                print_arg_info("offload_action", entry->task_entry, i);
-                    
-                // we already have information about size and data type
-                memcpy(entry->task_entry->arg_hst_pointers[i], cur_ptr, entry->task_entry->arg_sizes[i]);
-                cur_ptr += entry->task_entry->arg_sizes[i];
-            }
-        }
-        // free buffer again
-        free(temp_buffer);
-#ifdef TRACE
-        VT_end(event_offload_wait_recv);
-#endif
-        // mark locally created task finished
-        _mtx_unfinished_locally_created_tasks.lock();
-        _unfinished_locally_created_tasks.remove(entry->task_entry->task_id);
-        _mtx_unfinished_locally_created_tasks.unlock();
-
-        // decrement counter if offloading + receiving results finished
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
-
-        if(entry->task_entry->is_manual_task)
-            free_manual_allocated_tgt_pointers(entry->task_entry);
-    }
-#endif 
 
     DBP("offload_action (exit)\n");
     return nullptr;
@@ -1015,13 +913,11 @@ void* receive_remote_tasks(void* arg) {
     if(event_receive_tasks == -1) 
         int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
 
-#if !OFFLOAD_CREATE_SEPARATE_THREAD
     static int event_recv_back = -1;
     std::string event_recv_back_name = "receive_back";
     if(event_recv_back == -1) 
         int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
 #endif
-#endif 
     pin_thread_to_last_core();
     DBP("receive_remote_tasks (enter)\n");
 
@@ -1066,14 +962,10 @@ void* receive_remote_tasks(void* arg) {
         }
 #endif
 
-#if OFFLOAD_CREATE_SEPARATE_THREAD
-        while(!flag_open_request_receive) {
-#else
             MPI_Status cur_status_receiveBack;
             int flag_open_request_receiveBack = 0;
 
             while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
-#endif
                 usleep(CHAM_SPEEL_TIME_MICRO_SECS);
                 request_manager_receive.progressRequests();            
                 // check whether thread should be aborted
@@ -1093,9 +985,6 @@ void* receive_remote_tasks(void* arg) {
                 }
 #endif
                 MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
-#if OFFLOAD_CREATE_SEPARATE_THREAD
-            }
-#else
             MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
             MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
         }
@@ -1308,7 +1197,6 @@ void* receive_remote_tasks(void* arg) {
                 }
             } //match
 	    }
-#endif
         // receive new task
         if ( flag_open_request_receive ) {
 #ifdef TRACE
@@ -1552,7 +1440,7 @@ void* service_thread_action(void *arg) {
         }
         #endif
 
-#if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
+#if OFFLOAD_ENABLED
         // ================= Offloading Section =================
         // only check for offloading if enough local tasks available and exchange has happend at least once
         if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
@@ -1636,7 +1524,7 @@ void* service_thread_action(void *arg) {
             }
 #endif
         }
-#endif // #if !FORCE_OFFLOAD_MASTER_WORKER && OFFLOAD_ENABLED
+#endif // #if OFFLOAD_ENABLED
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {

@@ -20,7 +20,7 @@
 #include "VT.h"
 #endif
 
-#define CHAM_SPEEL_TIME_MICRO_SECS 20
+#define CHAM_SLEEP_TIME_MICRO_SECS 5
 
 #pragma region Variables
 // communicator for remote task requests
@@ -321,7 +321,7 @@ int32_t put_comm_threads_to_sleep() {
     _flag_comm_threads_sleeping             = 1;
     // wait until thread sleeps
     while(!_comm_thread_service_stopped) {
-        usleep(CHAM_SPEEL_TIME_MICRO_SECS);
+        usleep(CHAM_SLEEP_TIME_MICRO_SECS);
     }
     // DBP("put_comm_threads_to_sleep - service thread stopped = %d\n", _comm_thread_service_stopped);
     _comm_threads_ended_count               = 0;
@@ -947,7 +947,7 @@ void* receive_remote_tasks(void* arg) {
                 DBP("receive_remote_tasks - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
+            usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             // DBP("receive_remote_tasks - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("receive_remote_tasks (abort)\n");
@@ -966,7 +966,7 @@ void* receive_remote_tasks(void* arg) {
             int flag_open_request_receiveBack = 0;
 
             while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
-                usleep(CHAM_SPEEL_TIME_MICRO_SECS);
+                usleep(CHAM_SLEEP_TIME_MICRO_SECS);
                 request_manager_receive.progressRequests();            
                 // check whether thread should be aborted
                 if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
@@ -1287,7 +1287,7 @@ void* service_thread_action(void *arg) {
                 DBP("service_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped);
             }
             // dont do anything if the thread is sleeping
-            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
+            usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             // DBP("service_thread_action - thread sleeping\n");
             if(_flag_abort_threads) {
                 DBP("service_thread_action (abort)\n");
@@ -1528,7 +1528,7 @@ void* service_thread_action(void *arg) {
 
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
-            usleep(CHAM_SPEEL_TIME_MICRO_SECS);
+            usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             continue;
         }
 

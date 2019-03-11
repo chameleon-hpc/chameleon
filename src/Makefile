@@ -55,9 +55,9 @@ debug:
 
 release:
 	@if [ "$(CXX)" = "icpc" ]; then\
-		$(MPIF90) -O3 -g $(F90_COMPILE_FLAGS) -c $(F90_COMP_FILES); \
+		$(MPIF90) -g -O3 $(F90_COMPILE_FLAGS) -c $(F90_COMP_FILES); \
 	fi	
-	$(MPICXX) -O3 -g $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
+	$(MPICXX) -g -O3 $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
 	$(MPICXX) $(CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(LINKER_FLAGS)
 
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
@@ -68,9 +68,9 @@ release:
 
 trace:
 	@if [ "$(CXX)" = "icpc" ]; then\
-		$(MPIF90) -O3 -g -DTRACE -I$(VT_ROOT)/include $(F90_COMPILE_FLAGS) -c $(F90_COMP_FILES); \
+		$(MPIF90) -g -O3 -DTRACE -I$(VT_ROOT)/include $(F90_COMPILE_FLAGS) -c $(F90_COMP_FILES); \
 	fi
-	$(MPICXX) -O3 -g -DTRACE -I$(VT_ROOT)/include $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
+	$(MPICXX) -g -O3 -DTRACE -I$(VT_ROOT)/include $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
 	$(MPICXX) $(CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(LINKER_FLAGS) -trace
 
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/

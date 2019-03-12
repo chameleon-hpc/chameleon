@@ -101,8 +101,6 @@ void trigger_update_outstanding();
 
 int exit_condition_met(int print);
 
-void free_manual_allocated_tgt_pointers(cham_migratable_task_t* task);
-
 #ifdef __cplusplus
 }
 #endif

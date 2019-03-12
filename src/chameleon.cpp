@@ -607,8 +607,11 @@ void chameleon_free_data(void *tgt_ptr) {
 int32_t chameleon_add_task(cham_migratable_task_t *task) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
-    // perform lookup in both cases (local execution & offload)
-    lookup_hst_pointers(task);
+    
+    // perform lookup only when task has been created with libomptarget
+    if(!task->is_manual_task) {
+        lookup_hst_pointers(task);
+    }
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_create) {
@@ -653,7 +656,21 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
 * As variadic function are not supported, this compatibility function is provided
 */
 int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void *args_info) {
+    map_data_entry_t *args_entries = (map_data_entry_t *) args_info;   
+    chameleon_add_task_manual(entry_point, num_args, args_entries);
 
+    return CHAM_SUCCESS;
+}
+
+/*
+* Helper function that adds task when arguments are provided as an array of MapEntries
+*/
+int32_t chameleon_add_task_manual(void *entry_point, int num_args, map_data_entry_t *args) {
+
+    // Format of variable input args should always be:
+    // 1. void* to data entry
+    // 2. size_t size of data
+    // 3. agument type specifier (also includes information whether it is literal or not)
 #ifdef TRACE
     static int event_add_task = -1;
     static const std::string event_add_task_name = "add_task";
@@ -661,25 +678,6 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
         int ierr = VT_funcdef(event_add_task_name.c_str(), VT_NOCLASS, &event_add_task);
     VT_begin(event_add_task);
 #endif
-  
-    map_data_entry_t *args_entries = (map_data_entry_t *) args_info;
-   
-    add_task_manual(entry_point, num_args, args_entries);
-#ifdef TRACE
-    VT_end(event_add_task);
-#endif
-    return CHAM_SUCCESS;
-}
-
-/*
-* Helper function that adds task when arguments are provided as an array of MapEntries
-*/
-int32_t add_task_manual( void *entry_point, int num_args, map_data_entry_t *args) {
-
-    // Format of variable input args should always be:
-    // 1. void* to data entry
-    // 2. size_t size of data
-    // 3. agument type specifier (also includes information whether it is literal or not)
 
     std::vector<void *> arg_hst_pointers(num_args);
     std::vector<int64_t> arg_sizes(num_args);
@@ -696,88 +694,33 @@ int32_t add_task_manual( void *entry_point, int num_args, map_data_entry_t *args
         arg_sizes[i]            = cur_size;
         arg_types[i]            = cur_type;
 
-        void * cur_tgt_entry;
-        if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
-            cur_tgt_entry       = cur_arg;
-        } else {
-            cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
-            chameleon_incr_mem_alloc(cur_size);
-        }
-        arg_tgt_pointers[i]     = cur_tgt_entry;
+        // void * cur_tgt_entry;
+        // if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
+        //     cur_tgt_entry       = cur_arg;
+        // } else {
+        //     cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
+        //     chameleon_incr_mem_alloc(cur_size);
+        // }
+        arg_tgt_pointers[i]     = nullptr;
         arg_tgt_offsets[i]      = 0;
 
         // now call function to submit data
-        chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
+        // chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
     }
 
     cham_migratable_task_t *tmp_task = CreateMigratableTask(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
     // calculate offset to base address
-    intptr_t base_address = _image_base_addresses[99];
-    ptrdiff_t diff = (intptr_t) entry_point - base_address;
+    intptr_t base_address   = _image_base_addresses[99];
+    ptrdiff_t diff          = (intptr_t) entry_point - base_address;
     chameleon_set_img_idx_offset(tmp_task, 99, diff);
+
+    tmp_task->is_manual_task    = 1;
+    tmp_task->arg_hst_pointers  = arg_hst_pointers;
+    tmp_task->arg_sizes         = arg_sizes;
     chameleon_add_task(tmp_task);
-
-    // // cleanup again
-    // for(int i = 0; i < num_args; i++) {
-    //     chameleon_free_data(arg_tgt_pointers[i]);
-    // }
-
-    return CHAM_SUCCESS;
-}
-
-int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...) {
-
-    // Format of variable input args should always be:
-    // 1. void* to data entry
-    // 2. size_t size of data
-    // 3. agument type specifier (also includes information whether it is literal or not)
-
-    std::vector<void *> arg_hst_pointers(num_args);
-    std::vector<int64_t> arg_sizes(num_args);
-    std::vector<int64_t> arg_types(num_args);
-    std::vector<void *> arg_tgt_pointers(num_args);
-    std::vector<ptrdiff_t> arg_tgt_offsets(num_args);
-
-    // maybe we need some kind of unique counter for tgt pointers to be compatible with current solution
-    va_list args;
-    va_start(args, num_args);
-    for(int i = 0; i < num_args; i++) {
-        void * cur_arg          = va_arg(args, void *);
-        int64_t cur_size        = va_arg(args, int64_t);
-        int64_t cur_type        = va_arg(args, int64_t);
-
-        arg_hst_pointers[i]     = cur_arg;
-        arg_sizes[i]            = cur_size;
-        arg_types[i]            = cur_type;
-
-        void * cur_tgt_entry;
-        if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
-            cur_tgt_entry       = cur_arg;
-        } else {
-            cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
-            chameleon_incr_mem_alloc(cur_size);
-        }
-        arg_tgt_pointers[i]     = cur_tgt_entry;
-        arg_tgt_offsets[i]      = 0;
-
-        // now call function to submit data
-        chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
-    }
-    va_end (args);
-
-    cham_migratable_task_t *tmp_task = CreateMigratableTask(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
-    // calculate offset to base address
-    intptr_t base_address = _image_base_addresses[99];
-    ptrdiff_t diff = (intptr_t) entry_point - base_address;
-    chameleon_set_img_idx_offset(tmp_task, 99, diff);
-    tmp_task->is_manual_task = 1;
-    chameleon_add_task(tmp_task);
-
-    // // cleanup again, maybe not the right spot here but more on task finish event
-    // for(int i = 0; i < num_args; i++) {
-    //     chameleon_free_data(arg_tgt_pointers[i]);
-    // }
-
+#ifdef TRACE
+    VT_end(event_add_task);
+#endif
     return CHAM_SUCCESS;
 }
 #pragma endregion Fcns for Data and Tasks
@@ -820,7 +763,7 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
                 std::unordered_map<void* ,migratable_data_entry_t*>::const_iterator got = _data_entries.find(tmp_tgt_ptr);
                 found = got!=_data_entries.end() ? 1 : 0;
                 if(found) {
-                    migratable_data_entry_t* entry    = got->second;
+                    migratable_data_entry_t* entry  = got->second;
                     task->arg_sizes[i]              = entry->size;
                     task->arg_hst_pointers[i]       = entry->hst_ptr;
                 }
@@ -1034,10 +977,6 @@ inline int32_t process_replicated_task() {
         _num_local_tasks_outstanding--;
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
-
-        if(replicated_task->is_manual_task)
-            free_manual_allocated_tgt_pointers(replicated_task);
-
 #ifdef TRACE
         VT_end(event_process_replicated);
 #endif
@@ -1163,10 +1102,6 @@ inline int32_t process_local_task() {
     _load_info_local--;
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
-
-    if(cur_task->is_manual_task)
-        free_manual_allocated_tgt_pointers(cur_task);
-
 #if OFFLOAD_BLOCKING
     _offload_blocked = 0;
 #endif

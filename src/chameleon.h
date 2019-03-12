@@ -86,6 +86,18 @@ typedef enum chameleon_task_status_t {
     CHAM_TASK_STATUS_DONE = 2
 } chameleon_task_status_t;
 
+typedef struct map_data_entry_t {
+    void *valptr;
+    size_t size;
+    int type;
+
+    map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
+        valptr = arg_ptr;
+        size = arg_size;
+        type = arg_type;
+    }
+} map_data_entry_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -140,7 +152,7 @@ int32_t chameleon_taskyield();
 
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
-int32_t chameleon_add_task_manual(void * entry_point, int num_args, ...);
+int32_t chameleon_add_task_manual(void * entry_point, int num_args, map_data_entry_t* args);
 
 int32_t chameleon_add_task_manual_fortran(void * entry_point, int num_args, void *args_info);
 

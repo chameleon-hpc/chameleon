@@ -532,9 +532,6 @@ static void receive_back_handler(void* buffer, int tag, int source) {
        _unfinished_locally_created_tasks.remove(task_entry->task_id);
        _mtx_unfinished_locally_created_tasks.unlock();
 
-        if(task_entry->is_manual_task)
-            free_manual_allocated_tgt_pointers(task_entry);
-
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
@@ -1609,18 +1606,6 @@ void* service_thread_action(void *arg) {
 #pragma endregion Thread Send / Service
 
 #pragma region Helper Functions
-void free_manual_allocated_tgt_pointers(cham_migratable_task_t* task) {
-    // clean up manually allocated target pointers
-    if(task->is_manual_task) {
-        for(int i = 0; i < task->arg_num; i++) {
-            int is_lit = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            if(!is_lit) {
-                chameleon_free_data(task->arg_tgt_pointers[i]);
-            }
-        }
-    }
-}
-
 int exit_condition_met(int print) {
     if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;

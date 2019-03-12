@@ -177,12 +177,6 @@ typedef struct migratable_data_entry_t {
     }
 } migratable_data_entry_t;
 
-typedef struct map_data_entry_t{
-    void *valptr;
-    size_t size;
-    int type;
-} map_data_entry_t;
-
 typedef struct ch_thread_data_t {
     int32_t os_thread_id;
     cham_migratable_task_t * current_task;

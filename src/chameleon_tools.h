@@ -19,7 +19,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_task_schedule               = 6,
     cham_t_callback_sync_region                 = 7,
     cham_t_callback_determine_local_load        = 8,
-    cham_t_callback_compute_num_task_to_offload = 9
+    cham_t_callback_select_num_tasks_to_offload = 9,
+    cham_t_callback_select_tasks_for_migration  = 10
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -130,6 +131,16 @@ typedef union cham_t_data_t {
     void *ptr;
 } cham_t_data_t;
 
+typedef struct cham_t_migration_tupel_t {
+    TYPE_TASK_ID task_id;
+    int32_t rank_id;
+
+    cham_t_migration_tupel_t(TYPE_TASK_ID p_task_id, int32_t p_rank_id) {
+        task_id = p_task_id;
+        rank_id = p_rank_id;
+    }    
+} cham_t_migration_tupel_t;
+
 /*****************************************************************************
  * Init / Finalize / Start Tool
  ****************************************************************************/
@@ -222,16 +233,26 @@ typedef void (*cham_t_callback_sync_region_t) (
 );
 
 typedef int32_t (*cham_t_callback_determine_local_load_t) (
-    int64_t* task_ids_local,
+    TYPE_TASK_ID* task_ids_local,
     int32_t num_ids_local,
-    int64_t* task_ids_stolen,
+    TYPE_TASK_ID* task_ids_stolen,
     int32_t num_ids_stolen
 );
 
 // information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
-typedef void (*cham_t_callback_compute_num_task_to_offload_t) (
+typedef void (*cham_t_callback_select_num_tasks_to_offload_t) (
     int32_t* num_tasks_to_offload_per_rank,
     const int32_t* load_info_per_rank
+);
+
+// information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
+// task annotations can be queried with TODO
+typedef void (*cham_t_callback_select_tasks_for_migration_t) (
+    const int32_t* load_info_per_rank,
+    TYPE_TASK_ID* task_ids_local,
+    int32_t num_ids_local,
+    cham_t_migration_tupel_t* task_migration_tuples,
+    size_t* num_tuples
 );
 
 #pragma endregion

@@ -26,6 +26,10 @@
 #define DPxPTR(ptr) ((int)(2*sizeof(uintptr_t))), ((uintptr_t) (ptr))
 #endif
 
+#ifndef TYPE_TASK_ID
+#define TYPE_TASK_ID int
+#endif
+
 #define CHAMELEON_VERSION 10
 
 // TODO: fix that to have only one place where that is defined
@@ -126,7 +130,7 @@ int chameleon_get_annotation_float(chameleon_annotations_t* ann, char *key, floa
 int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, char** val);
 int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void** val);
 
-chameleon_annotations_t* chameleon_get_task_annotations(int32_t task_id);
+chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id);
 
 // ================================================================================
 // External functions (that can be called from source code or libomptarget)
@@ -140,7 +144,7 @@ cham_migratable_task_t* create_migratable_task(
 
 void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset);
 
-int64_t chameleon_get_task_id(cham_migratable_task_t *task);
+TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task);
 
 int32_t chameleon_init();
 
@@ -162,9 +166,9 @@ void chameleon_incr_mem_alloc(int64_t size);
 
 int32_t chameleon_add_task(cham_migratable_task_t *task);
 
-int32_t chameleon_get_last_local_task_id_added();
+TYPE_TASK_ID chameleon_get_last_local_task_id_added();
 
-int32_t chameleon_local_task_has_finished(int32_t task_id);
+int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id);
 
 int32_t chameleon_wake_up_comm_threads();
 

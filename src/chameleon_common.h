@@ -114,7 +114,7 @@ typedef struct cham_migratable_task_t {
     ptrdiff_t entry_image_offset = 0;
 
     // task id (unique id that combines the host rank and a unique id per rank)
-    int32_t task_id;
+    TYPE_TASK_ID task_id;
 
     // number of arguments that should be passed to "function call" for target region
     int32_t arg_num;
@@ -165,16 +165,6 @@ typedef struct cham_migratable_task_t {
     
 } cham_migratable_task_t;
 
-typedef struct offload_entry_t {
-    cham_migratable_task_t *task_entry;
-    int32_t target_rank;
-
-    offload_entry_t(cham_migratable_task_t *par_task_entry, int32_t par_target_rank) {
-        task_entry = par_task_entry;
-        target_rank = par_target_rank;
-    }
-} offload_entry_t;
-
 typedef struct migratable_data_entry_t {
     void *tgt_ptr;
     void *hst_ptr;
@@ -215,7 +205,7 @@ typedef struct ch_rank_data_t {
 class thread_safe_task_map_t {
     private:
     
-    std::unordered_map<int, cham_migratable_task_t*> task_map;
+    std::unordered_map<TYPE_TASK_ID, cham_migratable_task_t*> task_map;
     std::mutex m;
     std::atomic<size_t> map_size;
 
@@ -231,24 +221,24 @@ class thread_safe_task_map_t {
         return this->map_size <= 0;
     }
 
-    void insert(int task_id, cham_migratable_task_t* task) {
+    void insert(TYPE_TASK_ID task_id, cham_migratable_task_t* task) {
         this->m.lock();
         this->task_map.insert(std::make_pair(task_id, task));
         this->map_size++;
         this->m.unlock();
     }
 
-    void erase(int task_id) {
+    void erase(TYPE_TASK_ID task_id) {
         this->m.lock();
         this->task_map.erase(task_id);
         this->map_size--;
         this->m.unlock();
     }
 
-    cham_migratable_task_t* find(int task_id) {
+    cham_migratable_task_t* find(TYPE_TASK_ID task_id) {
         cham_migratable_task_t* val = nullptr;
         this->m.lock();
-        std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
+        std::unordered_map<TYPE_TASK_ID ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
         if(got != this->task_map.end()) {
             val = got->second;
         }
@@ -256,10 +246,10 @@ class thread_safe_task_map_t {
         return val;
     }
 
-    cham_migratable_task_t* find_and_erase(int task_id) {
+    cham_migratable_task_t* find_and_erase(TYPE_TASK_ID task_id) {
         cham_migratable_task_t* val = nullptr;
         this->m.lock();
-        std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
+        std::unordered_map<TYPE_TASK_ID ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
         if(got != this->task_map.end()) {
             val = got->second;
             this->task_map.erase(task_id);
@@ -361,9 +351,9 @@ class thread_safe_task_list_t {
         return ret_val;
     }
 
-    int64_t* get_task_ids(int32_t* num_ids) {
+    TYPE_TASK_ID* get_task_ids(int32_t* num_ids) {
         this->m.lock();
-        int64_t *vec = (int64_t *) malloc(this->task_list.size() * sizeof(int64_t));
+        TYPE_TASK_ID *vec = (TYPE_TASK_ID *) malloc(this->task_list.size() * sizeof(TYPE_TASK_ID));
         *num_ids = this->task_list.size();
         size_t count = 0;
         for (std::list<cham_migratable_task_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
@@ -437,7 +427,7 @@ extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
 // atomic counter for task ids
-extern std::atomic<int32_t> _task_id_counter;
+extern std::atomic<TYPE_TASK_ID> _task_id_counter;
 
 // atomic counter for thread ids
 extern std::atomic<int32_t> _thread_counter;

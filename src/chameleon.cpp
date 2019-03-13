@@ -27,13 +27,13 @@ std::atomic<long> mem_allocated;
 #endif
 // flag that tells whether library has already been initialized
 std::mutex _mtx_ch_is_initialized;
-int32_t _ch_is_initialized = 0;
+std::atomic<bool> _ch_is_initialized(false);
 // atomic counter for task ids
-std::atomic<int32_t> _task_id_counter(0);
+std::atomic<TYPE_TASK_ID> _task_id_counter(0);
 
 // id of last task that has been created by thread.
 // this is thread local storage
-__thread int32_t __last_task_id_added = -1;
+__thread TYPE_TASK_ID __last_task_id_added = -1;
 
 // list with data that has been mapped in map clauses
 std::mutex _mtx_data_entry;
@@ -44,7 +44,7 @@ std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
 #endif
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
-thread_safe_list_t<int32_t> _unfinished_locally_created_tasks;
+thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 #pragma endregion Variables
 
 #ifdef __cplusplus
@@ -56,11 +56,9 @@ extern "C" {
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
 int32_t lookup_hst_pointers(cham_migratable_task_t *task);
-// int32_t add_offload_entry(cham_migratable_task_t *task, int rank);
 int32_t execute_target_task(cham_migratable_task_t *task);
 int32_t process_local_task();
 int32_t process_remote_task();
-int32_t add_task_manual( void *entry_func,int nargs, chameleon_map_data_entry_t *args); 
 int32_t process_replicated_task();
 #pragma endregion Forward Declarations
 
@@ -150,7 +148,7 @@ int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void**
     return found;
 }
 
-chameleon_annotations_t* chameleon_get_task_annotations(int32_t task_id) {
+chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id) {
     cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
     if(task)
         return &(task->task_annotations);
@@ -178,7 +176,7 @@ void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx,
     task->entry_image_offset = entry_image_offset;
 }
 
-int64_t chameleon_get_task_id(cham_migratable_task_t *task) {
+TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task) {
     return task->task_id;
 }
 
@@ -281,7 +279,7 @@ int32_t chameleon_init() {
     #endif
         
     // set flag to ensure that only a single thread is initializing
-    _ch_is_initialized = 1;
+    _ch_is_initialized = true;
     _mtx_ch_is_initialized.unlock();
     return CHAM_SUCCESS;
 }
@@ -290,7 +288,6 @@ int32_t chameleon_thread_init() {
     if(!_ch_is_initialized) {
         chameleon_init();
     }
-    
     // make sure basic stuff is initialized
     int32_t gtid = __ch_get_gtid();
 
@@ -698,7 +695,7 @@ void chameleon_free_data(void *tgt_ptr) {
 }
 
 int32_t chameleon_add_task(cham_migratable_task_t *task) {
-    DBP("chameleon_add_task (enter) - task_entry (task_id=%d): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+    DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
     
     // perform lookup only when task has been created with libomptarget
@@ -730,14 +727,14 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     return CHAM_SUCCESS;
 }
 
-int32_t chameleon_get_last_local_task_id_added() {
+TYPE_TASK_ID chameleon_get_last_local_task_id_added() {
     return __last_task_id_added;
 }
 
 /*
  * Checks whether the corresponding task has already been finished
  */
-int32_t chameleon_local_task_has_finished(int32_t task_id) {
+int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id) {
     bool found = _unfinished_locally_created_tasks.find(task_id);
     return found ? 0 : 1;
 }
@@ -809,7 +806,7 @@ int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args
 
 #pragma region Fcns for Lookups and Execution
 int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
-    DBP("lookup_hst_pointers (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
+    DBP("lookup_hst_pointers (enter) - task_entry (task_id=%ld): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     for(int i = 0; i < task->arg_num; i++) {
         // get type and pointer
         int64_t tmp_type    = task->arg_types[i];
@@ -904,7 +901,7 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
 }
 
 int32_t execute_target_task(cham_migratable_task_t *task) {
-    DBP("execute_target_task (enter) - task_entry (task_id=%d): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
+    DBP("execute_target_task (enter) - task_entry (task_id=%ld): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
     int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
     ffi_cif cif;

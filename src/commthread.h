@@ -66,7 +66,7 @@ extern std::atomic<int32_t> _offload_blocked;
 #endif
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
-extern thread_safe_list_t<int32_t> _unfinished_locally_created_tasks;
+extern thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 
 // Threading section
 extern int _comm_thread_load_exchange_happend;
@@ -90,7 +90,7 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 
 void cancel_offloaded_task(cham_migratable_task_t *task);
 
-int32_t offload_task_to_rank(offload_entry_t *entry);
+int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank);
 
 void* receive_remote_tasks(void *arg);
 

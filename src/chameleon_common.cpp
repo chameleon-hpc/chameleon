@@ -34,10 +34,10 @@ cham_migratable_task_t::cham_migratable_task_t(
     int32_t p_arg_num) : sync_commthread_lock(false) {
         
     // generate a unique task id
-    int tmp_counter = ++_task_id_counter;
+    TYPE_TASK_ID tmp_counter = ++_task_id_counter;
     // int tmp_rank = chameleon_comm_rank;
     task_id = (chameleon_comm_rank << 16) | (tmp_counter);
-    // DBP("cham_migratable_task_t - Created task with (task_id=%d)\n", task_id);
+    // DBP("cham_migratable_task_t - Created task with (task_id=%ld)\n", task_id);
 
     tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;
     arg_num = p_arg_num;

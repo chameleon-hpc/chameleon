@@ -16,7 +16,8 @@ typedef struct cham_t_callbacks_active_s {
     cham_t_callback_decode_task_tool_data_t         cham_t_callback_decode_task_tool_data       = nullptr;
     cham_t_callback_sync_region_t                   cham_t_callback_sync_region                 = nullptr;
     cham_t_callback_determine_local_load_t          cham_t_callback_determine_local_load        = nullptr;
-    cham_t_callback_compute_num_task_to_offload_t   cham_t_callback_compute_num_task_to_offload = nullptr;
+    cham_t_callback_select_num_tasks_to_offload_t   cham_t_callback_select_num_tasks_to_offload = nullptr;
+    cham_t_callback_select_tasks_for_migration_t    cham_t_callback_select_tasks_for_migration  = nullptr;
 
 } cham_t_callbacks_active_t;
 
@@ -32,6 +33,7 @@ void cham_t_fini(void);
 
 cham_t_data_t * cham_t_get_thread_data(void);
 cham_t_data_t * cham_t_get_rank_data(void);
+cham_t_data_t * cham_t_get_task_data(TYPE_TASK_ID task_id);
 
 #ifdef __cplusplus
 };

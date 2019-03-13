@@ -80,33 +80,58 @@ typedef enum chameleon_result_types_t {
     CHAM_REPLICATED_TASK_FAILURE = 11 
 } chameleon_result_types_t;
 
-typedef enum chameleon_task_status_t {
-    CHAM_TASK_STATUS_OPEN = 0,
-    CHAM_TASK_STATUS_PROCESSING = 1,
-    CHAM_TASK_STATUS_DONE = 2
-} chameleon_task_status_t;
-
-typedef struct map_data_entry_t {
+typedef struct chameleon_map_data_entry_t {
     void *valptr;
     size_t size;
     int type;
 
-    map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
+    chameleon_map_data_entry_t() { }
+
+    chameleon_map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
         valptr = arg_ptr;
         size = arg_size;
         type = arg_type;
     }
-} map_data_entry_t;
+
+} chameleon_map_data_entry_t;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+// opaque object representing annotation container
+struct chameleon_annotations_t;
+typedef struct chameleon_annotations_t chameleon_annotations_t;
+
 // opaque object representing migratable task
 struct cham_migratable_task_t;
 typedef struct cham_migratable_task_t cham_migratable_task_t;
 
-extern cham_migratable_task_t* CreateMigratableTask(
+// ================================================================================
+// Handling annotations
+// ================================================================================
+chameleon_annotations_t* chameleon_create_annotation_container();
+
+int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value);
+int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value);
+int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value);
+int chameleon_set_annotation_float(chameleon_annotations_t* ann, char *key, float value);
+int chameleon_set_annotation_string(chameleon_annotations_t* ann, char *key, char *value);
+int chameleon_set_annotation_ptr(chameleon_annotations_t* ann, char *key, void *value);
+
+int chameleon_get_annotation_int(chameleon_annotations_t* ann, char *key, int* val);
+int chameleon_get_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t* val);
+int chameleon_get_annotation_double(chameleon_annotations_t* ann, char *key, double* val);
+int chameleon_get_annotation_float(chameleon_annotations_t* ann, char *key, float* val);
+int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, char** val);
+int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void** val);
+
+chameleon_annotations_t* chameleon_get_task_annotations(int32_t task_id);
+
+// ================================================================================
+// External functions (that can be called from source code or libomptarget)
+// ================================================================================
+cham_migratable_task_t* create_migratable_task(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
@@ -117,9 +142,6 @@ void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx,
 
 int64_t chameleon_get_task_id(cham_migratable_task_t *task);
 
-// ================================================================================
-// External functions (that can be called from source code or libomptarget)
-// ================================================================================
 int32_t chameleon_init();
 
 int32_t chameleon_thread_init();
@@ -144,15 +166,15 @@ int32_t chameleon_get_last_local_task_id_added();
 
 int32_t chameleon_local_task_has_finished(int32_t task_id);
 
-int32_t wake_up_comm_threads();
-
-int32_t put_comm_threads_to_sleep();
+int32_t chameleon_wake_up_comm_threads();
 
 int32_t chameleon_taskyield();
 
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
-int32_t chameleon_add_task_manual(void * entry_point, int num_args, map_data_entry_t* args);
+int32_t chameleon_add_task_manual(void * entry_point, int num_args, chameleon_map_data_entry_t* args);
+
+int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t* args, chameleon_annotations_t* ann);
 
 int32_t chameleon_add_task_manual_fortran(void * entry_point, int num_args, void *args_info);
 

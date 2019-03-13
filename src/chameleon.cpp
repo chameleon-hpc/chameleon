@@ -44,8 +44,7 @@ std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
 #endif
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
-std::mutex _mtx_unfinished_locally_created_tasks;
-std::list<int32_t> _unfinished_locally_created_tasks;
+thread_safe_list_t<int32_t> _unfinished_locally_created_tasks;
 #pragma endregion Variables
 
 #ifdef __cplusplus
@@ -61,12 +60,106 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
 int32_t process_local_task();
 int32_t process_remote_task();
-int32_t add_task_manual( void *entry_func,int nargs, map_data_entry_t *args); 
+int32_t add_task_manual( void *entry_func,int nargs, chameleon_map_data_entry_t *args); 
 int32_t process_replicated_task();
 #pragma endregion Forward Declarations
 
+#pragma region Annotations
+chameleon_annotations_t* chameleon_create_annotation_container() {
+    chameleon_annotations_t* container = new chameleon_annotations_t();
+    return container;
+}
+
+int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value) {
+    cham_annotation_value_t val;
+    val.val_int32 = value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value) {
+    cham_annotation_value_t val;
+    val.val_int64 = value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value) {
+    cham_annotation_value_t val;
+    val.val_double = value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int chameleon_set_annotation_float(chameleon_annotations_t* ann, char *key, float value) {
+    cham_annotation_value_t val;
+    val.val_float = value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int chameleon_set_annotation_string(chameleon_annotations_t* ann, char *key, char *value) {
+    cham_annotation_value_t val;
+    val.val_ptr = (void*)value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int chameleon_set_annotation_ptr(chameleon_annotations_t* ann, char *key, void *value) {
+    cham_annotation_value_t val;
+    val.val_ptr = value;
+    ann->anno.insert(std::make_pair(std::string(key), val));
+}
+
+int get_annotation_general(chameleon_annotations_t* ann, char* key, cham_annotation_value_t* val) {
+    std::unordered_map<std::string,cham_annotation_value_t>::const_iterator got = ann->anno.find(std::string(key));
+    bool match = got != ann->anno.end();
+    if(match) {
+        *val = got->second;
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int chameleon_get_annotation_int(chameleon_annotations_t* ann, char *key, int* val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = tmp.val_int32;
+    return found;
+}
+
+int chameleon_get_annotation_double(chameleon_annotations_t* ann, char *key, double* val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = tmp.val_double;
+    return found;
+}
+
+int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, char** val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = (char*)tmp.val_ptr;
+        // strcpy(val, (char*)tmp.val_ptr);
+    return found;
+}
+
+int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void** val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = tmp.val_ptr;
+    return found;
+}
+
+chameleon_annotations_t* chameleon_get_task_annotations(int32_t task_id) {
+    cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
+    if(task)
+        return &(task->task_annotations);
+    return nullptr;
+}
+#pragma endregion Annotations
+
 #pragma region Init / Finalize / Helper
-cham_migratable_task_t* CreateMigratableTask(
+cham_migratable_task_t* create_migratable_task(
         void *p_tgt_entry_ptr, 
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
@@ -354,7 +447,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     
     #if THREAD_ACTIVATION
     // need to wake threads up if not already done
-    wake_up_comm_threads();
+    chameleon_wake_up_comm_threads();
 
     // increment counter to tell that another thread joined taskwait
     _num_threads_entered_taskwait++;
@@ -625,9 +718,8 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     // set id of last task added
     __last_task_id_added = task->task_id;
 
-    _mtx_unfinished_locally_created_tasks.lock();
     _unfinished_locally_created_tasks.push_back(task->task_id);
-    _mtx_unfinished_locally_created_tasks.unlock();
+    _map_overall_tasks.insert(task->task_id, task);
     
     _mtx_load_exchange.lock();
     _load_info_local++;
@@ -646,9 +738,7 @@ int32_t chameleon_get_last_local_task_id_added() {
  * Checks whether the corresponding task has already been finished
  */
 int32_t chameleon_local_task_has_finished(int32_t task_id) {
-    _mtx_unfinished_locally_created_tasks.lock();
-    bool found = (std::find(_unfinished_locally_created_tasks.begin(), _unfinished_locally_created_tasks.end(), task_id) != _unfinished_locally_created_tasks.end());
-    _mtx_unfinished_locally_created_tasks.unlock();
+    bool found = _unfinished_locally_created_tasks.find(task_id);
     return found ? 0 : 1;
 }
 
@@ -656,17 +746,17 @@ int32_t chameleon_local_task_has_finished(int32_t task_id) {
 * As variadic function are not supported, this compatibility function is provided
 */
 int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void *args_info) {
-    map_data_entry_t *args_entries = (map_data_entry_t *) args_info;   
+    chameleon_map_data_entry_t *args_entries = (chameleon_map_data_entry_t *) args_info;   
     chameleon_add_task_manual(entry_point, num_args, args_entries);
 
     return CHAM_SUCCESS;
 }
 
-/*
-* Helper function that adds task when arguments are provided as an array of MapEntries
-*/
-int32_t chameleon_add_task_manual(void *entry_point, int num_args, map_data_entry_t *args) {
+int32_t chameleon_add_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args) {
+    return chameleon_add_task_manual_w_annotations(entry_point, num_args, args, nullptr);
+}
 
+int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t* args, chameleon_annotations_t* ann) {
     // Format of variable input args should always be:
     // 1. void* to data entry
     // 2. size_t size of data
@@ -679,11 +769,11 @@ int32_t chameleon_add_task_manual(void *entry_point, int num_args, map_data_entr
     VT_begin(event_add_task);
 #endif
 
-    std::vector<void *> arg_hst_pointers(num_args);
-    std::vector<int64_t> arg_sizes(num_args);
-    std::vector<int64_t> arg_types(num_args);
-    std::vector<void *> arg_tgt_pointers(num_args);
-    std::vector<ptrdiff_t> arg_tgt_offsets(num_args);
+    std::vector<void *>     arg_hst_pointers(num_args);
+    std::vector<int64_t>    arg_sizes(num_args);
+    std::vector<int64_t>    arg_types(num_args);
+    std::vector<void *>     arg_tgt_pointers(num_args);
+    std::vector<ptrdiff_t>  arg_tgt_offsets(num_args);
 
     for(int i = 0; i < num_args; i++) {
         void * cur_arg          = args[i].valptr;
@@ -693,22 +783,11 @@ int32_t chameleon_add_task_manual(void *entry_point, int num_args, map_data_entr
         arg_hst_pointers[i]     = cur_arg;
         arg_sizes[i]            = cur_size;
         arg_types[i]            = cur_type;
-
-        // void * cur_tgt_entry;
-        // if(cur_type & CHAM_OMP_TGT_MAPTYPE_LITERAL) {
-        //     cur_tgt_entry       = cur_arg;
-        // } else {
-        //     cur_tgt_entry       = malloc(1); // dummy just used for current infrastructure (target offloading works that way) - will be mapped to src ptrs again
-        //     chameleon_incr_mem_alloc(cur_size);
-        // }
         arg_tgt_pointers[i]     = nullptr;
         arg_tgt_offsets[i]      = 0;
-
-        // now call function to submit data
-        // chameleon_submit_data(cur_tgt_entry, cur_arg, cur_size);
     }
 
-    cham_migratable_task_t *tmp_task = CreateMigratableTask(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
+    cham_migratable_task_t *tmp_task = create_migratable_task(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0], &arg_types[0], num_args);
     // calculate offset to base address
     intptr_t base_address   = _image_base_addresses[99];
     ptrdiff_t diff          = (intptr_t) entry_point - base_address;
@@ -717,6 +796,9 @@ int32_t chameleon_add_task_manual(void *entry_point, int num_args, map_data_entr
     tmp_task->is_manual_task    = 1;
     tmp_task->arg_hst_pointers  = arg_hst_pointers;
     tmp_task->arg_sizes         = arg_sizes;
+    if(ann) {
+        tmp_task->task_annotations = *ann;
+    }
     chameleon_add_task(tmp_task);
 #ifdef TRACE
     VT_end(event_add_task);
@@ -969,9 +1051,8 @@ inline int32_t process_replicated_task() {
 #endif
       
         // mark locally created task finished
-        _mtx_unfinished_locally_created_tasks.lock();
         _unfinished_locally_created_tasks.remove(replicated_task->task_id);
-        _mtx_unfinished_locally_created_tasks.unlock();
+        _map_overall_tasks.erase(replicated_task->task_id);
  
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
@@ -995,14 +1076,14 @@ inline int32_t process_replicated_task() {
 inline int32_t process_remote_task() {
     DBP("process_remote_task (enter)\n");
     
-    cham_migratable_task_t *remote_task = nullptr;
+    cham_migratable_task_t *task = nullptr;
 
     if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
 
-    remote_task = _stolen_remote_tasks.pop_front();
+    task = _stolen_remote_tasks.pop_front();
 
-    if(!remote_task)
+    if(!task)
         return CHAM_REMOTE_TASK_NONE;
 
 #ifdef TRACE
@@ -1017,7 +1098,7 @@ inline int32_t process_remote_task() {
 #if CHAM_STATS_RECORD
     double cur_time = omp_get_wtime();
 #endif
-    int32_t res = execute_target_task(remote_task);
+    int32_t res = execute_target_task(task);
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - remote");
 #if CHAM_STATS_RECORD
@@ -1026,9 +1107,8 @@ inline int32_t process_remote_task() {
     _time_task_execution_stolen_count++;
 #endif
  
-    _mtx_map_tag_to_stolen_task.lock();
-    _map_tag_to_stolen_task.erase(remote_task->task_id);
-    _mtx_map_tag_to_stolen_task.unlock();  
+    _map_tag_to_stolen_task.erase(task->task_id);
+    _map_overall_tasks.erase(task->task_id);
 
     // decrement load counter
     _mtx_load_exchange.lock();
@@ -1040,9 +1120,9 @@ inline int32_t process_remote_task() {
     _offload_blocked = 0;
 #endif
 
-    if(remote_task->HasAtLeastOneOutput()) {
+    if(task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
-        _stolen_remote_tasks_send_back.push_back(remote_task);
+        _stolen_remote_tasks_send_back.push_back(task);
     } else {
         // we can now decrement outstanding counter because there is nothing to send back
         _mtx_load_exchange.lock();
@@ -1061,8 +1141,8 @@ inline int32_t process_remote_task() {
 }
 
 inline int32_t process_local_task() {
-    cham_migratable_task_t *cur_task = _local_tasks.pop_front();
-    if(!cur_task)
+    cham_migratable_task_t *task = _local_tasks.pop_front();
+    if(!task)
         return CHAM_LOCAL_TASK_NONE;
 
 #ifdef TRACE
@@ -1080,7 +1160,7 @@ inline int32_t process_local_task() {
 #ifdef TRACE
     VT_begin(event_process_local);
 #endif
-    int32_t res = execute_target_task(cur_task);
+    int32_t res = execute_target_task(task);
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - local");
 #ifdef TRACE
@@ -1092,9 +1172,8 @@ inline int32_t process_local_task() {
     _time_task_execution_local_count++;
 #endif
     // mark locally created task finished
-    _mtx_unfinished_locally_created_tasks.lock();
-    _unfinished_locally_created_tasks.remove(cur_task->task_id);
-    _mtx_unfinished_locally_created_tasks.unlock();
+    _unfinished_locally_created_tasks.remove(task->task_id);
+    _map_overall_tasks.erase(task->task_id);
 
     // it is save to decrement counter after local execution
     _mtx_load_exchange.lock();

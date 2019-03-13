@@ -29,6 +29,7 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <unordered_map>
 
 #include "chameleon.h"
 
@@ -92,6 +93,19 @@
 #endif
 
 #pragma region Type Definitions
+typedef union cham_annotation_value_t {
+    int64_t     val_int64;
+    int32_t     val_int32;
+    double      val_double;
+    float       val_float;
+    void*       val_ptr;
+} cham_annotation_value_t;
+
+typedef struct chameleon_annotations_t {
+    std::unordered_map<std::string, cham_annotation_value_t> anno;
+    chameleon_annotations_t() { }
+} chameleon_annotations_t;
+
 typedef struct cham_migratable_task_t {
     // target entry point / function that holds the code that should be executed
     intptr_t tgt_entry_ptr;
@@ -126,6 +140,8 @@ typedef struct cham_migratable_task_t {
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
     std::atomic<bool> sync_commthread_lock;
+
+    chameleon_annotations_t task_annotations;
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t task_tool_data;
@@ -196,7 +212,64 @@ typedef struct ch_rank_data_t {
 #endif    
 } ch_rank_data_t;
 
-class thread_safe_task_list {
+class thread_safe_task_map_t {
+    private:
+    
+    std::unordered_map<int, cham_migratable_task_t*> task_map;
+    std::mutex m;
+    std::atomic<size_t> map_size;
+
+    public:
+
+    thread_safe_task_map_t() { map_size = 0; }
+
+    size_t size() {
+        return this->map_size.load();
+    }
+
+    bool empty() {
+        return this->map_size <= 0;
+    }
+
+    void insert(int task_id, cham_migratable_task_t* task) {
+        this->m.lock();
+        this->task_map.insert(std::make_pair(task_id, task));
+        this->map_size++;
+        this->m.unlock();
+    }
+
+    void erase(int task_id) {
+        this->m.lock();
+        this->task_map.erase(task_id);
+        this->map_size--;
+        this->m.unlock();
+    }
+
+    cham_migratable_task_t* find(int task_id) {
+        cham_migratable_task_t* val = nullptr;
+        this->m.lock();
+        std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
+        if(got != this->task_map.end()) {
+            val = got->second;
+        }
+        this->m.unlock();
+        return val;
+    }
+
+    cham_migratable_task_t* find_and_erase(int task_id) {
+        cham_migratable_task_t* val = nullptr;
+        this->m.lock();
+        std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = this->task_map.find(task_id);
+        if(got != this->task_map.end()) {
+            val = got->second;
+            this->task_map.erase(task_id);
+        }
+        this->m.unlock();
+        return val;
+    }
+};
+
+class thread_safe_task_list_t {
     private:
     
     std::list<cham_migratable_task_t*> task_list;
@@ -206,7 +279,7 @@ class thread_safe_task_list {
 
     public:
 
-    thread_safe_task_list() { list_size = 0; }
+    thread_safe_task_list_t() { list_size = 0; }
 
     size_t size() {
         return this->list_size.load();
@@ -303,17 +376,16 @@ class thread_safe_task_list {
 };
 
 template<class T>
-class thread_safe_list {
+class thread_safe_list_t {
     private:
     
     std::list<T> list;
     std::mutex m;
-    // size_t list_size = 0;
     std::atomic<size_t> list_size;
 
     public:
 
-    thread_safe_list() { list_size = 0; }
+    thread_safe_list_t() { list_size = 0; }
 
     size_t size() {
         return this->list_size.load();
@@ -323,16 +395,17 @@ class thread_safe_list {
         return this->list_size <= 0;
     }
 
-    void push_back(T* entry) {
+    void push_back(T entry) {
         this->m.lock();
         this->list.push_back(entry);
         this->list_size++;
         this->m.unlock();
     }
 
-    void remove(T* entry) {
+    void remove(T entry) {
         this->m.lock();
         this->list.remove(entry);
+        this->list_size--;
         this->m.unlock();
     } 
 
@@ -350,6 +423,11 @@ class thread_safe_list {
         }
         this->m.unlock();
         return ret_val;
+    }
+
+    bool find(T entry) {
+        bool found = (std::find(this->list.begin(), this->list.end(), entry) != this->list.end());
+        return found;
     }
 };
 #pragma endregion

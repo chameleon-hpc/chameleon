@@ -11,9 +11,6 @@
 #include <numeric>
 #include <sched.h>
 #include <hwloc.h>
-#include <omp.h>
-#include <algorithm>
-#include <unordered_map>
 #include <functional>
 
 #ifdef TRACE
@@ -49,28 +46,27 @@ std::vector<intptr_t> _image_base_addresses;
 
 // list with local task entries
 // these can either be executed here or offloaded to a different rank (i.e., become replicated tasks)
-thread_safe_task_list _local_tasks;
+thread_safe_task_list_t _local_tasks;
 std::atomic<int32_t> _num_local_tasks_outstanding(0);
 
 // list with stolen task entries that should be executed but may be cancelled if task is executed on origin rank
-thread_safe_task_list _stolen_remote_tasks;
+thread_safe_task_list_t _stolen_remote_tasks;
 std::atomic<int32_t> _num_stolen_tasks_outstanding(0);
 
 // list with replicated (i.e. offloaded) task entries
 // these can either be executed remotely or locally
-thread_safe_task_list _replicated_tasks;
+thread_safe_task_list_t _replicated_tasks;
 std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
 
 // list with stolen task entries that need output data transfer
-thread_safe_task_list _stolen_remote_tasks_send_back;
+thread_safe_task_list_t _stolen_remote_tasks_send_back;
 
+// map that maps tag ids back to local tasks that have been offloaded and expect result data
+thread_safe_task_map_t _map_offloaded_tasks_with_outputs;
 // map that maps tag ids back to stolen tasks
-std::mutex _mtx_map_tag_to_stolen_task;
-std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_stolen_task;
-
-// map that maps tag ids back to local tasks that have been offloaded
-std::mutex _mtx_map_tag_to_local_task;
-std::unordered_map<int, cham_migratable_task_t*> _map_tag_to_local_task;
+thread_safe_task_map_t _map_tag_to_stolen_task;
+// mapping of all active task ids and task
+thread_safe_task_map_t _map_overall_tasks;
 
 // ====== Info about outstanding jobs (local & stolen) ======
 // extern std::mutex _mtx_outstanding_jobs;
@@ -203,7 +199,7 @@ int32_t start_communication_threads() {
     return CHAM_SUCCESS;
 }
 
-int32_t wake_up_comm_threads() {
+int32_t chameleon_wake_up_comm_threads() {
     // check wether communication threads have already been started. Otherwise do so.
     // Usually that should not be necessary if done in init
     // start_communication_threads();
@@ -219,7 +215,7 @@ int32_t wake_up_comm_threads() {
         return CHAM_SUCCESS;
     }
 
-    DBP("wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
+    DBP("chameleon_wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
 
     #if CHAM_STATS_RECORD
         cham_stats_reset_for_sync_cycle();
@@ -228,7 +224,7 @@ int32_t wake_up_comm_threads() {
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _num_threads_entered_taskwait       = 0;
     _num_threads_idle                   = 0;
-    DBP("wake_up_comm_threads       - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
+    DBP("chameleon_wake_up_comm_threads       - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
 
     // indicating that this has not happend yet for the current sync cycle
     _comm_thread_load_exchange_happend  = 0;
@@ -236,7 +232,7 @@ int32_t wake_up_comm_threads() {
     _flag_comm_threads_sleeping         = 0;
 
     _mtx_taskwait.unlock();
-    DBP("wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
+    DBP("chameleon_wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
     return CHAM_SUCCESS;
 }
 
@@ -474,9 +470,8 @@ static void receive_handler(void* buffer, int tag, int source) {
     // add task to stolen list and increment counter
     _stolen_remote_tasks.push_back(task);
 
-    _mtx_map_tag_to_stolen_task.lock();
-    _map_tag_to_stolen_task.insert(std::make_pair(tag, task));
-    _mtx_map_tag_to_stolen_task.unlock();
+    _map_tag_to_stolen_task.insert(tag, task);
+    _map_overall_tasks.insert(tag, task);
 
     _mtx_load_exchange.lock();
     _num_stolen_tasks_outstanding++;
@@ -495,18 +490,8 @@ static void receive_back_handler(void* buffer, int tag, int source) {
     DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", source, 
                                                                                    tag); 
 
-    bool match = false;
-    _mtx_map_tag_to_local_task.lock();
-    std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_local_task.find(tag);
-    match = got != _map_tag_to_local_task.end();
-    if(match) {
-        _map_tag_to_local_task.erase(tag);
-    }
-    _mtx_map_tag_to_local_task.unlock(); 
-
-    cham_migratable_task_t *task_entry;
-    if(match) {
-        task_entry = got->second;
+    cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find_and_erase(tag);
+    if(task_entry) {
 //only if data is packed, we need to copy it out
 #if OFFLOAD_DATA_PACKING_TYPE == 0
         // copy results back to source pointers with memcpy
@@ -525,12 +510,11 @@ static void receive_back_handler(void* buffer, int tag, int source) {
        }
        free(buffer);
 #endif
-       _num_offloaded_tasks_outstanding--;
+        _num_offloaded_tasks_outstanding--;
 
-       // mark locally created task finished
-       _mtx_unfinished_locally_created_tasks.lock();
-       _unfinished_locally_created_tasks.remove(task_entry->task_id);
-       _mtx_unfinished_locally_created_tasks.unlock();
+        // mark locally created task finished
+        _unfinished_locally_created_tasks.remove(task_entry->task_id);
+        _map_overall_tasks.erase(task_entry->task_id);
 
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
@@ -661,9 +645,7 @@ void* offload_action(void *v_entry) {
    }
 #endif
     if(has_outputs) {
-        _mtx_map_tag_to_local_task.lock();
-        _map_tag_to_local_task.insert(std::make_pair(tmp_tag, entry->task_entry));
-        _mtx_map_tag_to_local_task.unlock();
+        _map_offloaded_tasks_with_outputs.insert(tmp_tag, entry->task_entry);
     }
 #if CHAM_STATS_RECORD                            
     cur_time = omp_get_wtime()-cur_time;
@@ -999,14 +981,8 @@ void* receive_remote_tasks(void* arg) {
             MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel.MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
             DBP("receive_remote_tasks - received cancel request for task_id %d\n", task_id);
  
-            cham_migratable_task_t *task = nullptr;
-            _mtx_map_tag_to_stolen_task.lock();
-            std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_stolen_task.find(task_id);
-            bool match = got!=_map_tag_to_stolen_task.end();
-            _mtx_map_tag_to_stolen_task.unlock();
-            
-            if(match) {
-              task = got->second;
+            cham_migratable_task_t *task = _map_tag_to_stolen_task.find(task_id);            
+            if(task) {
               // TODO: we need to check if task is currently processed -> CAS again to reserve task either for processing or for removal from the queue
               bool expected = false;
               bool desired = true;
@@ -1014,11 +990,8 @@ void* receive_remote_tasks(void* arg) {
               if(task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
                 DBP("receive_remote_tasks - cancelling task with task_id %d\n", task_id);
                 _stolen_remote_tasks.remove(task);
-  
-                
-                _mtx_map_tag_to_stolen_task.lock();
                 _map_tag_to_stolen_task.erase(task->task_id);
-                _mtx_map_tag_to_stolen_task.unlock();  
+                _map_overall_tasks.erase(task->task_id);
 
                 // decrement load counter and ignore send back
                 _mtx_load_exchange.lock();
@@ -1035,20 +1008,10 @@ void* receive_remote_tasks(void* arg) {
         }  
 
         if( flag_open_request_receiveBack ) {
-            bool match = false;
-	        _mtx_map_tag_to_local_task.lock();
-            std::unordered_map<int ,cham_migratable_task_t*>::const_iterator got = _map_tag_to_local_task.find(cur_status_receiveBack.MPI_TAG);
-            match = got != _map_tag_to_local_task.end();
-            _mtx_map_tag_to_local_task.unlock();
-
-            if(match) {
-                //get task and receive data directly into task data
-	            cham_migratable_task_t *task_entry;
-                task_entry = got->second;
-
+            cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack.MPI_TAG);
+            if(task_entry) {
                 DBP("receive_remote_tasks - receiving back task with id %d\n", task_entry->task_id);
   
-
                 // check if we still need to receive the task data back or replicated task is executed locally already
                 bool expected = false;
                 bool desired = true;

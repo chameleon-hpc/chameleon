@@ -1233,10 +1233,7 @@ void* service_thread_action(void *arg) {
     DBP("service_thread_action (enter)\n");
     while(true) {
         request_manager_cancel.progressRequests();
-
         request_manager_send.progressRequests();
-
-        cham_migratable_task_t* cur_task = nullptr;
 
         #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
@@ -1427,12 +1424,12 @@ void* service_thread_action(void *arg) {
                 int32_t num_tuples = 0;
 #if CHAMELEON_TOOL_SUPPORT
                 if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_tasks_for_migration) {
-                    strategy_type = 2;
+                    strategy_type = 1;
                     ids_local = _local_tasks.get_task_ids(&num_ids_local);
                     migration_tupels = cham_t_status.cham_t_callback_select_tasks_for_migration(&(_load_info_ranks[0]), ids_local, num_ids_local, &num_tuples);
                     free(ids_local);
                 } else if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_offload) {
-                    strategy_type = 1;
+                    strategy_type = 0;
                     cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
                 } else {
                     strategy_type = 0;
@@ -1445,7 +1442,7 @@ void* service_thread_action(void *arg) {
 #ifdef TRACE
                 VT_end(event_offload_decision);
 #endif
-                if(strategy_type == 2)
+                if(strategy_type == 1)
                 {
                     // strategy type that uses tupels of task_id and target rank
                     if(migration_tupels) {
@@ -1456,7 +1453,7 @@ void* service_thread_action(void *arg) {
                             // get task by id
                             cham_migratable_task_t* task = _local_tasks.pop_task_by_id(cur_task_id);
                             if(task) {
-                                offload_task_to_rank(cur_task, cur_rank_id);
+                                offload_task_to_rank(task, cur_rank_id);
                                 offload_triggered = 1;
 #if OFFLOAD_BLOCKING
                                 _offload_blocked = 1;
@@ -1470,10 +1467,10 @@ void* service_thread_action(void *arg) {
                         if(r != chameleon_comm_rank) {
                             int targetOffloadedTasks = tasksToOffload[r];
                             for(int t=0; t<targetOffloadedTasks; t++) {
-                                cham_migratable_task_t *cur_task = _local_tasks.pop_front();
-                                if(cur_task) {
+                                cham_migratable_task_t *task = _local_tasks.pop_front();
+                                if(task) {
                                     DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
-                                    offload_task_to_rank(cur_task, r);
+                                    offload_task_to_rank(task, r);
                                     offload_triggered = 1;
 #if OFFLOAD_BLOCKING
                                     _offload_blocked = 1;
@@ -1495,7 +1492,7 @@ void* service_thread_action(void *arg) {
             continue;
         }
 
-        cur_task = _stolen_remote_tasks_send_back.pop_front();
+        cham_migratable_task_t* cur_task = _stolen_remote_tasks_send_back.pop_front();
         // need to check again
         if(!cur_task) {
             continue;

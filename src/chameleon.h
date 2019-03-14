@@ -99,7 +99,7 @@ typedef struct chameleon_map_data_entry_t {
 
 } chameleon_map_data_entry_t;
 
-static chameleon_map_data_entry_t chameleon_map_data_entry_init(void* arg_ptr, size_t arg_size, int arg_type) {
+static chameleon_map_data_entry_t chameleon_map_data_entry_create(void* arg_ptr, size_t arg_size, int arg_type) {
     chameleon_map_data_entry_t entry;
     entry.valptr    = arg_ptr;
     entry.size      = arg_size;
@@ -139,6 +139,7 @@ int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, cha
 int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void** val);
 
 chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id);
+chameleon_annotations_t* chameleon_get_task_annotations_opaque(cham_migratable_task_t* task);
 
 // ================================================================================
 // External functions (that can be called from source code or libomptarget)

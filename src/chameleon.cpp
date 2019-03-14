@@ -154,6 +154,12 @@ chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id) {
         return &(task->task_annotations);
     return nullptr;
 }
+
+chameleon_annotations_t* chameleon_get_task_annotations_opaque(cham_migratable_task_t* task) {
+    if(task)
+        return &(task->task_annotations);
+    return nullptr;
+}
 #pragma endregion Annotations
 
 #pragma region Init / Finalize / Helper

@@ -123,11 +123,27 @@ int chameleon_get_annotation_int(chameleon_annotations_t* ann, char *key, int* v
     return found;
 }
 
+int chameleon_get_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t* val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = tmp.val_int64;
+    return found;
+}
+
 int chameleon_get_annotation_double(chameleon_annotations_t* ann, char *key, double* val) {
     cham_annotation_value_t tmp;
     int found = get_annotation_general(ann, key, &tmp);
     if(found)
         *val = tmp.val_double;
+    return found;
+}
+
+int chameleon_get_annotation_float(chameleon_annotations_t* ann, char *key, float* val) {
+    cham_annotation_value_t tmp;
+    int found = get_annotation_general(ann, key, &tmp);
+    if(found)
+        *val = tmp.val_float;
     return found;
 }
 

@@ -143,6 +143,8 @@ typedef struct cham_t_migration_tupel_t {
 static cham_t_migration_tupel_t cham_t_migration_tupel_create(TYPE_TASK_ID task_id, int32_t rank_id) {
     cham_t_migration_tupel_t val;
     val.task_id = task_id;
+    val.rank_id = rank_id;
+    return val;
 }
 
 /*****************************************************************************

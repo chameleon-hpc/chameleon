@@ -104,6 +104,65 @@ typedef union cham_annotation_value_t {
 typedef struct chameleon_annotations_t {
     std::unordered_map<std::string, cham_annotation_value_t> anno;
     chameleon_annotations_t() { }
+
+    void* pack(int32_t* buffer_size) {
+        *buffer_size = 0;
+        if(anno.empty()) {
+            return nullptr;
+        }
+
+        int32_t num_annotations = 0;
+        *buffer_size += sizeof(int32_t);
+
+        // first get size of buffer
+        for (std::pair<std::string, cham_annotation_value_t> element : anno) {
+            *buffer_size += (sizeof(size_t) + element.first.length() + sizeof(cham_annotation_value_t));
+            num_annotations++;
+        }
+        
+        // allocate buffer
+        char* buffer    = (char*) malloc(*buffer_size);
+        char* cur_ptr   = (char*) buffer;
+        
+        ((int32_t *) cur_ptr)[0] = num_annotations;
+        cur_ptr += sizeof(int32_t);
+
+        // iterate and serialize values
+        for (std::pair<std::string, cham_annotation_value_t> element : anno) {
+            // 1: size of string
+            ((size_t *) cur_ptr)[0] = element.first.length();
+            cur_ptr += sizeof(size_t);
+            // 2: bytes for string
+            memcpy(cur_ptr, element.first.data(), element.first.length());
+            cur_ptr += element.first.length();
+            // 3: bytes for value
+            ((cham_annotation_value_t *) cur_ptr)[0] = element.second;
+            cur_ptr += sizeof(cham_annotation_value_t);
+        }
+        return buffer;
+    }
+
+    void unpack(void* buffer) {
+        char *cur_ptr = (char*) buffer;
+
+        int32_t num_annotations = ((int32_t *) cur_ptr)[0];
+        cur_ptr += sizeof(int32_t);
+
+        for (int i = 0; i < num_annotations; i++) {
+            size_t str_size = ((size_t *) cur_ptr)[0];
+            cur_ptr += sizeof(size_t);
+
+            char* key = (char*) malloc(str_size);
+            memcpy(key, cur_ptr, str_size);
+            cur_ptr += str_size;
+
+            cham_annotation_value_t value = ((cham_annotation_value_t *) cur_ptr)[0];
+            cur_ptr += sizeof(cham_annotation_value_t);
+
+            anno.insert(std::make_pair(std::string(key), value));
+        }
+    }
+
 } chameleon_annotations_t;
 
 typedef struct cham_migratable_task_t {

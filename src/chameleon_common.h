@@ -361,6 +361,7 @@ class thread_safe_task_list_t {
             for (std::list<cham_migratable_task_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
                 if((*it)->task_id == task_id)
                 {
+                    this->list_size--;
                     ret_val = *it;
                     this->task_list.remove(ret_val);
                     break;

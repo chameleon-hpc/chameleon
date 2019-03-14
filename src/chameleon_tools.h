@@ -1,7 +1,6 @@
 #ifndef _CHAMELEON_TOOLS_H_
 #define _CHAMELEON_TOOLS_H_
 
-// #include "chameleon_common.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <dlfcn.h>
@@ -135,11 +134,16 @@ typedef struct cham_t_migration_tupel_t {
     TYPE_TASK_ID task_id;
     int32_t rank_id;
 
-    cham_t_migration_tupel_t(TYPE_TASK_ID p_task_id, int32_t p_rank_id) {
-        task_id = p_task_id;
-        rank_id = p_rank_id;
-    }    
+    // cham_t_migration_tupel_t(TYPE_TASK_ID p_task_id, int32_t p_rank_id) {
+    //     task_id = p_task_id;
+    //     rank_id = p_rank_id;
+    // }
 } cham_t_migration_tupel_t;
+
+static cham_t_migration_tupel_t cham_t_migration_tupel_create(TYPE_TASK_ID task_id, int32_t rank_id) {
+    cham_t_migration_tupel_t val;
+    val.task_id = task_id;
+}
 
 /*****************************************************************************
  * Init / Finalize / Start Tool
@@ -174,6 +178,7 @@ typedef int (*cham_t_get_callback_t) (
 
 typedef cham_t_data_t *(*cham_t_get_thread_data_t) (void);
 typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
+typedef cham_t_data_t *(*cham_t_get_task_data_t) (TYPE_TASK_ID);
 
 typedef cham_t_rank_info_t *(*cham_t_get_rank_info_t) (void);
 
@@ -247,12 +252,11 @@ typedef void (*cham_t_callback_select_num_tasks_to_offload_t) (
 
 // information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
 // task annotations can be queried with TODO
-typedef void (*cham_t_callback_select_tasks_for_migration_t) (
+typedef cham_t_migration_tupel_t* (*cham_t_callback_select_tasks_for_migration_t) (
     const int32_t* load_info_per_rank,
     TYPE_TASK_ID* task_ids_local,
     int32_t num_ids_local,
-    cham_t_migration_tupel_t* task_migration_tuples,
-    size_t* num_tuples
+    int32_t* num_tuples
 );
 
 #pragma endregion

@@ -351,6 +351,26 @@ class thread_safe_task_list_t {
         return ret_val;
     }
 
+    cham_migratable_task_t* pop_task_by_id(TYPE_TASK_ID task_id) {
+        if(this->empty())
+            return nullptr;
+
+        cham_migratable_task_t* ret_val = nullptr;
+        this->m.lock();
+        if(!this->empty()) {
+            for (std::list<cham_migratable_task_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
+                if((*it)->task_id == task_id)
+                {
+                    ret_val = *it;
+                    this->task_list.remove(ret_val);
+                    break;
+                }
+            }
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+
     TYPE_TASK_ID* get_task_ids(int32_t* num_ids) {
         this->m.lock();
         TYPE_TASK_ID *vec = (TYPE_TASK_ID *) malloc(this->task_list.size() * sizeof(TYPE_TASK_ID));

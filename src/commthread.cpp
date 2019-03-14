@@ -1224,6 +1224,7 @@ void* service_thread_action(void *arg) {
     int offload_triggered = 0;
     int last_known_sum_outstanding = -1;
     int flag_set = 0;
+    int strategy_type = -1;
 
     int transported_load_values[3];
     int * buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
@@ -1406,11 +1407,6 @@ void* service_thread_action(void *arg) {
 #if OFFLOAD_BLOCKING
             if(!_offload_blocked) {
 #endif
-#ifdef TRACE
-            VT_begin(event_offload_decision);
-#endif
-            int cur_load = _load_info_ranks[chameleon_comm_rank];
-            
             // Strategies for speculative load exchange
             // - If we find a rank with load = 0 ==> offload directly
             // - Should we look for the minimum? Might be a critical part of the program because several ranks might offload to that rank
@@ -1420,47 +1416,79 @@ void* service_thread_action(void *arg) {
             
             // only proceed if offloading not already performed
             if(!offload_triggered) {
+#ifdef TRACE
+                VT_begin(event_offload_decision);
+#endif
                 // reset values to zero
                 std::fill(tasksToOffload.begin(), tasksToOffload.end(), 0);
+                int32_t num_ids_local = 0;
+                TYPE_TASK_ID* ids_local;
+                cham_t_migration_tupel_t* migration_tupels = nullptr;
+                int32_t num_tuples = 0;
 #if CHAMELEON_TOOL_SUPPORT
-            if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_offload) {
-                cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
-            } else {
+                if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_tasks_for_migration) {
+                    strategy_type = 2;
+                    ids_local = _local_tasks.get_task_ids(&num_ids_local);
+                    migration_tupels = cham_t_status.cham_t_callback_select_tasks_for_migration(&(_load_info_ranks[0]), ids_local, num_ids_local, &num_tuples);
+                    free(ids_local);
+                } else if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_offload) {
+                    strategy_type = 1;
+                    cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
+                } else {
+                    strategy_type = 0;
+                    computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
+                }
+#else
+                strategy_type = 0;
                 computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
-            }
-#else 
-            computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
 #endif
-                for(int r=0; r<tasksToOffload.size(); r++) { 
-                    if(r != chameleon_comm_rank) {
-                        int targetOffloadedTasks = tasksToOffload[r];
-                        for(int t=0; t<targetOffloadedTasks; t++) {
-                            cham_migratable_task_t *cur_task = _local_tasks.pop_front();
-                            if(cur_task) {
 #ifdef TRACE
-                                VT_end(event_offload_decision);
+                VT_end(event_offload_decision);
 #endif
-                                DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
-                                offload_task_to_rank(cur_task, r);
+                if(strategy_type == 2)
+                {
+                    // strategy type that uses tupels of task_id and target rank
+                    if(migration_tupels) {
+                        for(int32_t t=0; t<num_tuples; t++) {
+                            TYPE_TASK_ID cur_task_id    = migration_tupels[t].task_id;
+                            int cur_rank_id             = migration_tupels[t].rank_id;
+
+                            // get task by id
+                            cham_migratable_task_t* task = _local_tasks.pop_task_by_id(cur_task_id);
+                            if(task) {
+                                offload_task_to_rank(cur_task, cur_rank_id);
                                 offload_triggered = 1;
 #if OFFLOAD_BLOCKING
                                 _offload_blocked = 1;
 #endif
                             }
                         }
+                        free(migration_tupels);
+                    }
+                } else {
+                    for(int r=0; r<tasksToOffload.size(); r++) {
+                        if(r != chameleon_comm_rank) {
+                            int targetOffloadedTasks = tasksToOffload[r];
+                            for(int t=0; t<targetOffloadedTasks; t++) {
+                                cham_migratable_task_t *cur_task = _local_tasks.pop_front();
+                                if(cur_task) {
+                                    DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
+                                    offload_task_to_rank(cur_task, r);
+                                    offload_triggered = 1;
+#if OFFLOAD_BLOCKING
+                                    _offload_blocked = 1;
+#endif
+                                }
+                            }
+                        }
                     }
                 }
             }
-#ifdef TRACE
-            if(!offload_triggered)
-                VT_end(event_offload_decision);
-#endif
 #if OFFLOAD_BLOCKING
             }
 #endif
         }
 #endif // #if OFFLOAD_ENABLED
-
         // ================= Sending back results for stolen tasks =================
         if(_stolen_remote_tasks_send_back.empty()) {
             usleep(CHAM_SLEEP_TIME_MICRO_SECS);
@@ -1477,7 +1505,6 @@ void* service_thread_action(void *arg) {
         VT_begin(event_send_back);
 #endif
         DBP("service_thread_action - sending back data to rank %d with tag %d for (task_id=%ld)\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag, cur_task->task_id);
-
 #if OFFLOAD_DATA_PACKING_TYPE == 0
         int32_t tmp_size_buff = 0;
         for(int i = 0; i < cur_task->arg_num; i++) {
@@ -1496,7 +1523,6 @@ void* service_thread_action(void *arg) {
                 cur_ptr += cur_task->arg_sizes[i];
             }
         }
-
         // initiate blocking send
 #if CHAM_STATS_RECORD
         double cur_time = omp_get_wtime();
@@ -1510,7 +1536,6 @@ void* service_thread_action(void *arg) {
 #endif
         request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, sendBack, buff );
 #elif OFFLOAD_DATA_PACKING_TYPE == 1
-
 #if CHAM_STATS_RECORD
         double cur_time = omp_get_wtime();
 #endif
@@ -1529,8 +1554,7 @@ void* service_thread_action(void *arg) {
         atomic_add_dbl(_time_comm_back_send_sum, cur_time);
         _time_comm_back_send_count++;
 #endif
-
-#endif
+#endif // OFFLOAD_DATA_PACKING_TYPE
 
 #ifdef TRACE
         VT_end(event_send_back);

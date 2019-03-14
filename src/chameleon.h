@@ -89,15 +89,23 @@ typedef struct chameleon_map_data_entry_t {
     size_t size;
     int type;
 
-    chameleon_map_data_entry_t() { }
+    // chameleon_map_data_entry_t() { }
 
-    chameleon_map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
-        valptr = arg_ptr;
-        size = arg_size;
-        type = arg_type;
-    }
+    // chameleon_map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
+    //     valptr = arg_ptr;
+    //     size = arg_size;
+    //     type = arg_type;
+    // }
 
 } chameleon_map_data_entry_t;
+
+static chameleon_map_data_entry_t chameleon_map_data_entry_init(void* arg_ptr, size_t arg_size, int arg_type) {
+    chameleon_map_data_entry_t entry;
+    entry.valptr    = arg_ptr;
+    entry.size      = arg_size;
+    entry.type      = arg_type;
+    return entry;
+}
 
 #ifdef __cplusplus
 extern "C" {

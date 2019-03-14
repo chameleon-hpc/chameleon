@@ -1,5 +1,6 @@
 #include "cham_statistics.h"
 #include "chameleon_common.h"
+#include "commthread.h"
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
 #include <map>
@@ -178,6 +179,13 @@ cham_t_data_t * cham_t_get_rank_data(void) {
     return &(__rank_data.rank_tool_data);
 }
 
+static cham_t_data_t * cham_t_get_task_data(TYPE_TASK_ID task_id) {
+    cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
+    if(task)
+        return &(task->task_tool_data);
+    return nullptr;
+}
+
 cham_t_rank_info_t * cham_t_get_rank_info(void) {
     return &(__rank_data.rank_tool_info);
 }
@@ -193,6 +201,8 @@ static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
         return (cham_t_interface_fn_t)cham_t_get_rank_data;
     else if(!strcmp(s, "cham_t_get_rank_info"))
         return (cham_t_interface_fn_t)cham_t_get_rank_info;
+    else if(!strcmp(s, "cham_t_get_task_data"))
+        return (cham_t_interface_fn_t)cham_t_get_task_data;
     else
         fprintf(stderr, "ERROR: function lookup for name %s not possible.\n", s);
     return (cham_t_interface_fn_t)0;

@@ -71,44 +71,38 @@ chameleon_annotations_t* chameleon_create_annotation_container() {
 int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value) {
     cham_annotation_value_t val;
     val.val_int32 = value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
+    ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_int, val)));
 }
 
 int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value) {
     cham_annotation_value_t val;
     val.val_int64 = value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
+    ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_int64, val)));
 }
 
 int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value) {
     cham_annotation_value_t val;
     val.val_double = value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
+    ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_double, val)));
 }
 
 int chameleon_set_annotation_float(chameleon_annotations_t* ann, char *key, float value) {
     cham_annotation_value_t val;
     val.val_float = value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
+    ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_float, val)));
 }
 
 int chameleon_set_annotation_string(chameleon_annotations_t* ann, char *key, char *value) {
     cham_annotation_value_t val;
     val.val_ptr = (void*)value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
-}
-
-int chameleon_set_annotation_ptr(chameleon_annotations_t* ann, char *key, void *value) {
-    cham_annotation_value_t val;
-    val.val_ptr = value;
-    ann->anno.insert(std::make_pair(std::string(key), val));
+    ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_string(cham_annotation_string, strlen(value), val)));
 }
 
 int get_annotation_general(chameleon_annotations_t* ann, char* key, cham_annotation_value_t* val) {
-    std::unordered_map<std::string,cham_annotation_value_t>::const_iterator got = ann->anno.find(std::string(key));
+    std::unordered_map<std::string,cham_annotation_entry_t>::const_iterator got = ann->anno.find(std::string(key));
     bool match = got != ann->anno.end();
     if(match) {
-        *val = got->second;
+        *val = got->second.value;
         return 1;
     } else {
         return 0;

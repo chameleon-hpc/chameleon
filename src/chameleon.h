@@ -129,14 +129,12 @@ int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int6
 int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value);
 int chameleon_set_annotation_float(chameleon_annotations_t* ann, char *key, float value);
 int chameleon_set_annotation_string(chameleon_annotations_t* ann, char *key, char *value);
-int chameleon_set_annotation_ptr(chameleon_annotations_t* ann, char *key, void *value);
 
 int chameleon_get_annotation_int(chameleon_annotations_t* ann, char *key, int* val);
 int chameleon_get_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t* val);
 int chameleon_get_annotation_double(chameleon_annotations_t* ann, char *key, double* val);
 int chameleon_get_annotation_float(chameleon_annotations_t* ann, char *key, float* val);
 int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, char** val);
-int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void** val);
 
 chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id);
 chameleon_annotations_t* chameleon_get_task_annotations_opaque(cham_migratable_task_t* task);

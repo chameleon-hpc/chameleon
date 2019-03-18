@@ -209,9 +209,10 @@ typedef struct chameleon_annotations_t {
             int32_t str_size = ((int32_t *) cur_ptr)[0];
             cur_ptr += sizeof(int32_t);
             // key string
-            char* key = (char*) malloc(str_size);
+            char* key = (char*) malloc(str_size+1);
             memcpy(key, cur_ptr, str_size);
             cur_ptr += str_size;
+            key[str_size] = '\0';
             // value type
             int32_t value_type = ((int32_t *) cur_ptr)[0];
             cur_ptr += sizeof(int32_t);
@@ -221,9 +222,10 @@ typedef struct chameleon_annotations_t {
                 int32_t val_size = ((int32_t *) cur_ptr)[0];
                 cur_ptr += sizeof(int32_t);
                 // actual string value
-                char* str_value = (char*) malloc(val_size);
+                char* str_value = (char*) malloc(val_size+1);
                 memcpy(str_value, cur_ptr, val_size);
                 cur_ptr += val_size;
+                str_value[val_size] = '\0';
                 cham_annotation_value_t value;
                 value.val_ptr = (void*)str_value;
                 anno.insert(std::make_pair(std::string(key), cham_annotation_entry_string(value_type, val_size, value)));

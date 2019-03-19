@@ -3,3 +3,5 @@ src/libchameleon.so
 *.exe
 /.vscode
 __pycache__
+*.o
+*.mod

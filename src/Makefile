@@ -14,7 +14,7 @@ ifeq ($(CXX),clang++)
     MPICXX=I_MPI_CXX=clang++ mpiicpc
     FLAGS_OPENMP=-fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu # used with target offloading
     #FLAGS_OPENMP=-fopenmp # used with manual API
-    LINKER_FLAGS=-shared -lffi -lpthread -lhwloc -ldl
+    LINKER_FLAGS=-shared -lffi -lpthread -lhwloc -ldl -fopenmp-targets=x86_64-unknown-linux-gnu
 else ifeq ($(CXX),icpc)
     MPICXX=I_MPI_CXX=icpc mpiicpc
     MPIF90=I_MPI_F90=ifort mpiifort

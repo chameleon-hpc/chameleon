@@ -123,7 +123,7 @@ void cham_stats_print_stats() {
 /*
  * Atomic addition for double
  */
- double atomic_add_dbl(std::atomic<double> &dbl, double d){
+ void atomic_add_dbl(std::atomic<double> &dbl, double d){
       double old = dbl.load(std::memory_order_consume);
       double desired = old + d;
       while (!dbl.compare_exchange_weak(old, desired,
@@ -131,7 +131,6 @@ void cham_stats_print_stats() {
       {
            desired = old + d;
       }
-      return desired;
  }
 
 #ifdef __cplusplus

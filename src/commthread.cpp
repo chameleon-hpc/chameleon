@@ -1498,7 +1498,6 @@ void* service_thread_action(void *arg) {
                             for(int t=0; t<targetOffloadedTasks; t++) {
                                 cham_migratable_task_t *task = _local_tasks.pop_front();
                                 if(task) {
-                                    DBP("OffloadingDecision: MyLoad: %d, Load Rank %d is %d, LastKnownSumOutstandingJobs: %d\n", cur_load, r, _load_info_ranks[r], last_known_sum_outstanding);
                                     offload_task_to_rank(task, r);
                                     offload_triggered = 1;
 #if OFFLOAD_BLOCKING

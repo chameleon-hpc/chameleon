@@ -59,7 +59,7 @@ extern "C" {
 
 void cham_stats_reset_for_sync_cycle();
 void cham_stats_print_stats();
-double atomic_add_dbl(std::atomic<double> &f, double d);
+void atomic_add_dbl(std::atomic<double> &f, double d);
 
 #ifdef __cplusplus
 }

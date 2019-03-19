@@ -72,30 +72,35 @@ int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int va
     cham_annotation_value_t val;
     val.val_int32 = value;
     ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_int, val)));
+    return CHAM_SUCCESS;
 }
 
 int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value) {
     cham_annotation_value_t val;
     val.val_int64 = value;
     ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_int64, val)));
+    return CHAM_SUCCESS;
 }
 
 int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value) {
     cham_annotation_value_t val;
     val.val_double = value;
     ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_double, val)));
+    return CHAM_SUCCESS;
 }
 
 int chameleon_set_annotation_float(chameleon_annotations_t* ann, char *key, float value) {
     cham_annotation_value_t val;
     val.val_float = value;
     ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(cham_annotation_float, val)));
+    return CHAM_SUCCESS;
 }
 
 int chameleon_set_annotation_string(chameleon_annotations_t* ann, char *key, char *value) {
     cham_annotation_value_t val;
     val.val_ptr = (void*)value;
     ann->anno.insert(std::make_pair(std::string(key), cham_annotation_entry_string(cham_annotation_string, strlen(value), val)));
+    return CHAM_SUCCESS;
 }
 
 int get_annotation_general(chameleon_annotations_t* ann, char* key, cham_annotation_value_t* val) {
@@ -673,8 +678,10 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
 #endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_data_submit_sum, cur_time);
-    _time_data_submit_count++;
+    if(cur_time > 0) {
+        atomic_add_dbl(_time_data_submit_sum, cur_time);
+        _time_data_submit_count++;
+    }
 #endif
     DBP("chameleon_submit_data (exit)\n");
     return CHAM_SUCCESS;
@@ -705,8 +712,10 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_data_submit_sum, cur_time);
-    _time_data_submit_count++;
+    if(cur_time > 0) {
+        atomic_add_dbl(_time_data_submit_sum, cur_time);
+        _time_data_submit_count++;
+    }
 #endif
 }
 
@@ -873,8 +882,10 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
             }
 #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_data_submit_sum, cur_time);
-            _time_data_submit_count++;
+            if(cur_time > 0) {
+                atomic_add_dbl(_time_data_submit_sum, cur_time);
+                _time_data_submit_count++;
+            }
 #endif
             if(!found) {
                 // something went wrong here

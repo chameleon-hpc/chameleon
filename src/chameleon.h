@@ -88,15 +88,6 @@ typedef struct chameleon_map_data_entry_t {
     void *valptr;
     size_t size;
     int type;
-
-    // chameleon_map_data_entry_t() { }
-
-    // chameleon_map_data_entry_t(void* arg_ptr, size_t arg_size, int arg_type) {
-    //     valptr = arg_ptr;
-    //     size = arg_size;
-    //     type = arg_type;
-    // }
-
 } chameleon_map_data_entry_t;
 
 static chameleon_map_data_entry_t chameleon_map_data_entry_create(void* arg_ptr, size_t arg_size, int arg_type) {

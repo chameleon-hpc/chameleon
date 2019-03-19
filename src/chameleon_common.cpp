@@ -36,7 +36,7 @@ cham_migratable_task_t::cham_migratable_task_t(
     // generate a unique task id
     TYPE_TASK_ID tmp_counter = ++_task_id_counter;
     // int tmp_rank = chameleon_comm_rank;
-    task_id = (chameleon_comm_rank << 16) | (tmp_counter);
+    task_id = (chameleon_comm_rank << 24) | (tmp_counter);
     // DBP("cham_migratable_task_t - Created task with (task_id=%ld)\n", task_id);
 
     tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;

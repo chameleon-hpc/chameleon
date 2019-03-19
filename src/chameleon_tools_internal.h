@@ -33,7 +33,7 @@ void cham_t_fini(void);
 
 cham_t_data_t * cham_t_get_thread_data(void);
 cham_t_data_t * cham_t_get_rank_data(void);
-cham_t_data_t * cham_t_get_task_data(TYPE_TASK_ID task_id);
+static cham_t_data_t * cham_t_get_task_data(TYPE_TASK_ID task_id);
 
 #ifdef __cplusplus
 };

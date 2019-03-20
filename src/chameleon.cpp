@@ -722,6 +722,13 @@ void chameleon_free_data(void *tgt_ptr) {
 int32_t chameleon_add_task(cham_migratable_task_t *task) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
+#ifdef TRACE
+    static int event_task_create = -1;
+    std::string event_name = "task_create";
+    if(event_task_create == -1) 
+        int ierr = VT_funcdef(event_name.c_str(), VT_NOCLASS, &event_task_create);
+    VT_begin(event_task_create);
+#endif
     
     // perform lookup only when task has been created with libomptarget
     if(!task->is_manual_task) {
@@ -748,7 +755,9 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     _num_local_tasks_outstanding++;
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
-
+#ifdef TRACE
+    VT_end(event_task_create);
+#endif
     return CHAM_SUCCESS;
 }
 
@@ -783,14 +792,6 @@ int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args
     // 1. void* to data entry
     // 2. size_t size of data
     // 3. agument type specifier (also includes information whether it is literal or not)
-#ifdef TRACE
-    static int event_add_task = -1;
-    static const std::string event_add_task_name = "add_task";
-    if( event_add_task == -1)
-        int ierr = VT_funcdef(event_add_task_name.c_str(), VT_NOCLASS, &event_add_task);
-    VT_begin(event_add_task);
-#endif
-
     std::vector<void *>     arg_hst_pointers(num_args);
     std::vector<int64_t>    arg_sizes(num_args);
     std::vector<int64_t>    arg_types(num_args);
@@ -821,11 +822,7 @@ int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args
     if(ann) {
         tmp_task->task_annotations = *ann;
     }
-    chameleon_add_task(tmp_task);
-#ifdef TRACE
-    VT_end(event_add_task);
-#endif
-    return CHAM_SUCCESS;
+    return chameleon_add_task(tmp_task);
 }
 #pragma endregion Fcns for Data and Tasks
 

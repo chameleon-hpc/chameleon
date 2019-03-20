@@ -550,7 +550,7 @@ int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank) {
     if(event_offload == -1) 
         int ierr = VT_funcdef(event_offload_name.c_str(), VT_NOCLASS, &event_offload);
     VT_begin(event_offload);
-#endif 
+#endif
     int has_outputs = task->HasAtLeastOneOutput();
     DBP("offload_task_to_rank (enter) - task_entry (task_id=%ld) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->arg_num, target_rank, has_outputs);
 
@@ -580,14 +580,6 @@ int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank) {
 }
 
 void offload_action(cham_migratable_task_t *task, int target_rank) {
-#ifdef TRACE
-    static int event_offload_send = -1;
-    std::string event_offload_send_name = "offload_send";
-    if(event_offload_send == -1) 
-        int ierr = VT_funcdef(event_offload_send_name.c_str(), VT_NOCLASS, &event_offload_send);
-
-     VT_begin(event_offload_send);
-#endif
     int has_outputs = task->HasAtLeastOneOutput();
     DBP("offload_action (enter) - task_entry (task_id=%d) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->arg_num, target_rank, has_outputs);
     
@@ -618,10 +610,6 @@ void offload_action(cham_migratable_task_t *task, int target_rank) {
     atomic_add_dbl(_time_encode_sum, cur_time);
     _time_encode_count++;
 #endif
-
-#ifdef TRACE
-    VT_begin(event_offload_send);
-#endif    
     // send data to target rank
     DBP("offload_action - sending data to target rank %d with tag: %d\n", target_rank, tmp_tag);
 
@@ -658,10 +646,6 @@ void offload_action(cham_migratable_task_t *task, int target_rank) {
                                 send,
                                 buffer);
     delete[] requests;
-#ifdef TRACE
-    VT_end(event_offload_send);
-#endif
-
     DBP("offload_action (exit)\n");
 }
 
@@ -1294,9 +1278,6 @@ void* service_thread_action(void *arg) {
         // avoid overwriting request or keep it up to date?
         // not 100% sure if overwriting a request is a bad idea or makes any problems in MPI
         if(!request_created) {
-#ifdef TRACE
-            VT_begin(event_exchange_outstanding);
-#endif
             _mtx_load_exchange.lock();
             int32_t local_load_representation;
             int32_t num_ids_local;
@@ -1332,9 +1313,6 @@ void* service_thread_action(void *arg) {
 
             MPI_Iallgather(&transported_load_values[0], 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, &request_out);
             request_created = 1;
-#ifdef TRACE
-            VT_end(event_exchange_outstanding);
-#endif
         }
 
         int flag_request_avail;

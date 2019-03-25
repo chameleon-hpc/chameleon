@@ -20,9 +20,16 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
 #if CHAM_STATS_RECORD
      double time = -omp_get_wtime();
 #endif
-     int ierr= MPI_Waitall(n_requests, &requests[0], MPI_STATUSES_IGNORE);
+     MPI_Status sta[n_requests];
+     int ierr= MPI_Waitall(n_requests, &requests[0], sta);
      if(ierr!=MPI_SUCCESS) {
         printf("MPI error: %d\n", ierr);
+        for(int i = 0; i < n_requests; i++) {
+            char err_msg[MPI_MAX_ERROR_STRING];
+            int err_len;
+            MPI_Error_string(sta[i].MPI_ERROR, err_msg, &err_len);
+            fprintf(stderr, "Arg[%d] Err[%d]: %s\n", i, sta[i].MPI_ERROR, err_msg);
+        }
      }
      assert(ierr==MPI_SUCCESS);
 #if CHAM_STATS_RECORD

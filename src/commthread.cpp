@@ -432,7 +432,7 @@ static void receive_handler(void* buffer, int tag, int source) {
 #endif
 #if OFFLOAD_DATA_PACKING_TYPE == 1
     MPI_Request *requests = new MPI_Request[task->arg_num];
-    DBP("offload_action - receiving data from rank %d with tag: %d\n", source, tag);
+    DBP("receive_handler - receiving data from rank %d with tag: %d\n", source, tag);
 
 
 #if CHAM_STATS_RECORD
@@ -683,11 +683,13 @@ void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size) {
     }
 #endif
 
+#if CHAM_MIGRATE_ANNOTATIONS
     // handle annotations
     int32_t task_annotations_buf_size = 0;
     void *task_annotations_buffer = nullptr;
     task_annotations_buffer = task->task_annotations.pack(&task_annotations_buf_size);
     total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
+#endif
 
 #if CHAMELEON_TOOL_SUPPORT
     int32_t task_tool_buf_size = 0;
@@ -749,6 +751,7 @@ void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size) {
     }
 #endif
 
+#if CHAM_MIGRATE_ANNOTATIONS
     ((int32_t *) cur_ptr)[0] = task_annotations_buf_size;
     cur_ptr += sizeof(int32_t);
 
@@ -758,6 +761,7 @@ void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size) {
         // clean up again
         free(task_annotations_buffer);
     }
+#endif
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
@@ -867,6 +871,7 @@ cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag) {
         print_arg_info("decode_send_buffer", task, i);
     }
 
+#if CHAM_MIGRATE_ANNOTATIONS
     // task annotations
     int32_t task_annotations_buf_size = ((int32_t *) cur_ptr)[0];
     cur_ptr += sizeof(int32_t);
@@ -874,6 +879,7 @@ cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag) {
         task->task_annotations.unpack((void*)cur_ptr);
         cur_ptr += task_annotations_buf_size;
     }
+#endif
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {

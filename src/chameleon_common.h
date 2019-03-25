@@ -92,6 +92,10 @@
 #include "chameleon_tools.h"
 #endif
 
+#ifndef CHAM_MIGRATE_ANNOTATIONS
+#define CHAM_MIGRATE_ANNOTATIONS 1
+#endif
+
 #pragma region Type Definitions
 typedef enum cham_annotation_value_type_t {
     cham_annotation_int         = 0,

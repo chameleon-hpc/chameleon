@@ -171,23 +171,37 @@ static int cham_t_get_callback(cham_t_callback_types_t which, cham_t_callback_t 
 }
 
 cham_t_data_t * cham_t_get_thread_data(void) {
+#if CHAMELEON_TOOL_SUPPORT
     int32_t cur_gtid = __ch_get_gtid();
     return &(__thread_data[cur_gtid].thread_tool_data);
+#else
+    return nullptr;
+#endif
 }
 
 cham_t_data_t * cham_t_get_rank_data(void) {
+#if CHAMELEON_TOOL_SUPPORT
     return &(__rank_data.rank_tool_data);
+#else
+    return nullptr;
+#endif
 }
 
 static cham_t_data_t * cham_t_get_task_data(TYPE_TASK_ID task_id) {
+#if CHAMELEON_TOOL_SUPPORT
     cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
     if(task)
         return &(task->task_tool_data);
+#endif
     return nullptr;
 }
 
 cham_t_rank_info_t * cham_t_get_rank_info(void) {
+#if CHAMELEON_TOOL_SUPPORT
     return &(__rank_data.rank_tool_info);
+#else
+    return nullptr;
+#endif
 }
 
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {

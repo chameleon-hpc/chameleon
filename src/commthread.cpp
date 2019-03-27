@@ -508,14 +508,13 @@ DBP("receive_handler - receiving data from rank %d with tag: %d\n", source, tag)
 }
 
 static void send_back_handler(void* buffer, int tag, int source) {
+    DBP("send_back_handler - called for task %ld\n", tag);
     if(buffer)
         free(buffer);
 }
 
 static void receive_back_handler(void* buffer, int tag, int source) {
-    DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", source, 
-                                                                                   tag); 
-
+    DBP("receive_remote_tasks - receiving output data from rank %d for tag: %d\n", source, tag); 
     cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find_and_erase(tag);
     if(task_entry) {
 //only if data is packed, we need to copy it out
@@ -1211,7 +1210,7 @@ void* receive_remote_tasks(void* arg) {
                     atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
                     _time_comm_back_recv_count++;
 #endif
-                    request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, j, 
+                    request_manager_receive.submitRequests( cur_status_receiveBack.MPI_TAG, cur_status_receiveBack.MPI_SOURCE, 1, 
                                                         &requests[0],
                                                         MPI_BLOCKING,
                                                         receive_back_handler,
@@ -1470,13 +1469,13 @@ void* service_thread_action(void *arg) {
             if(last_known_sum_outstanding == -1) {
                 last_known_sum_outstanding = sum_outstanding;
                 offload_triggered = 0;
-                DBP("service_thread_action - sum outstanding operations=%d\n", last_known_sum_outstanding);
+                DBP("service_thread_action - sum outstanding operations=%d, nr_open_requests_send=%d\n", last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
             } else {
                 // check whether changed.. only allow new offload after change
                 if(last_known_sum_outstanding != sum_outstanding) {
                     last_known_sum_outstanding = sum_outstanding;
                     offload_triggered = 0;
-                    DBP("service_thread_action - sum outstanding operations=%d\n", last_known_sum_outstanding);
+                    DBP("service_thread_action - sum outstanding operations=%d, nr_open_requests_send=%d\n", last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
                 }
             }
 #else // OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
@@ -1661,14 +1660,15 @@ void* service_thread_action(void *arg) {
 #endif
 #if OFFLOAD_DATA_PACKING_TYPE == 1
         MPI_Request *requests = new MPI_Request[cur_task->arg_num];
-        int j = 0;
+        int num_requests = 0;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-                MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &requests[j++]);
+                MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &requests[num_requests++]);
             }
         }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
-        MPI_Request *requests = new MPI_Request[1];
+        int num_requests = 1;
+        MPI_Request *requests = new MPI_Request[num_requests];
         MPI_Datatype type_mapped_vars;
         int num_outputs = 0;
         for(int i=0; i< cur_task->arg_num; i++) {
@@ -1712,7 +1712,7 @@ void* service_thread_action(void *arg) {
         atomic_add_dbl(_time_comm_back_send_sum, cur_time);
         _time_comm_back_send_count++;
 #endif
-        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, j, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr );
+        request_manager_send.submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, num_requests, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr );
         delete[] requests;
 #endif // OFFLOAD_DATA_PACKING_TYPE
 

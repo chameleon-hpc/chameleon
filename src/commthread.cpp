@@ -1260,7 +1260,7 @@ void* receive_remote_tasks(void* arg) {
                                                             receive_back_trash_handler,
                                                             recvBack,
                                                             buffer);       
-#elif OFFLOAD_DATA_PACKING_TYPE > 0
+#elif OFFLOAD_DATA_PACKING_TYPE > 0 // TODO: need to take care of Type 2
 #if CHAM_STATS_RECORD
                     cur_time = omp_get_wtime();
 #endif   
@@ -1638,13 +1638,15 @@ void* service_thread_action(void *arg) {
 #endif
         DBP("service_thread_action - sending back data to rank %d with tag %d for (task_id=%ld)\n", cur_task->source_mpi_rank, cur_task->source_mpi_tag, cur_task->task_id);
 #if OFFLOAD_DATA_PACKING_TYPE == 0
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif
         int32_t tmp_size_buff = 0;
         for(int i = 0; i < cur_task->arg_num; i++) {
             if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                 tmp_size_buff += cur_task->arg_sizes[i];
             }
         }
-
         // allocate memory
         void * buff = malloc(tmp_size_buff);
         char* cur_ptr = (char*)buff;
@@ -1655,10 +1657,6 @@ void* service_thread_action(void *arg) {
                 cur_ptr += cur_task->arg_sizes[i];
             }
         }
-        // initiate blocking send
-#if CHAM_STATS_RECORD
-        double cur_time = omp_get_wtime();
-#endif
         MPI_Request request;
         MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->source_mpi_tag, chameleon_comm_mapped, &request);
 #if CHAM_STATS_RECORD

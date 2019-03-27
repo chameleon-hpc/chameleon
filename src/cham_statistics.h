@@ -5,11 +5,11 @@
 #include "chameleon_common.h"
 
 #ifndef CHAM_STATS_RECORD
-#define CHAM_STATS_RECORD 1
+#define CHAM_STATS_RECORD 0
 #endif
 
 #ifndef CHAM_STATS_PRINT
-#define CHAM_STATS_PRINT 1
+#define CHAM_STATS_PRINT 0
 #endif
 
 extern std::atomic<int>     _num_executed_tasks_local;

@@ -563,6 +563,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
         #endif
 
+#if !FORCE_MIGRATION
         // ========== Prio 3: work on local tasks
         if(!_local_tasks.empty()) {
             
@@ -585,6 +586,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 continue;
 #endif
         }
+#endif
 
 #if CHAM_REPLICATION_MODE>0
         // ========== Prio 4: work on replicated tasks

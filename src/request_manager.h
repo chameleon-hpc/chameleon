@@ -10,7 +10,21 @@
 #include <atomic>
 #include <functional>
 
-enum RequestType {send, recv, recvData, sendBack, recvBack};
+typedef enum RequestType {
+    send        = 0, 
+    recv        = 1, 
+    recvData    = 2, 
+    sendBack    = 3, 
+    recvBack    = 4
+} RequestType;
+
+static const char* RequestType_values[] = {
+    "send",         // 0
+    "recv",         // 1
+    "recvData",     // 2
+    "sendBack",     // 3
+    "recvBack"      // 4
+};
 
 class RequestManager {
   public:

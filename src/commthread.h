@@ -20,9 +20,6 @@ extern MPI_Comm chameleon_comm_cancel;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
-//extern RequestManager request_manager_send;
-//extern RequestManager request_manager_receive;
-
 extern std::vector<intptr_t> _image_base_addresses;
 
 // list with local task entries
@@ -57,8 +54,6 @@ extern std::atomic<int32_t> _outstanding_jobs_local;
 extern std::atomic<int32_t> _outstanding_jobs_sum;
 // ====== Info about real load that is open or is beeing processed ======
 extern std::vector<int32_t> _load_info_ranks;
-extern int32_t _load_info_local;
-extern int32_t _load_info_sum;
 
 #if OFFLOAD_BLOCKING
 // only allow offloading when a task has finished on local rank
@@ -69,16 +64,15 @@ extern std::atomic<int32_t> _offload_blocked;
 extern thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 
 // Threading section
-extern int _comm_thread_load_exchange_happend;
+extern std::atomic<int> _comm_thread_load_exchange_happend;
 
 // variables to indicate when it is save to break out of taskwait
 extern std::mutex _mtx_taskwait;
 extern std::atomic<int> _flag_comm_threads_sleeping;
-extern int _num_threads_involved_in_taskwait;
-// extern int _num_threads_entered_taskwait;
+extern std::atomic<int> _num_threads_involved_in_taskwait;
 extern std::atomic<int32_t> _num_threads_entered_taskwait;
 extern std::atomic<int32_t> _num_threads_idle;
-extern int _num_ranks_not_completely_idle;
+extern std::atomic<int> _num_ranks_not_completely_idle;
 
 #ifdef __cplusplus
 extern "C" {

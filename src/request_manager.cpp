@@ -2,6 +2,7 @@
 
 #include <omp.h>
 #include <cassert>
+#include "chameleon_common.h"
 
 #define MAX_REQUESTS 100
 
@@ -16,6 +17,7 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
                                 std::function<void(void*, int, int)> handler,
                                 RequestType type,
                                 void* buffer) {
+    DBP("%s - submitting requests for task %ld\n", RequestType_values[type], tag);
   if(block) {
 #if CHAM_STATS_RECORD
      double time = -omp_get_wtime();
@@ -97,12 +99,12 @@ void RequestManager::progressRequests() {
 #endif
        _outstanding_reqs_for_group.erase(gid);
        RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
-
        std::function<void(void*, int, int)> handler = request_group_data.handler;
        void* buffer = request_group_data.buffer;
        int tag = request_group_data.tag;
        int rank = request_group_data.rank;
        RequestType type = request_group_data.type;
+       DBP("%s - finally finished all requests for task %ld\n", RequestType_values[type], tag);
 #if CHAM_STATS_RECORD
        double startStamp = request_group_data.start_time;
        addTimingToStatistics(finishedStamp-startStamp, type);

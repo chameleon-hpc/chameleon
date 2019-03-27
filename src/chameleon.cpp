@@ -282,7 +282,7 @@ int32_t chameleon_init() {
         _load_info_ranks[i] = 0;
     }
     _outstanding_jobs_sum = 0;
-    _load_info_sum = 0;
+    // _load_info_sum = 0;
     _mtx_load_exchange.unlock();
     _task_id_counter = 0;
 
@@ -627,10 +627,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     if(!nowait) {
         #pragma omp barrier
     }
-
 #ifdef TRACE
     VT_end(event_taskwait);
 #endif
+    DBP("chameleon_distributed_taskwait (exit)\n");
     return CHAM_SUCCESS;
 }
 #pragma endregion Distributed Taskwait
@@ -753,8 +753,8 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     _map_overall_tasks.insert(task->task_id, task);
     
     _mtx_load_exchange.lock();
-    _load_info_local++;
     _num_local_tasks_outstanding++;
+    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 #ifdef TRACE
@@ -1079,6 +1079,7 @@ inline int32_t process_replicated_task() {
  
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
+        DBP("process_replicated_task - decrement local outstanding count for task %ld\n", replicated_task->task_id);
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 #ifdef TRACE
@@ -1133,12 +1134,6 @@ inline int32_t process_remote_task() {
     _map_tag_to_stolen_task.erase(task->task_id);
     _map_overall_tasks.erase(task->task_id);
 
-    // decrement load counter
-    _mtx_load_exchange.lock();
-    _load_info_local--;
-    // trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
-
 #if OFFLOAD_BLOCKING
     _offload_blocked = 0;
 #endif
@@ -1150,6 +1145,7 @@ inline int32_t process_remote_task() {
         // we can now decrement outstanding counter because there is nothing to send back
         _mtx_load_exchange.lock();
         _num_stolen_tasks_outstanding--;
+        DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
     }
@@ -1201,7 +1197,7 @@ inline int32_t process_local_task() {
     // it is save to decrement counter after local execution
     _mtx_load_exchange.lock();
     _num_local_tasks_outstanding--;
-    _load_info_local--;
+    DBP("process_local_task - decrement local outstanding count for task %ld\n", task->task_id);
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 #if OFFLOAD_BLOCKING

@@ -1,5 +1,6 @@
 #include "cham_strategies.h"
 #include "commthread.h" 
+#include "chameleon_common.h"
  
 #include <numeric>
 #include <algorithm>
@@ -90,10 +91,14 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             int other_val = loadInfoRanks[other_idx];
 
             // calculate ration between those two and just move if over a certain threshold
+#if !FORCE_MIGRATION
             double ratio = (double)(cur_load-other_val) / (double)cur_load;
             if(other_val < cur_load && ratio > 0.5) {
+#endif
                 tasksToOffloadPerRank[other_idx] = 1;
+#if !FORCE_MIGRATION
             }
+#endif
         } 
     }
 #endif

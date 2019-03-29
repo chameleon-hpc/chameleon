@@ -8,6 +8,10 @@
 #define CHAM_STATS_RECORD 0
 #endif
 
+#ifndef CHAM_STATS_PER_SYNC_INTERVAL
+#define CHAM_STATS_PER_SYNC_INTERVAL 0
+#endif
+
 #ifndef CHAM_STATS_PRINT
 #define CHAM_STATS_PRINT 0
 #endif

@@ -157,7 +157,7 @@ int32_t start_communication_threads() {
     }
 
     #if !THREAD_ACTIVATION
-    #if CHAM_STATS_RECORD
+    #if CHAM_STATS_RECORD && CHAM_STATS_PER_SYNC_INTERVAL
         cham_stats_reset_for_sync_cycle();
     #endif
     #endif
@@ -212,7 +212,7 @@ int32_t chameleon_wake_up_comm_threads() {
 
     DBP("chameleon_wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
 
-    #if CHAM_STATS_RECORD
+    #if CHAM_STATS_RECORD && CHAM_STATS_PER_SYNC_INTERVAL
         cham_stats_reset_for_sync_cycle();
     #endif
     // determine or set values once
@@ -277,9 +277,10 @@ int32_t stop_communication_threads() {
     _num_threads_involved_in_taskwait       = INT_MAX;
     _num_threads_entered_taskwait           = 0;
     _num_threads_idle                       = 0;
-    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT
-    cham_stats_print_stats();
     #endif
+
+    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
+    cham_stats_print_stats();
     #endif
     
     DBP("stop_communication_threads (exit)\n");
@@ -305,7 +306,7 @@ int32_t put_comm_threads_to_sleep() {
         mem_allocated = 0;
     #endif
 
-    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT
+    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && CHAM_STATS_PER_SYNC_INTERVAL
         cham_stats_print_stats();
     #endif
 

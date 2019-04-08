@@ -1731,18 +1731,18 @@ void* service_thread_action(void *arg) {
 
 #pragma region Helper Functions
 int exit_condition_met(int print) {
-    if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+    // if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
         if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0) {
-            if(print)
-                DBP("exit_condition_met - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
-                    _num_threads_entered_taskwait.load(), 
-                    _comm_thread_load_exchange_happend.load(), 
-                    _outstanding_jobs_sum.load(), 
-                    cp_ranks_not_completely_idle);
+            // if(print)
+                // DBP("exit_condition_met - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
+                //     _num_threads_entered_taskwait.load(), 
+                //     _comm_thread_load_exchange_happend.load(), 
+                //     _outstanding_jobs_sum.load(), 
+                //     cp_ranks_not_completely_idle);
             return 1;
         }
-    }
+    // }
     return 0;
 }
 

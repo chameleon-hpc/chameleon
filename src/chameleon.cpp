@@ -477,7 +477,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // at least try to execute this amout of normal task after rank runs out of offloadable tasks
     // before assuming idle state
     // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 10;
+    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 0;
     int this_thread_num_attemps_standard_task = 0;
     #else
     // start communication threads here
@@ -496,26 +496,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     while(true) {
         int32_t res = CHAM_SUCCESS;
 
-        #if THREAD_ACTIVATION
-        // ========== Prio 5: work on a regular OpenMP task
-        // make sure that we get info about outstanding tasks with dependences
-        // to avoid that we miss some tasks
-        if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
-        {
-            // of course only do that once for the thread :)
-            if(!this_thread_idle) {
-                // increment idle counter again
-                my_idle_order = ++_num_threads_idle;
-                DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
-                this_thread_idle = 1;
-            }
-        } else {
-            // increment attemps that might result in more target tasks
-            this_thread_num_attemps_standard_task++;
-            #pragma omp taskyield
-        }
-        #endif
-
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
             
@@ -526,7 +506,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
                 this_thread_idle = 0;
             }
-            this_thread_num_attemps_standard_task = 0;
+            // this_thread_num_attemps_standard_task = 0;
             #endif
 
             res = process_remote_task();
@@ -536,14 +516,77 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 continue;
         }
 
-        // ========== Prio 2: check whether to abort procedure
+#if !FORCE_MIGRATION
+        // ========== Prio 2: work on local tasks
+        if(!_local_tasks.empty()) {
+            
+            #if THREAD_ACTIVATION
+            if(this_thread_idle) {
+                // decrement counter again
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+                this_thread_idle = 0;
+            }
+            // this_thread_num_attemps_standard_task = 0;
+            #endif
+
+            // try to execute a local task
+            res = process_local_task();
+
+// #if CHAM_REPLICATION_MODE>0
+            // if task has been executed successfully start from beginning
+            if(res == CHAM_LOCAL_TASK_SUCCESS)
+                continue;
+// #endif
+        }
+#endif
+
+#if CHAM_REPLICATION_MODE>0
+        // ========== Prio 3: work on replicated tasks
+        if(!_replicated_tasks.empty()) {
+            
+            #if THREAD_ACTIVATION
+            if(this_thread_idle) {
+                // decrement counter again
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+                this_thread_idle = 0;
+            }
+            // this_thread_num_attemps_standard_task = 0;
+            #endif
+
+            // try to execute a local task
+            res = process_replicated_task();
+        }
+#endif
+        #if THREAD_ACTIVATION
+        // ========== Prio 4: work on a regular OpenMP task
+        // make sure that we get info about outstanding tasks with dependences
+        // to avoid that we miss some tasks
+        // if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
+        // {
+            // of course only do that once for the thread :)
+            if(!this_thread_idle) {
+                // increment idle counter again
+                my_idle_order = ++_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
+                this_thread_idle = 1;
+            }
+        // } else {
+        //     // increment attemps that might result in more target tasks
+        //     this_thread_num_attemps_standard_task++;
+        //     #pragma omp taskyield
+        // }
+        #endif
+
+        // ========== Prio 5: check whether to abort procedure
         #if THREAD_ACTIVATION
         // only abort if 
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
-        if(_num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
-            int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
+        if(this_thread_idle && _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
             if(exit_condition_met(0)) {
                 // DBP("chameleon_distributed_taskwait - break - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _num_threads_entered_taskwait.load(), _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
@@ -562,50 +605,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             break;
         }
         #endif
-
-#if !FORCE_MIGRATION
-        // ========== Prio 3: work on local tasks
-        if(!_local_tasks.empty()) {
-            
-            #if THREAD_ACTIVATION
-            if(this_thread_idle) {
-                // decrement counter again
-                my_idle_order = --_num_threads_idle;
-                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
-                this_thread_idle = 0;
-            }
-            this_thread_num_attemps_standard_task = 0;
-            #endif
-
-            // try to execute a local task
-            res = process_local_task();
-
-#if CHAM_REPLICATION_MODE>0
-            // if task has been executed successfully start from beginning
-            if(res == CHAM_LOCAL_TASK_SUCCESS)
-                continue;
-#endif
-        }
-#endif
-
-#if CHAM_REPLICATION_MODE>0
-        // ========== Prio 4: work on replicated tasks
-        if(!_replicated_tasks.empty()) {
-            
-            #if THREAD_ACTIVATION
-            if(this_thread_idle) {
-                // decrement counter again
-                my_idle_order = --_num_threads_idle;
-                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
-                this_thread_idle = 0;
-            }
-            this_thread_num_attemps_standard_task = 0;
-            #endif
-
-            // try to execute a local task
-            res = process_replicated_task();
-        }
-#endif     
     }
 
 #if CHAMELEON_TOOL_SUPPORT

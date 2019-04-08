@@ -92,12 +92,12 @@ const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
 // ============== Thread Section ===========
 std::mutex _mtx_comm_threads_started;
-std::atomic<int> _comm_threads_started               = 0;
-std::atomic<int> _comm_thread_load_exchange_happend  = 0;
-std::atomic<int> _comm_thread_service_stopped        = 0;
+std::atomic<int> _comm_threads_started(0);
+std::atomic<int> _comm_thread_load_exchange_happend(0);
+std::atomic<int> _comm_thread_service_stopped(0);
 
 std::mutex _mtx_comm_threads_ended;
-std::atomic<int> _comm_threads_ended_count           = 0;
+std::atomic<int> _comm_threads_ended_count(0);
 
 // flag that signalizes comm threads to abort their work
 std::atomic<int> _flag_abort_threads(0);

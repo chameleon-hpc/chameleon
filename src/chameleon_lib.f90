@@ -24,6 +24,26 @@ interface
    
  end function chameleon_determine_base_addresses
 
+ type(c_ptr) function chameleon_create_annotation_container_fortran() BIND(c) 
+    use iso_c_binding
+    implicit none
+  end function chameleon_create_annotation_container_fortran
+
+  function chameleon_set_annotation_int_fortran(ann, value) BIND(c)
+    use iso_c_binding
+    implicit none
+    type(c_ptr), value, intent(in) :: ann
+    integer(kind=c_int), value, intent(in) :: value
+    integer :: chameleon_set_annotation_int_fortran
+  end function chameleon_set_annotation_int_fortran
+
+  function chameleon_get_annotation_int_fortran(ann) BIND(c)
+    use iso_c_binding
+    implicit none
+    type(c_ptr), value, intent(in) :: ann
+    integer :: chameleon_get_annotation_int_fortran
+  end function chameleon_get_annotation_int_fortran
+
  function chameleon_add_task_manual_fortran(entry, nargs, args) bind(c, name="chameleon_add_task_manual_fortran")
    use iso_c_binding
    implicit none
@@ -32,6 +52,17 @@ interface
    type(c_ptr), intent(in), value :: args
    integer:: chameleon_add_task_manual_fortran
  end function chameleon_add_task_manual_fortran
+
+ function chameleon_add_task_manual_fortran_w_annotations(entry, nargs, args, annotations) bind(c, name="chameleon_add_task_manual_fortran_w_annotations")
+    use iso_c_binding
+    implicit none
+    type(c_funptr), value, intent(in) :: entry
+    integer(kind=c_int), value, intent(in) :: nargs
+    type(c_ptr), intent(in), value :: args
+    !type(map_entry),dimension(:) :: args
+    type(c_ptr), intent(in), value :: annotations
+    integer:: chameleon_add_task_manual_fortran_w_annotations
+  end function chameleon_add_task_manual_fortran_w_annotations
 
  function chameleon_distributed_taskwait(nowait) bind(c)
    use iso_c_binding

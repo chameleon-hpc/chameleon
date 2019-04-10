@@ -72,13 +72,22 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
     }
 #else
     std::vector<size_t> tmp_sorted_idx = sort_indexes(loadInfoRanks);
-    int min_val = loadInfoRanks[tmp_sorted_idx[0]];
-    int max_val = loadInfoRanks[tmp_sorted_idx[chameleon_comm_size-1]];
 
-    int cur_load = loadInfoRanks[chameleon_comm_rank];
-    
-    if(max_val > min_val) {
-    // determine index
+    double min_val      = (double) loadInfoRanks[tmp_sorted_idx[0]];
+    double max_val      = (double) loadInfoRanks[tmp_sorted_idx[chameleon_comm_size-1]];
+    int cur_load        = loadInfoRanks[chameleon_comm_rank];
+    double ratio_lb     = 0.0; // 1 = high imbalance, 0 = no imbalance
+    double threshold    = 0.05;
+
+    if (max_val > 0) {
+        ratio_lb = (double)(max_val-min_val) / (double)max_val;
+    }
+#if !FORCE_MIGRATION
+    if(ratio_lb > threshold) {
+#else
+    if(true) {
+#endif
+        // determine index
         int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
         // only offload if on the upper side
         if((pos+1) >= ((double)chameleon_comm_size/2.0))
@@ -93,7 +102,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             // calculate ration between those two and just move if over a certain threshold
 #if !FORCE_MIGRATION
             double ratio = (double)(cur_load-other_val) / (double)cur_load;
-            if(other_val < cur_load && ratio > 0.5) {
+            if(other_val < cur_load && ratio > threshold) {
 #endif
                 tasksToOffloadPerRank[other_idx] = 1;
 #if !FORCE_MIGRATION

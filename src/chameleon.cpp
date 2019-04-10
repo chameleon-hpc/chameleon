@@ -47,6 +47,36 @@ std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
 thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 #pragma endregion Variables
 
+// void char_p_f2c(const char* fstr, int len, char** cstr)
+// {
+//   const char* end;
+//   int i;
+//   /* Leading and trailing blanks are discarded. */
+//   end = fstr + len - 1;
+//   for (i = 0; (i < len) && (' ' == *fstr); ++i, ++fstr) {
+//     continue;
+//   }
+//   if (i >= len) {
+//     len = 0;
+//   } else {
+//     for (; (end > fstr) && (' ' == *end); --end) {
+//       continue;
+//     }
+//     len = end - fstr + 1;
+//   }
+//   /* Allocate space for the C string, if necessary. */
+//   if (*cstr == NULL) {
+//     if ((*cstr = (char*) malloc(len + 1)) == NULL) {
+//       return;
+//     }
+//   }
+//   /* Copy F77 string into C string and NULL terminate it. */
+//   if (len > 0) {
+//     strncpy(*cstr, fstr, len);
+//   }
+//   (*cstr)[len] = '\0';
+// }
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,6 +96,21 @@ int32_t process_replicated_task();
 chameleon_annotations_t* chameleon_create_annotation_container() {
     chameleon_annotations_t* container = new chameleon_annotations_t();
     return container;
+}
+
+void* chameleon_create_annotation_container_fortran() {
+    chameleon_annotations_t* container = new chameleon_annotations_t();
+    return (void*)container;
+}
+
+int chameleon_set_annotation_int_fortran(void* ann, int value) {
+    return chameleon_set_annotation_int((chameleon_annotations_t*)ann, "num_cells", value);
+}
+
+int chameleon_get_annotation_int_fortran(void* ann) {
+    int res;
+    int found = chameleon_get_annotation_int((chameleon_annotations_t*) ann, "num_cells", &res);
+    return found ? res : -1;
 }
 
 int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value) {
@@ -496,6 +541,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     while(true) {
         int32_t res = CHAM_SUCCESS;
 
+#if OFFLOAD_ENABLED
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
             
@@ -515,6 +561,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res == CHAM_REMOTE_TASK_SUCCESS)
                 continue;
         }
+#endif
 
 #if !FORCE_MIGRATION
         // ========== Prio 2: work on local tasks
@@ -541,7 +588,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
 #endif
 
-#if CHAM_REPLICATION_MODE>0
+#if OFFLOAD_ENABLED && CHAM_REPLICATION_MODE>0
         // ========== Prio 3: work on replicated tasks
         if(!_replicated_tasks.empty()) {
             
@@ -782,6 +829,12 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
     chameleon_add_task_manual(entry_point, num_args, args_entries);
 
     return CHAM_SUCCESS;
+}
+
+int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int num_args, void *args_info, void* annotations) {
+    chameleon_map_data_entry_t *args_entries = (chameleon_map_data_entry_t *) args_info;
+    chameleon_annotations_t * anno = (chameleon_annotations_t *) annotations;
+    chameleon_add_task_manual_w_annotations(entry_point, num_args, args_entries, anno);
 }
 
 int32_t chameleon_add_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args) {

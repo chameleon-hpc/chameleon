@@ -115,6 +115,10 @@ typedef struct cham_migratable_task_t cham_migratable_task_t;
 // ================================================================================
 chameleon_annotations_t* chameleon_create_annotation_container();
 
+void* chameleon_create_annotation_container_fortran();
+int chameleon_set_annotation_int_fortran(void* ann, int value);
+int chameleon_get_annotation_int_fortran(void* ann);
+
 int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value);
 int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value);
 int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value);
@@ -179,6 +183,8 @@ int32_t chameleon_add_task_manual(void * entry_point, int num_args, chameleon_ma
 int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t* args, chameleon_annotations_t* ann);
 
 int32_t chameleon_add_task_manual_fortran(void * entry_point, int num_args, void *args_info);
+
+int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int num_args, void *args_info, void* annotations);
 
 int32_t chameleon_determine_base_addresses(void * main_ptr);
 

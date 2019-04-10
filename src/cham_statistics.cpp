@@ -100,12 +100,14 @@ void cham_stats_print_stats() {
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_replicated\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated.load());
+    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
     fprintf(stderr, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
     fprintf(stderr, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
 
     cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
     cham_stats_print_stats_w_mean("_time_task_execution_replicated_sum", _time_task_execution_replicated_sum, _time_task_execution_replicated_count);
+    cham_stats_print_stats_w_mean("_time_task_execution_overall_sum", (_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_task_execution_replicated_count+_time_task_execution_local_count+_time_task_execution_stolen_count);
     cham_stats_print_stats_w_mean("_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
     cham_stats_print_stats_w_mean("_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
     cham_stats_print_stats_w_mean("_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);

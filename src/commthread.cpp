@@ -11,6 +11,7 @@
 #include <numeric>
 #include <sched.h>
 #include <hwloc.h>
+#include <hwloc/glibc-sched.h>
 #include <functional>
 
 #ifdef TRACE
@@ -107,7 +108,6 @@ std::mutex _mtx_taskwait;
 std::atomic<int> _flag_comm_threads_sleeping(1);
 
 std::atomic<int> _num_threads_involved_in_taskwait(INT_MAX);
-std::atomic<int32_t> _num_threads_entered_taskwait(0);
 std::atomic<int32_t> _num_threads_idle(0);
 std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
@@ -133,7 +133,7 @@ extern "C" {
 void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size);
 cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag);
 
-short pin_thread_to_last_core();
+short pin_thread_to_last_core(int n_last_core);
 void offload_action(cham_migratable_task_t *task, int target_rank);
 
 static void send_handler(void* buffer, int tag, int rank);
@@ -217,7 +217,6 @@ int32_t chameleon_wake_up_comm_threads() {
     #endif
     // determine or set values once
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
-    _num_threads_entered_taskwait       = 0;
     _num_threads_idle                   = 0;
     DBP("chameleon_wake_up_comm_threads       - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
 
@@ -275,7 +274,6 @@ int32_t stop_communication_threads() {
     // _th_receive_remote_tasks_created        = 0;
     _th_service_actions_created             = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
-    _num_threads_entered_taskwait           = 0;
     _num_threads_idle                       = 0;
     #endif
 
@@ -319,7 +317,6 @@ int32_t put_comm_threads_to_sleep() {
     _comm_threads_ended_count               = 0;
     _comm_thread_load_exchange_happend      = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
-    _num_threads_entered_taskwait           = 0;
     _num_threads_idle                       = 0;
     DBP("put_comm_threads_to_sleep  - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
     _num_ranks_not_completely_idle          = INT_MAX;
@@ -330,24 +327,39 @@ int32_t put_comm_threads_to_sleep() {
     return CHAM_SUCCESS;
 }
 
-short pin_thread_to_last_core() {
+void print_cpu_set(cpu_set_t set) {
+    std::string val("");
+    for(long i = 0; i < 48; i++) {
+        if (CPU_ISSET(i, &set)) {
+            val += std::to_string(i)  + ",";
+        }
+    }
+    RELP("Process/thread affinity to cores %s\n", val.c_str());
+}
+
+short pin_thread_to_last_core(int n_last_core) {
     int err;
     int s, j;
     pthread_t thread;
     cpu_set_t current_cpuset;
     cpu_set_t new_cpu_set;
-    cpu_set_t final_cpu_set;
+    cpu_set_t final_cpu_set;    
 
-    // get current thread to set affinity for    
-    thread = pthread_self();
-    // get cpuset of complete process
-    err = sched_getaffinity(getpid(), sizeof(cpu_set_t), &current_cpuset);
-    if(err != 0)
-        handle_error_en(err, "sched_getaffinity");
-    // also get the number of processing units (here)
+    // somehow this only reflects binding of current thread. Problem when OpenMP already pinned threads due to OMP_PLACES and OMP_PROC_BIND. 
+    // then comm thread only get cpuset to single core --> overdecomposition of core with computational and communication thread  
+    // err = sched_getaffinity(getpid(), sizeof(cpu_set_t), &current_cpuset);
+    // if(err != 0)
+    //     handle_error_en(err, "sched_getaffinity");
+
     hwloc_topology_t topology;
-    hwloc_topology_init(&topology);
-    hwloc_topology_load(topology);
+    hwloc_bitmap_t set, hwlocset;
+    err = hwloc_topology_init(&topology);
+    err = hwloc_topology_load(topology);
+    hwlocset = hwloc_bitmap_alloc();
+    err = hwloc_get_proc_cpubind(topology, getpid(), hwlocset, 0);
+    hwloc_cpuset_to_glibc_sched_affinity(topology, hwlocset, &current_cpuset, sizeof(current_cpuset));
+    
+    // also get the number of processing units (here)
     int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
     if(depth == HWLOC_TYPE_DEPTH_UNKNOWN) {
         handle_error_en(1001, "hwloc_get_type_depth");
@@ -357,11 +369,15 @@ short pin_thread_to_last_core() {
     
     // get last hw thread of current cpuset
     long max_core_set = -1;
+    int count_last = 0;
+
     for (long i = n_logical_cores; i >= 0; i--) {
         if (CPU_ISSET(i, &current_cpuset)) {
             // DBP("Last core/hw thread in cpuset is %ld\n", i);
             max_core_set = i;
-            break;
+            count_last++;
+            if(count_last >= n_last_core)
+                break;
         }
     }
 
@@ -369,7 +385,7 @@ short pin_thread_to_last_core() {
     CPU_ZERO(&new_cpu_set);
     if(max_core_set < n_physical_cores) {
         // Case: there are no hyper threads
-        // DBP("Setting thread affinity to core %ld\n", max_core_set);
+        RELP("COMM_THREAD: Setting thread affinity to core %ld\n", max_core_set);
         CPU_SET(max_core_set, &new_cpu_set);
     } else {
         // Case: there are at least 2 HT per core
@@ -379,8 +395,10 @@ short pin_thread_to_last_core() {
             cores = std::to_string(i)  + "," + cores;
             CPU_SET(i, &new_cpu_set);
         }
-        // DBP("Setting thread affinity to cores %s\n", cores.c_str());
+        RELP("COMM_THREAD: Setting thread affinity to cores %s\n", cores.c_str());
     }
+    // get current thread to set affinity for    
+    thread = pthread_self();
     err = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &new_cpu_set);
     if (err != 0)
         handle_error_en(err, "pthread_setaffinity_np");
@@ -397,7 +415,7 @@ short pin_thread_to_last_core() {
     //         final_cores += std::to_string(j) + ",";
 
     // final_cores.pop_back();
-    // DBP("Verifying thread affinity: pinned to cores %s\n", final_cores.c_str());
+    // RELP("COMM_THREAD: Verifying thread affinity: pinned to cores %s\n", final_cores.c_str());
     // // ===== DEBUG
 
     return CHAM_SUCCESS;
@@ -967,7 +985,7 @@ void* receive_remote_tasks(void* arg) {
     if(event_recv_back == -1) 
         int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
 #endif
-    pin_thread_to_last_core();
+    pin_thread_to_last_core(1);
     DBP("receive_remote_tasks (enter)\n");
 
     int32_t res;
@@ -1010,33 +1028,34 @@ void* receive_remote_tasks(void* arg) {
             flag_set = 0;
         }
 #endif
+        MPI_Status cur_status_receiveBack;
+        int flag_open_request_receiveBack = 0;
 
-            MPI_Status cur_status_receiveBack;
-            int flag_open_request_receiveBack = 0;
-
-            while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
-                usleep(CHAM_SLEEP_TIME_MICRO_SECS);
+        while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
+            // usleep(CHAM_SLEEP_TIME_MICRO_SECS);
+            request_manager_receive.progressRequests();            
                 request_manager_receive.progressRequests();            
-                // check whether thread should be aborted
-                if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
+            request_manager_receive.progressRequests();            
+            // check whether thread should be aborted
+            if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
 
-                    DBP("receive_remote_tasks (abort), outstanding requests: %d\n", request_manager_receive.getNumberOfOutstandingRequests());
-                    while(!(request_manager_receive.getNumberOfOutstandingRequests()==0)) {
-                        request_manager_receive.progressRequests();
-                    }
-                    //free(buffer);
-                    int ret_val = 0;
-                    pthread_exit(&ret_val);
+                DBP("receive_remote_tasks (abort), outstanding requests: %d\n", request_manager_receive.getNumberOfOutstandingRequests());
+                while(!(request_manager_receive.getNumberOfOutstandingRequests()==0)) {
+                    request_manager_receive.progressRequests();
                 }
-#if THREAD_ACTIVATION
-                if(_flag_comm_threads_sleeping) {
-                    break;
-                }
-#endif
-                MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
-                MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
-                MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
+                //free(buffer);
+                int ret_val = 0;
+                pthread_exit(&ret_val);
             }
+#if THREAD_ACTIVATION
+            if(_flag_comm_threads_sleeping) {
+                break;
+            }
+#endif
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
+            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
+            MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
+        }
 
 #if THREAD_ACTIVATION
         // if threads have been put to sleep start from beginning to end up in sleep mode
@@ -1045,7 +1064,6 @@ void* receive_remote_tasks(void* arg) {
             continue;
         }
 #endif
-    
         if( flag_open_request_cancel ) {
             TYPE_TASK_ID task_id = -1;
             MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel.MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
@@ -1075,13 +1093,12 @@ void* receive_remote_tasks(void* arg) {
 #endif       
               } else {}//do nothing -> task either has been executed or is currently executed, process_remote_task will take care of cleaning up
             }
-        }  
+        }
 
         if( flag_open_request_receiveBack ) {
             cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack.MPI_TAG);
             if(task_entry) {
                 DBP("receive_remote_tasks - receiving back task with id %ld\n", task_entry->task_id);
-  
                 // check if we still need to receive the task data back or replicated task is executed locally already
                 bool expected = false;
                 bool desired = true;
@@ -1338,7 +1355,7 @@ void* service_thread_action(void *arg) {
         int ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
 #endif
 
-    pin_thread_to_last_core();
+    pin_thread_to_last_core(2);
     
     // trigger signal to tell that thread is running now
     pthread_mutex_lock( &_th_service_actions_mutex );
@@ -1487,7 +1504,7 @@ void* service_thread_action(void *arg) {
             VT_end(event_exchange_outstanding);
 #endif
             // Handle exit condition here to avoid that iallgather is posted after iteration finished
-            if(exit_condition_met(1)){
+            if(exit_condition_met(0,1)){
                 _flag_comm_threads_sleeping     = 1;
                 _comm_thread_service_stopped    = 1;
                 flag_set                        = 1;
@@ -1730,19 +1747,34 @@ void* service_thread_action(void *arg) {
 #pragma endregion Thread Send / Service
 
 #pragma region Helper Functions
-int exit_condition_met(int print) {
-    if( _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+inline int exit_condition_met(int from_taskwait, int print) {
+    if(from_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
         if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0) {
             // if(print)
-                // DBP("exit_condition_met - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
-                //     _num_threads_entered_taskwait.load(), 
+                // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
                 //     _comm_thread_load_exchange_happend.load(), 
                 //     _outstanding_jobs_sum.load(), 
                 //     cp_ranks_not_completely_idle);
             return 1;
         }
-    }
+    } else {
+        if( _num_threads_idle >= _num_threads_involved_in_taskwait) {
+            int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
+            if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0) {
+                // if(print)
+                    // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
+                    //     _comm_thread_load_exchange_happend.load(), 
+                //     _comm_thread_load_exchange_happend.load(), 
+                    //     _comm_thread_load_exchange_happend.load(), 
+                    //     _outstanding_jobs_sum.load(), 
+                //     _outstanding_jobs_sum.load(), 
+                    //     _outstanding_jobs_sum.load(), 
+                    //     cp_ranks_not_completely_idle);
+                return 1;
+            }
+        }
+    }    
     return 0;
 }
 

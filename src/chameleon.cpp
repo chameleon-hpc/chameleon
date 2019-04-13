@@ -335,7 +335,6 @@ int32_t chameleon_init() {
     // #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
     #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
-        // DBP("chameleon_init - dummy region\n");
         printf("chameleon_init - dummy region\n");
     }
 
@@ -511,10 +510,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     #if THREAD_ACTIVATION
     // need to wake threads up if not already done
     chameleon_wake_up_comm_threads();
-
-    // increment counter to tell that another thread joined taskwait
-    _num_threads_entered_taskwait++;
-    int this_thread_idle = 0;
+    bool this_thread_idle = false;
     
     int tmp_count_trip = 0;
     int my_idle_order = -1;
@@ -550,7 +546,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
                 DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
-                this_thread_idle = 0;
+                this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
             #endif
@@ -572,7 +568,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
                 DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
-                this_thread_idle = 0;
+                this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
             #endif
@@ -597,7 +593,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
                 DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
-                this_thread_idle = 0;
+                this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
             #endif
@@ -617,7 +613,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 // increment idle counter again
                 my_idle_order = ++_num_threads_idle;
                 DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
-                this_thread_idle = 1;
+                this_thread_idle = true;
             }
         // } else {
         //     // increment attemps that might result in more target tasks
@@ -632,16 +628,16 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
-        if(this_thread_idle && _num_threads_entered_taskwait >= _num_threads_involved_in_taskwait && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+        if(this_thread_idle && _num_threads_idle >= _num_threads_involved_in_taskwait) {
             // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
-            if(exit_condition_met(0)) {
-                // DBP("chameleon_distributed_taskwait - break - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _num_threads_entered_taskwait.load(), _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
+            if(exit_condition_met(1,0)) {
+                // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
             }
             // else {
             //     tmp_count_trip++;
             //    if(tmp_count_trip % 10000 == 0) {
-            //         DBP("chameleon_distributed_taskwait - idle - _num_threads_entered_taskwait: %d exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _num_threads_entered_taskwait.load(), _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
+            //         DBP("chameleon_distributed_taskwait - idle - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
             //         tmp_count_trip = 0;
             //     }
             // }

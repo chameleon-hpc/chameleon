@@ -70,7 +70,6 @@ extern std::atomic<int> _comm_thread_load_exchange_happend;
 extern std::mutex _mtx_taskwait;
 extern std::atomic<int> _flag_comm_threads_sleeping;
 extern std::atomic<int> _num_threads_involved_in_taskwait;
-extern std::atomic<int32_t> _num_threads_entered_taskwait;
 extern std::atomic<int32_t> _num_threads_idle;
 extern std::atomic<int> _num_ranks_not_completely_idle;
 
@@ -98,7 +97,7 @@ int32_t put_comm_threads_to_sleep();
 
 void trigger_update_outstanding();
 
-int exit_condition_met(int print);
+int exit_condition_met(int from_taskwait, int print);
 
 #ifdef __cplusplus
 }

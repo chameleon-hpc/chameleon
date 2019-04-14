@@ -1032,9 +1032,9 @@ void* receive_remote_tasks(void* arg) {
         int flag_open_request_receiveBack = 0;
 
         while(!flag_open_request_receive && !flag_open_request_receiveBack && !flag_open_request_cancel) {
-            // usleep(CHAM_SLEEP_TIME_MICRO_SECS);
+            usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             request_manager_receive.progressRequests();            
-                request_manager_receive.progressRequests();            
+            request_manager_receive.progressRequests();            
             request_manager_receive.progressRequests();            
             // check whether thread should be aborted
             if(_flag_abort_threads && _num_offloaded_tasks_outstanding==0) {
@@ -1376,6 +1376,8 @@ void* service_thread_action(void *arg) {
     int * buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
     std::vector<int32_t> tasksToOffload(chameleon_comm_size);
 
+    int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
+
     DBP("service_thread_action (enter)\n");
     while(true) {
         request_manager_cancel.progressRequests();
@@ -1401,6 +1403,7 @@ void* service_thread_action(void *arg) {
         if(flag_set) {
             DBP("service_thread_action - woke up again - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped.load());
             flag_set = 0;
+            num_threads_in_tw = _num_threads_involved_in_taskwait.load();   
         }
         #endif
 
@@ -1430,7 +1433,7 @@ void* service_thread_action(void *arg) {
             free(ids_local);
             free(ids_stolen);
 
-            int tmp_val = _num_threads_idle.load() < _num_threads_involved_in_taskwait ? 1 : 0;
+            int tmp_val = _num_threads_idle.load() < num_threads_in_tw ? 1 : 0;
             // DBP("service_thread_action - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
             transported_load_values[0] = tmp_val;
             transported_load_values[1] = _outstanding_jobs_local.load();
@@ -1541,7 +1544,7 @@ void* service_thread_action(void *arg) {
 #if FORCE_MIGRATION
         if(_comm_thread_load_exchange_happend && !offload_triggered) {
 #else
-        if(_comm_thread_load_exchange_happend && _local_tasks.size() > 1 && !offload_triggered) {
+        if(_comm_thread_load_exchange_happend && _local_tasks.size() > (num_threads_in_tw*1.5)  && !offload_triggered) {
 #endif
 
 #if OFFLOAD_BLOCKING
@@ -1779,11 +1782,7 @@ inline int exit_condition_met(int from_taskwait, int print) {
 }
 
 void trigger_update_outstanding() {
-    int n_local_outstanding     = _num_local_tasks_outstanding.load();
-    int n_stolen_outstanding    = _num_stolen_tasks_outstanding.load();
-    int tmp_sum                 = n_local_outstanding + n_stolen_outstanding;
-    _outstanding_jobs_local     = tmp_sum;
-    DBP("trigger_update_outstanding - outstanding jobs: %d, local: %d, stolen: %d\n", tmp_sum, n_local_outstanding, n_stolen_outstanding);
+    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_stolen_tasks_outstanding.load();
 }
 
 void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx) {

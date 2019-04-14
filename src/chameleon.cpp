@@ -532,6 +532,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         cham_t_status.cham_t_callback_sync_region(cham_t_sync_region_taskwait, cham_t_sync_region_start, &(__thread_data[gtid].thread_tool_data) , codeptr_ra);
     }
 #endif
+
+    int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
     
     // as long as there are local tasks run this loop
     while(true) {
@@ -628,7 +630,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
-        if(this_thread_idle && _num_threads_idle >= _num_threads_involved_in_taskwait) {
+        if(this_thread_idle && _num_threads_idle >= num_threads_in_tw) {
             // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
             if(exit_condition_met(1,0)) {
                 // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);

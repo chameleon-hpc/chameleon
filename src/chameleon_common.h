@@ -396,6 +396,7 @@ class thread_safe_task_map_t {
         if(got != this->task_map.end()) {
             val = got->second;
             this->task_map.erase(task_id);
+            this->map_size--;
         }
         this->m.unlock();
         return val;

@@ -4,7 +4,7 @@
 #include <cassert>
 #include "chameleon_common.h"
 
-#define MAX_REQUESTS 100
+#define MAX_REQUESTS 1000
 
 RequestManager::RequestManager()
  : _id(0), _groupId(0) {
@@ -66,6 +66,15 @@ void RequestManager::progressRequests() {
   std::vector<MPI_Request> requests;
   std::unordered_map<int, int> vecid_to_rid;
 
+    /*int i = 0;
+    while(!_request_queue.empty()) {
+        int rid = _request_queue.front();
+        _request_queue.pop();
+        MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
+        requests.push_back(request);
+        vecid_to_rid.insert(std::make_pair(i, rid));
+        i++;
+    }*/
   for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
     int rid = _request_queue.front();
     _request_queue.pop();

@@ -32,20 +32,22 @@ class RequestManager {
     void submitRequests( int tag, int rank, int n_requests, 
                          MPI_Request *requests,
                          bool block,
-                         std::function<void(void*, int, int)> handler,
+                         std::function<void(void*, int, int, cham_migratable_task_t*)> handler,
                          RequestType type,
-                         void* buffer=NULL);
+                         void* buffer=NULL,
+                         cham_migratable_task_t* task=NULL);
     void progressRequests();
     int getNumberOfOutstandingRequests();
 
   private:
     struct RequestGroupData {
         void *buffer;
-        std::function<void(void*, int, int)> handler;
+        std::function<void(void*, int, int, cham_migratable_task_t*)> handler;
         int rank;
         int tag;
         RequestType type;
         double start_time;
+        cham_migratable_task_t* task;
     };
 
     struct RequestData {

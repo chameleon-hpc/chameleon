@@ -14,9 +14,10 @@ RequestManager::RequestManager()
 void RequestManager::submitRequests( int tag, int rank, int n_requests, 
                                 MPI_Request *requests,
                                 bool block, 
-                                std::function<void(void*, int, int)> handler,
+                                std::function<void(void*, int, int, cham_migratable_task_t*)> handler,
                                 RequestType type,
-                                void* buffer) {
+                                void* buffer,
+                                cham_migratable_task_t* task) {
     DBP("%s - submitting requests for task %ld\n", RequestType_values[type], tag);
   if(block) {
 #if CHAM_STATS_RECORD
@@ -38,7 +39,7 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
      time += omp_get_wtime();
      addTimingToStatistics(time, type); 
 #endif
-     handler(buffer, tag, rank);
+     handler(buffer, tag, rank, task);
      //for(int i=0; i<buffers_to_delete.size(); i++) delete[] buffers_to_delete[i];
      return;
   }
@@ -48,7 +49,7 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
 #if CHAM_STATS_RECORD
   startStamp = omp_get_wtime();
 #endif
-  RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp};
+  RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp, task};
   _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
   _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));
 
@@ -108,8 +109,9 @@ void RequestManager::progressRequests() {
 #endif
        _outstanding_reqs_for_group.erase(gid);
        RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
-       std::function<void(void*, int, int)> handler = request_group_data.handler;
+       std::function<void(void*, int, int, cham_migratable_task_t*)> handler = request_group_data.handler;
        void* buffer = request_group_data.buffer;
+       cham_migratable_task_t* task = request_group_data.task;
        int tag = request_group_data.tag;
        int rank = request_group_data.rank;
        RequestType type = request_group_data.type;
@@ -118,7 +120,7 @@ void RequestManager::progressRequests() {
        double startStamp = request_group_data.start_time;
        addTimingToStatistics(finishedStamp-startStamp, type);
 #endif               
-       handler(buffer, tag, rank);
+       handler(buffer, tag, rank, task);
 
        _map_id_to_request_group_data.erase(gid);
     } 
@@ -129,7 +131,6 @@ void RequestManager::progressRequests() {
       _request_queue.push(vecid_to_rid[i]);
     }
   }
-
 }
 
 int RequestManager::getNumberOfOutstandingRequests() {

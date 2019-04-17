@@ -1078,7 +1078,7 @@ inline int32_t process_replicated_task() {
     if(_replicated_tasks.empty())
         return CHAM_REPLICATED_TASK_NONE;
         
-    replicated_task = _replicated_tasks.back();
+    replicated_task = _replicated_tasks.pop_back();
     
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
@@ -1089,8 +1089,6 @@ inline int32_t process_replicated_task() {
     //atomic CAS   
     if(replicated_task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
-        //remove task from queue
-        _replicated_tasks.pop_back();
 
 #ifdef TRACE
         static int event_process_replicated = -1;
@@ -1138,8 +1136,6 @@ inline int32_t process_replicated_task() {
         free_migratable_task(replicated_task, false);
     }
     else {
-        // leave task in the queue as it either already has been received back (and task will be removed soon)
-        // or the receive back is in progress (and after completion, task will be removed)
         return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
     }
 

@@ -354,6 +354,7 @@ short pin_thread_to_last_core(int n_last_core) {
     hwlocset = hwloc_bitmap_alloc();
     err = hwloc_get_proc_cpubind(topology, getpid(), hwlocset, 0);
     hwloc_cpuset_to_glibc_sched_affinity(topology, hwlocset, &current_cpuset, sizeof(current_cpuset));
+    hwloc_bitmap_free(hwlocset);
     
     // also get the number of processing units (here)
     int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
@@ -362,6 +363,8 @@ short pin_thread_to_last_core(int n_last_core) {
     }
     const long n_physical_cores = hwloc_get_nbobjs_by_depth(topology, depth);
     const long n_logical_cores = sysconf( _SC_NPROCESSORS_ONLN );
+
+    hwloc_topology_destroy(topology);
     
     // get last hw thread of current cpuset
     long max_core_set = -1;
@@ -529,6 +532,7 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
     DBP("send_back_handler - called for task %ld\n", tag);
     if(buffer)
         free(buffer);
+    free_migratable_task(task, true);
 }
 
 static void receive_back_handler(void* buffer, int tag, int source, cham_migratable_task_t* task) {
@@ -565,6 +569,8 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         DBP("receive_back_handler - decrement local outstanding count for task %ld\n", task_entry->task_id);
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
+
+        free_migratable_task(task_entry, false);
     }
 }
 
@@ -704,6 +710,9 @@ void offload_action(cham_migratable_task_t *task, int target_rank) {
 #endif
     if(has_outputs) {
         _map_offloaded_tasks_with_outputs.insert(tmp_tag, task);
+    } else {
+        // TODO: if replication enabled: do not free task here
+        free_migratable_task(task, false);
     }
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
@@ -1270,7 +1279,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     _time_comm_back_send_count++;
     #endif
 
-    request_manager_send->submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, sendBack, buff );
+    request_manager_send->submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, 1, &request, MPI_BLOCKING, send_back_handler, sendBack, buff, cur_task);
     
     #elif OFFLOAD_DATA_PACKING_TYPE > 0
     #if CHAM_STATS_RECORD
@@ -1333,7 +1342,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     _time_comm_back_send_count++;
     #endif
 
-    request_manager_send->submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, num_requests, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr );
+    request_manager_send->submitRequests( cur_task->source_mpi_tag, cur_task->source_mpi_rank, num_requests, &requests[0], MPI_BLOCKING, send_back_handler, sendBack, nullptr, cur_task);
     delete[] requests;
     #endif // OFFLOAD_DATA_PACKING_TYPE
 
@@ -1727,6 +1736,7 @@ void* comm_thread_action(void* arg) {
             usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             if(_flag_abort_threads) {
                 DBP("comm_thread_action (abort)\n");
+                free(buffer_load_values);
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }

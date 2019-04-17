@@ -637,6 +637,23 @@ static void chameleon_dbg_print(int rank, ... ) {
     va_end (args);
 }
 
+static void free_migratable_task(cham_migratable_task_t *task, bool is_remote_task = false) {
+    if(task) {
+        // TODO: deallocate annotations
+        if(is_remote_task) {
+            for(int i = 0; i < task->arg_num; i++) {
+                int64_t tmp_type    = task->arg_types[i];
+                int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+                if(!is_lit) {
+                    free(task->arg_hst_pointers[i]);
+                }
+            }
+        }
+        delete task;
+        task = nullptr;    
+    }
+}
+
 #ifndef RELP
 #define RELP( ... ) chameleon_dbg_print(chameleon_comm_rank, __VA_ARGS__);
 #endif

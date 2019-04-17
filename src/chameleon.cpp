@@ -614,7 +614,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(!this_thread_idle) {
                 // increment idle counter again
                 my_idle_order = ++_num_threads_idle;
-                DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
+                // DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
                 this_thread_idle = true;
             }
         // } else {
@@ -630,7 +630,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
-        if(this_thread_idle && _num_threads_idle >= num_threads_in_tw) {
+        if(_num_threads_idle >= num_threads_in_tw) {
             // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
             if(exit_condition_met(1,0)) {
                 // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
@@ -1135,6 +1135,7 @@ inline int32_t process_replicated_task() {
 #ifdef TRACE
         VT_end(event_process_replicated);
 #endif
+        free_migratable_task(replicated_task, false);
     }
     else {
         // leave task in the queue as it either already has been received back (and task will be removed soon)
@@ -1198,6 +1199,8 @@ inline int32_t process_remote_task() {
         DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
+
+        free_migratable_task(task, true);
     }
 
 #if CHAM_STATS_RECORD
@@ -1257,6 +1260,7 @@ inline int32_t process_local_task() {
 #if CHAM_STATS_RECORD
     _num_executed_tasks_local++;
 #endif
+    free_migratable_task(task, false);
     return CHAM_LOCAL_TASK_SUCCESS;
 }
 #pragma endregion Fcns for Lookups and Execution

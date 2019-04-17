@@ -89,10 +89,10 @@ void RequestManager::progressRequests() {
   if(n_requests==0) return;  
 
   int outcount = 0;
-  int *arr_of_indices = new int[n_requests];
-  MPI_Status *arr_of_statuses = new MPI_Status[n_requests];  
+  std::vector<int> arr_of_indices(n_requests);
+  std::vector<MPI_Status> arr_of_statuses(n_requests);
 
-  MPI_Testsome(n_requests, &requests[0], &outcount, arr_of_indices, arr_of_statuses );
+  MPI_Testsome(n_requests, &requests[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
 
   for(int i=0; i<outcount; i++) {
     int idx = arr_of_indices[i];

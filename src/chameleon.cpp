@@ -1133,7 +1133,9 @@ inline int32_t process_replicated_task() {
 #ifdef TRACE
         VT_end(event_process_replicated);
 #endif
-        free_migratable_task(replicated_task, false);
+        //Do not free replicated task here, as the communication thread may later receive back 
+        //this task and needs to access the task (check flag + post receive requests to trash buffer)
+        //The replicated task should be deallocated in recv back handlers
     }
     else {
         return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;

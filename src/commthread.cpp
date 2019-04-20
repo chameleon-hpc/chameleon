@@ -575,7 +575,8 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
 }
 
 static void receive_back_trash_handler(void* buffer, int tag, int source, cham_migratable_task_t* task) {
-
+    DBP("receive_remote_tasks_trash - receiving output data from rank %d for tag into trash: %d\n", source, tag);
+    free_migratable_task(task, false); 
 }
 #pragma endregion
 
@@ -604,11 +605,12 @@ int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank) {
     int has_outputs = task->HasAtLeastOneOutput();
     DBP("offload_task_to_rank (enter) - task_entry (task_id=%ld) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->arg_num, target_rank, has_outputs);
 
+    DBP("offload_task_to_rank (enter) - replicating task_entry (task_id=%ld), replicated tasks: %d\n", task->task_id, _num_replicated_tasks_outstanding.load());
+    assert(task->sync_commthread_lock.load()==false);
     _replicated_tasks.push_back(task);
     _num_replicated_tasks_outstanding++;
 
-    assert(task->sync_commthread_lock.load()==false);
-    
+
     // directly use base function
     offload_action(task, target_rank);
     _num_offloaded_tasks_outstanding++;

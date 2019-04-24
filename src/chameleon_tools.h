@@ -241,15 +241,17 @@ typedef void (*cham_t_callback_sync_region_t) (
 
 typedef int32_t (*cham_t_callback_determine_local_load_t) (
     TYPE_TASK_ID* task_ids_local,
-    int32_t num_ids_local,
+    int32_t num_tasks_local,
     TYPE_TASK_ID* task_ids_stolen,
-    int32_t num_ids_stolen
+    int32_t num_tasks_stolen
 );
 
 // information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
 typedef void (*cham_t_callback_select_num_tasks_to_offload_t) (
     int32_t* num_tasks_to_offload_per_rank,
-    const int32_t* load_info_per_rank
+    const int32_t* load_info_per_rank,
+    int32_t num_tasks_local,
+    int32_t num_tasks_stolen
 );
 
 // information about current rank and number of ranks can be achived with cham_t_get_rank_info_t
@@ -257,7 +259,8 @@ typedef void (*cham_t_callback_select_num_tasks_to_offload_t) (
 typedef cham_t_migration_tupel_t* (*cham_t_callback_select_tasks_for_migration_t) (
     const int32_t* load_info_per_rank,
     TYPE_TASK_ID* task_ids_local,
-    int32_t num_ids_local,
+    int32_t num_tasks_local,
+    int32_t num_tasks_stolen,
     int32_t* num_tuples
 );
 

@@ -1051,19 +1051,19 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 inline void action_create_gather_request(int *num_threads_in_tw, int *transported_load_values, int* buffer_load_values, MPI_Request *request_gather_out) {
     _mtx_load_exchange.lock();
     int32_t local_load_representation;
-    int32_t num_ids_local;
-    TYPE_TASK_ID* ids_local = _local_tasks.get_task_ids(&num_ids_local);
-    int32_t num_ids_stolen;
-    TYPE_TASK_ID* ids_stolen = _stolen_remote_tasks.get_task_ids(&num_ids_stolen);
+    int32_t num_tasks_local;
+    TYPE_TASK_ID* ids_local = _local_tasks.get_task_ids(&num_tasks_local);
+    int32_t num_tasks_stolen;
+    TYPE_TASK_ID* ids_stolen = _stolen_remote_tasks.get_task_ids(&num_tasks_stolen);
     
     #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_determine_local_load) {
-        local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+        local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
     } else {
-        local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+        local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
     }
     #else 
-    local_load_representation = getDefaultLoadInformationForRank(ids_local, num_ids_local, ids_stolen, num_ids_stolen);
+    local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
     #endif
 
     // clean up again
@@ -1169,27 +1169,34 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
 
             // reset values to zero
             std::fill(tasksToOffload.begin(), tasksToOffload.end(), 0);
-            int32_t num_ids_local = 0;
+            int32_t num_tasks_local = 0;
             TYPE_TASK_ID* ids_local;
             cham_t_migration_tupel_t* migration_tupels = nullptr;
             int32_t num_tuples = 0;
             
+            // use different atomic for that to avoid to much contention (maybe _num_open_tasks_stolen)
+            // oustanding includes tasks that are currently in execution whereas open means tasks in queue only
+            int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
+            
             #if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
             if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_tasks_for_migration) {
                 strategy_type = 1;
-                ids_local = _local_tasks.get_task_ids(&num_ids_local);
-                migration_tupels = cham_t_status.cham_t_callback_select_tasks_for_migration(&(_load_info_ranks[0]), ids_local, num_ids_local, &num_tuples);
+                ids_local = _local_tasks.get_task_ids(&num_tasks_local);
+                migration_tupels = cham_t_status.cham_t_callback_select_tasks_for_migration(&(_load_info_ranks[0]), ids_local, num_tasks_local, num_tasks_stolen, &num_tuples);
                 free(ids_local);
             } else if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_offload) {
                 strategy_type = 0;
-                cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]));
+                num_tasks_local     = _local_tasks.dup_size();
+                cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]), num_tasks_local, num_tasks_stolen);
             } else {
                 strategy_type = 0;
-                computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
+                num_tasks_local     = _local_tasks.dup_size();
+                computeNumTasksToOffload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             }
             #else
             strategy_type = 0;
-            computeNumTasksToOffload( tasksToOffload, _load_info_ranks );
+            num_tasks_local     = _local_tasks.dup_size();
+            computeNumTasksToOffload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             #endif
 
             #ifdef TRACE

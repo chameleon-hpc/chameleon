@@ -410,10 +410,17 @@ class thread_safe_task_list_t {
     std::mutex m;
     // size_t list_size = 0;
     std::atomic<size_t> list_size;
+    
+    // duplicate to avoid contention on single atomic from comm thread and worker threads
+    std::atomic<size_t> dup_list_size;
 
     public:
 
-    thread_safe_task_list_t() { list_size = 0; }
+    thread_safe_task_list_t() { list_size = 0; dup_list_size = 0; }
+
+    size_t dup_size() {
+        return this->list_size.load();
+    }
 
     size_t size() {
         return this->list_size.load();
@@ -427,6 +434,7 @@ class thread_safe_task_list_t {
         this->m.lock();
         this->task_list.push_back(task);
         this->list_size++;
+        this->dup_list_size++;
         this->m.unlock();
     }
 
@@ -434,6 +442,7 @@ class thread_safe_task_list_t {
         this->m.lock();
         this->task_list.remove(task);
         this->list_size--;
+        this->dup_list_size--;
         this->m.unlock();
     }
 
@@ -446,6 +455,7 @@ class thread_safe_task_list_t {
         this->m.lock();
         if(!this->empty()) {
             this->list_size--;
+            this->dup_list_size--;
             ret_val = this->task_list.front();
             this->task_list.pop_front();
         }
@@ -462,6 +472,7 @@ class thread_safe_task_list_t {
         this->m.lock();
         if(!this->empty()) {
             this->list_size--;
+            this->dup_list_size--;
             ret_val = this->task_list.back();
             this->task_list.pop_back();
         }
@@ -506,6 +517,7 @@ class thread_safe_task_list_t {
                 if((*it)->task_id == task_id)
                 {
                     this->list_size--;
+                    this->dup_list_size--;
                     ret_val = *it;
                     this->task_list.remove(ret_val);
                     break;

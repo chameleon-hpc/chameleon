@@ -22,7 +22,7 @@ std::vector<size_t> sort_indexes(const std::vector<T> &v) {
 #pragma endregion Local Helpers
 
 #pragma region Strategies
-void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks ) {
+void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t num_tasks_stolen) {
 #if OFFLOADING_STRATEGY_AGGRESSIVE
     int input_r = 0, input_l = 0;
     int output_r = 0, output_l = 0;
@@ -71,18 +71,33 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             output_l = loadInfoRanks[output_r];
     }
 #else
+    static double min_abs_imbalance_before_migration = -2;
+    if(min_abs_imbalance_before_migration == -2) {
+        // try to load it once
+        min_abs_imbalance_before_migration = -1;
+        char *min_abs_balance = std::getenv("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION");
+        if(min_abs_balance) {
+            min_abs_imbalance_before_migration = std::atof(min_abs_balance);
+        }
+    }
+
     std::vector<size_t> tmp_sorted_idx = sort_indexes(loadInfoRanks);
 
-    double min_val      = (double) loadInfoRanks[tmp_sorted_idx[0]];
-    double max_val      = (double) loadInfoRanks[tmp_sorted_idx[chameleon_comm_size-1]];
-    int cur_load        = loadInfoRanks[chameleon_comm_rank];
-    double ratio_lb     = 0.0; // 1 = high imbalance, 0 = no imbalance
-    double threshold    = 0.05;
+    double min_val                  = (double) loadInfoRanks[tmp_sorted_idx[0]];
+    double max_val                  = (double) loadInfoRanks[tmp_sorted_idx[chameleon_comm_size-1]];
+    double cur_load                 = (double) loadInfoRanks[chameleon_comm_rank];
+    
+    double ratio_lb                 = 0.0; // 1 = high imbalance, 0 = no imbalance
+    double threshold                = 0.05;
 
     if (max_val > 0) {
         ratio_lb = (double)(max_val-min_val) / (double)max_val;
     }
 #if !FORCE_MIGRATION
+    // check absolute condition
+    if((cur_load-min_val) < min_abs_imbalance_before_migration)
+        return;
+
     if(ratio_lb > threshold) {
 #else
     if(true) {
@@ -92,15 +107,18 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
         // only offload if on the upper side
         if((pos+1) >= ((double)chameleon_comm_size/2.0))
         {
-            int other_pos = chameleon_comm_size-pos;
+            int other_pos       = chameleon_comm_size-pos;
             // need to adapt in case of even number
             if(chameleon_comm_size % 2 == 0)
                 other_pos--;
-            int other_idx = tmp_sorted_idx[other_pos];
-            int other_val = loadInfoRanks[other_idx];
+            int other_idx       = tmp_sorted_idx[other_pos];
+            double other_val    = (double) loadInfoRanks[other_idx];
 
             // calculate ration between those two and just move if over a certain threshold
 #if !FORCE_MIGRATION
+            // check absolute condition
+            if((cur_load-other_val) < min_abs_imbalance_before_migration)
+                return;
             double ratio = (double)(cur_load-other_val) / (double)cur_load;
             if(other_val < cur_load && ratio > threshold) {
 #endif
@@ -113,9 +131,9 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
 #endif
 }
 
-int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t num_ids_local, TYPE_TASK_ID* stolen_task_ids, int32_t num_ids_stolen) {
+int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen) {
     // simply return number of tasks in queue
-    int32_t num_ids = num_ids_local + num_ids_stolen;
+    int32_t num_ids = num_tasks_local + num_tasks_stolen;
     return num_ids;
 }
 #pragma endregion Strategies

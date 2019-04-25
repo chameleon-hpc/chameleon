@@ -1143,11 +1143,23 @@ inline bool action_handle_gather_request(int *event_exchange_outstanding, int *b
 }
 
 inline void action_task_migration(int *event_offload_decision, int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
+    static double min_local_tasks_in_queue_before_migration = -1;
+    if(min_local_tasks_in_queue_before_migration == -1) {
+        // try to load it once
+        char *min_local_tasks = std::getenv("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION");
+        if(min_local_tasks) {
+            min_local_tasks_in_queue_before_migration = std::atof(min_local_tasks);
+        } else {
+            min_local_tasks_in_queue_before_migration = 2;
+        }
+    }
+
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
     if(_comm_thread_load_exchange_happend && !*offload_triggered) {
     #else
-    if(_comm_thread_load_exchange_happend && _local_tasks.size() > (*num_threads_in_tw*2)  && !*offload_triggered) {
+    // if(_comm_thread_load_exchange_happend && _local_tasks.size() > (*num_threads_in_tw*2)  && !*offload_triggered) {
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= min_local_tasks_in_queue_before_migration  && !*offload_triggered) {
     #endif
 
         #if OFFLOAD_BLOCKING

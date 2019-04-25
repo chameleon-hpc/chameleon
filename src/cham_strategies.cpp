@@ -71,16 +71,30 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             output_l = loadInfoRanks[output_r];
     }
 #else
-    static double min_abs_imbalance_before_migration = -2;
-    if(min_abs_imbalance_before_migration == -2) {
+    static double min_abs_imbalance_before_migration = -1;
+    if(min_abs_imbalance_before_migration == -1) {
         // try to load it once
-        min_abs_imbalance_before_migration = -1;
         char *min_abs_balance = std::getenv("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION");
         if(min_abs_balance) {
             min_abs_imbalance_before_migration = std::atof(min_abs_balance);
+        } else {
+            min_abs_imbalance_before_migration = 2;
         }
     }
 
+    static double min_rel_imbalance_before_migration = -1;
+    if(min_rel_imbalance_before_migration == -1) {
+        // try to load it once
+        char *min_rel_balance = std::getenv("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION");
+        if(min_rel_balance) {
+            min_rel_imbalance_before_migration = std::atof(min_rel_balance);
+        } else {
+            // default relative threshold
+            min_rel_imbalance_before_migration = 0.05;
+        }
+    }
+
+    // sort load and idx by load
     std::vector<size_t> tmp_sorted_idx = sort_indexes(loadInfoRanks);
 
     double min_val                  = (double) loadInfoRanks[tmp_sorted_idx[0]];
@@ -88,8 +102,6 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
     double cur_load                 = (double) loadInfoRanks[chameleon_comm_rank];
     
     double ratio_lb                 = 0.0; // 1 = high imbalance, 0 = no imbalance
-    double threshold                = 0.05;
-
     if (max_val > 0) {
         ratio_lb = (double)(max_val-min_val) / (double)max_val;
     }
@@ -98,7 +110,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
     if((cur_load-min_val) < min_abs_imbalance_before_migration)
         return;
 
-    if(ratio_lb > threshold) {
+    if(ratio_lb >= min_rel_imbalance_before_migration) {
 #else
     if(true) {
 #endif
@@ -114,19 +126,18 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             int other_idx       = tmp_sorted_idx[other_pos];
             double other_val    = (double) loadInfoRanks[other_idx];
 
-            // calculate ration between those two and just move if over a certain threshold
 #if !FORCE_MIGRATION
             // check absolute condition
             if((cur_load-other_val) < min_abs_imbalance_before_migration)
                 return;
             double ratio = (double)(cur_load-other_val) / (double)cur_load;
-            if(other_val < cur_load && ratio > threshold) {
+            if(other_val < cur_load && ratio >= min_rel_imbalance_before_migration) {
 #endif
                 tasksToOffloadPerRank[other_idx] = 1;
 #if !FORCE_MIGRATION
             }
 #endif
-        } 
+        }
     }
 #endif
 }

@@ -419,7 +419,7 @@ class thread_safe_task_list_t {
     thread_safe_task_list_t() { list_size = 0; dup_list_size = 0; }
 
     size_t dup_size() {
-        return this->list_size.load();
+        return this->dup_list_size.load();
     }
 
     size_t size() {

@@ -1152,6 +1152,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         } else {
             min_local_tasks_in_queue_before_migration = 2;
         }
+        // RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", min_local_tasks_in_queue_before_migration);
     }
 
     // only check for offloading if enough local tasks available and exchange has happend at least once
@@ -1741,11 +1742,11 @@ void* comm_thread_action(void* arg) {
     DBP("comm_thread_action (enter)\n");
 
     while(true) {
-        request_manager_cancel.progressRequests();
+        // request_manager_cancel.progressRequests();
         request_manager_send.progressRequests();
         request_manager_receive.progressRequests();
-        request_manager_receive.progressRequests();
-        request_manager_receive.progressRequests();
+        // request_manager_receive.progressRequests();
+        // request_manager_receive.progressRequests();
 
         #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {

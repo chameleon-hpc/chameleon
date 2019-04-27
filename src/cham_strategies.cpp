@@ -80,6 +80,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
         } else {
             min_abs_imbalance_before_migration = 2;
         }
+        // RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_abs_imbalance_before_migration);
     }
 
     static double min_rel_imbalance_before_migration = -1;
@@ -92,6 +93,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             // default relative threshold
             min_rel_imbalance_before_migration = 0.05;
         }
+        // RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_rel_imbalance_before_migration);
     }
 
     // sort load and idx by load
@@ -127,13 +129,19 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             double other_val    = (double) loadInfoRanks[other_idx];
 
 #if !FORCE_MIGRATION
+            double cur_diff = cur_load-other_val;
             // check absolute condition
-            if((cur_load-other_val) < min_abs_imbalance_before_migration)
+            if(cur_diff < min_abs_imbalance_before_migration)
                 return;
-            double ratio = (double)(cur_load-other_val) / (double)cur_load;
+            double ratio = cur_diff / (double)cur_load;
             if(other_val < cur_load && ratio >= min_rel_imbalance_before_migration) {
+                int num_tasks = (int)(cur_diff / 10.0);
+                // if(num_tasks < 1)
+                num_tasks = 1;
+                RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
 #endif
-                tasksToOffloadPerRank[other_idx] = 1;
+                // tasksToOffloadPerRank[other_idx] = 1;
+                tasksToOffloadPerRank[other_idx] = num_tasks;
 #if !FORCE_MIGRATION
             }
 #endif

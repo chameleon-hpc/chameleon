@@ -1119,17 +1119,35 @@ inline bool action_handle_gather_request(int *event_exchange_outstanding, int *b
     #if OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
     if(*last_known_sum_outstanding == -1) {
         *last_known_sum_outstanding = sum_outstanding;
+        
+        #ifdef CHAM_DEBUG
+        if(*offload_triggered > 0)
+            RELP("RESET offload_triggered = 0\n");
+        #endif /* CHAM_DEBUG */
+
         *offload_triggered = 0;
         // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
     } else {
         // check whether changed.. only allow new offload after change
         if(*last_known_sum_outstanding != sum_outstanding) {
             *last_known_sum_outstanding = sum_outstanding;
+
+            #ifdef CHAM_DEBUG
+            if(*offload_triggered > 0)
+                RELP("RESET offload_triggered = 0\n");
+            #endif /* CHAM_DEBUG */
+
             *offload_triggered = 0;
             // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
         }
     }
     #else /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
+
+    #ifdef CHAM_DEBUG
+    if(*offload_triggered > 0)
+        RELP("RESET offload_triggered = 0\n");
+    #endif /* CHAM_DEBUG */
+
     *offload_triggered = 0;
     #endif /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
 
@@ -1157,10 +1175,10 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
 
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
-    if(_comm_thread_load_exchange_happend && !*offload_triggered) {
+    if(_comm_thread_load_exchange_happend && *offload_triggered == 0) {
     #else
     // if(_comm_thread_load_exchange_happend && _local_tasks.size() > (*num_threads_in_tw*2)  && !*offload_triggered) {
-    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= min_local_tasks_in_queue_before_migration  && !*offload_triggered) {
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= min_local_tasks_in_queue_before_migration  && *offload_triggered == 0) {
     #endif
 
         #if OFFLOAD_BLOCKING
@@ -1175,7 +1193,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
         
         // only proceed if offloading not already performed
-        if(!*offload_triggered) {
+        if(*offload_triggered == 0) {
             #ifdef TRACE
             VT_begin(*event_offload_decision);
             #endif
@@ -1214,9 +1232,16 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             computeNumTasksToOffload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             #endif
 
+            #if CHAM_STATS_RECORD
+            // RELP("MIGRATION DECISION offload_triggered = %d\n", *offload_triggered);
+            _num_migration_decision_performed++;
+            #endif /* CHAM_STATS_RECORD */
+
             #ifdef TRACE
             VT_end(*event_offload_decision);
             #endif
+
+            bool offload_done = false;
 
             if(strategy_type == 1)
             {
@@ -1230,7 +1255,14 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         cham_migratable_task_t* task = _local_tasks.pop_task_by_id(cur_task_id);
                         if(task) {
                             offload_task_to_rank(task, cur_rank_id);
+                            
+                            #ifdef CHAM_DEBUG
+                            if(*offload_triggered == 0)
+                                RELP("SET offload_triggered = 1\n");
+                            #endif /* CHAM_DEBUG */
+
                             *offload_triggered = 1;
+                            offload_done = true;
                             
                             #if OFFLOAD_BLOCKING
                             _offload_blocked = 1;
@@ -1247,7 +1279,14 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                             cham_migratable_task_t *task = _local_tasks.pop_front();
                             if(task) {
                                 offload_task_to_rank(task, r);
+                                
+                                #ifdef CHAM_DEBUG
+                                if(*offload_triggered == 0)
+                                    RELP("SET offload_triggered = 1\n");
+                                #endif /* CHAM_DEBUG */
+                                
                                 *offload_triggered = 1;
+                                offload_done = true;
                                 
                                 #if OFFLOAD_BLOCKING
                                 _offload_blocked = 1;
@@ -1257,6 +1296,11 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                     }
                 }
             }
+            
+            #if CHAM_STATS_RECORD
+            if(offload_done)
+                _num_migration_done++;
+            #endif /* CHAM_STATS_RECORD */
         }
         #if OFFLOAD_BLOCKING
         }
@@ -1802,6 +1846,11 @@ void* comm_thread_action(void* arg) {
         int request_gather_avail;
         MPI_Test(&request_gather_out, &request_gather_avail, &status_gather_out);
         if(request_gather_avail) {
+            
+            #if CHAM_STATS_RECORD
+            _num_load_exchanges_performed++;
+            #endif /* CHAM_STATS_RECORD */
+
             bool exit_true = action_handle_gather_request(&event_exchange_outstanding, buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
 
             if(exit_true){

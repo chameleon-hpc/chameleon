@@ -138,7 +138,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
                 int num_tasks = (int)(cur_diff / 10.0);
                 // if(num_tasks < 1)
                 num_tasks = 1;
-                RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
+                // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
 #endif
                 // tasksToOffloadPerRank[other_idx] = 1;
                 tasksToOffloadPerRank[other_idx] = num_tasks;

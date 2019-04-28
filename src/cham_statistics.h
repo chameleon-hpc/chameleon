@@ -21,6 +21,9 @@ extern std::atomic<int>     _num_executed_tasks_stolen;
 extern std::atomic<int>     _num_executed_tasks_replicated;
 extern std::atomic<int>     _num_tasks_offloaded;
 extern std::atomic<int>     _num_tasks_canceled;
+extern std::atomic<int>     _num_migration_decision_performed;
+extern std::atomic<int>     _num_migration_done;
+extern std::atomic<int>     _num_load_exchanges_performed;
 
 extern std::atomic<double>  _time_data_submit_sum;
 extern std::atomic<int>     _time_data_submit_count;

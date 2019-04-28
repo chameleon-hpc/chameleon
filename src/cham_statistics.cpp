@@ -7,6 +7,9 @@ std::atomic<int>     _num_executed_tasks_stolen(0);
 std::atomic<int>     _num_executed_tasks_replicated(0);
 std::atomic<int>     _num_tasks_canceled(0);
 std::atomic<int>     _num_tasks_offloaded(0);
+std::atomic<int>     _num_migration_decision_performed(0);
+std::atomic<int>     _num_migration_done(0);
+std::atomic<int>     _num_load_exchanges_performed(0);
 
 std::atomic<double>  _time_data_submit_sum(0.0);
 std::atomic<int>     _time_data_submit_count(0);
@@ -53,6 +56,9 @@ void cham_stats_reset_for_sync_cycle() {
     _num_executed_tasks_replicated = 0;
     _num_tasks_offloaded = 0;
     _num_tasks_canceled = 0;
+    _num_migration_decision_performed = 0;
+    _num_migration_done = 0;
+    _num_load_exchanges_performed = 0;
 
     _time_task_execution_local_sum = 0.0;
     _time_task_execution_local_count = 0;
@@ -103,6 +109,9 @@ void cham_stats_print_stats() {
     fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
     fprintf(stderr, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
     fprintf(stderr, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
+    fprintf(stderr, "Stats R#%d:\t_num_migration_decision_performed\t%d\n", chameleon_comm_rank, _num_migration_decision_performed.load());
+    fprintf(stderr, "Stats R#%d:\t_num_migration_done\t%d\n", chameleon_comm_rank, _num_migration_done.load());
+    fprintf(stderr, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());
 
     cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);

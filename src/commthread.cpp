@@ -1368,15 +1368,15 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     delete[] requests;
     #endif // OFFLOAD_DATA_PACKING_TYPE
 
-    #ifdef TRACE
-    VT_end(*event_send_back);
-    #endif
-
     _mtx_load_exchange.lock();
     _num_stolen_tasks_outstanding--;
     DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld\n", cur_task->task_id);
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
+
+    #ifdef TRACE
+    VT_end(*event_send_back);
+    #endif
 }
 
 inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
@@ -1696,6 +1696,8 @@ void* comm_thread_action(void* arg) {
     static int event_exchange_outstanding   = -1;
     static int event_offload_decision       = -1;
     static int event_send_back              = -1;
+    static int event_progress_send          = -1;
+    static int event_progress_recv          = -1;
 
     #ifdef TRACE    
     std::string event_receive_tasks_name = "receive_task";
@@ -1717,6 +1719,14 @@ void* comm_thread_action(void* arg) {
     std::string event_send_back_name = "send_back";
     if(event_send_back == -1)
         int ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
+
+    std::string event_progress_send_name = "progress_send";
+    if(event_progress_send == -1) 
+        int ierr = VT_funcdef(event_progress_send_name.c_str(), VT_NOCLASS, &event_progress_send);
+
+    std::string event_progress_recv_name = "progress_recv";
+    if(event_progress_recv == -1) 
+        int ierr = VT_funcdef(event_progress_recv_name.c_str(), VT_NOCLASS, &event_progress_recv);
     #endif
 
     // =============== General Vars
@@ -1743,10 +1753,18 @@ void* comm_thread_action(void* arg) {
 
     while(true) {
         // request_manager_cancel.progressRequests();
+        #ifdef TRACE
+        VT_begin(event_progress_send);
+        #endif
         request_manager_send.progressRequests();
+        #ifdef TRACE
+        VT_end(event_progress_send);
+        VT_begin(event_progress_recv);
+        #endif
         request_manager_receive.progressRequests();
-        // request_manager_receive.progressRequests();
-        // request_manager_receive.progressRequests();
+        #ifdef TRACE
+        VT_end(event_progress_recv);
+        #endif
 
         #if THREAD_ACTIVATION
         while (_flag_comm_threads_sleeping) {
@@ -1795,16 +1813,6 @@ void* comm_thread_action(void* arg) {
             }
         }
 
-        // #if THREAD_ACTIVATION
-        // // if threads have been put to sleep start from beginning to end up in sleep mode
-        // if(_flag_comm_threads_sleeping) {
-        //     _comm_thread_service_stopped    = 1;
-        //     flag_set                        = 1;
-        //     DBP("comm_thread_action - thread went to sleep again - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped.load());
-        //     continue;
-        // }
-        // #endif
-
         #if OFFLOAD_ENABLED
         action_task_migration(&event_offload_decision, &offload_triggered, &num_threads_in_tw, tasksToOffload);
         #endif /* OFFLOAD_ENABLED */
@@ -1830,11 +1838,11 @@ void* comm_thread_action(void* arg) {
 
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
-        MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
+        // MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
 
-        if( flag_open_request_cancel ) {
-            action_handle_cancel_request(&cur_status_cancel);
-        }
+        // if( flag_open_request_cancel ) {
+        //     action_handle_cancel_request(&cur_status_cancel);
+        // }
 
         if ( flag_open_request_receive ) {
             // avoid double task receive, race condidtion with request handler

@@ -1051,16 +1051,21 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 
 #pragma region CommThread
 inline void action_create_gather_request(int *num_threads_in_tw, int *transported_load_values, int* buffer_load_values, MPI_Request *request_gather_out) {
-    _mtx_load_exchange.lock();
     int32_t local_load_representation;
-    int32_t num_tasks_local;
-    TYPE_TASK_ID* ids_local = _local_tasks.get_task_ids(&num_tasks_local);
-    int32_t num_tasks_stolen;
-    TYPE_TASK_ID* ids_stolen = _stolen_remote_tasks.get_task_ids(&num_tasks_stolen);
+    int32_t num_tasks_local = _local_tasks.dup_size();
+    TYPE_TASK_ID* ids_local = nullptr;
+    int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
+    TYPE_TASK_ID* ids_stolen = nullptr;
     
     #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_determine_local_load) {
+        // only get task ids when tool is used since default mode does not require that information
+        ids_local   = _local_tasks.get_task_ids(&num_tasks_local);
+        ids_stolen  = _stolen_remote_tasks.get_task_ids(&num_tasks_stolen);
         local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
+        // clean up again
+        free(ids_local);
+        free(ids_stolen);
     } else {
         local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
     }
@@ -1068,17 +1073,14 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
     #endif
 
-    // clean up again
-    free(ids_local);
-    free(ids_stolen);
-
     int tmp_val = _num_threads_idle.load() < *num_threads_in_tw ? 1 : 0;
     // DBP("action_create_gather_request - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
     transported_load_values[0] = tmp_val;
+    _mtx_load_exchange.lock();
     transported_load_values[1] = _outstanding_jobs_local.load();
-    transported_load_values[2] = local_load_representation;
     _mtx_load_exchange.unlock();
-
+    transported_load_values[2] = local_load_representation;
+    
     MPI_Iallgather(transported_load_values, 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, request_gather_out);
 }
 
@@ -1108,10 +1110,6 @@ inline bool action_handle_gather_request(int *event_exchange_outstanding, int *b
     //     DBP("action_handle_gather_request - _outstanding_jobs_sum: old=%d new=%d\n", old_outstanding_sum, sum_outstanding);
     // }
     _outstanding_jobs_sum               = sum_outstanding;
-    
-    // set flag that exchange has happend
-    if(!_comm_thread_load_exchange_happend)
-        _comm_thread_load_exchange_happend = 1;
 
     // reset flag
     *request_gather_created = 0;
@@ -1767,6 +1765,8 @@ void* comm_thread_action(void* arg) {
     int flag_set                    = 0;
     int num_threads_in_tw           = _num_threads_involved_in_taskwait.load();
     double cur_time;
+    double time_last_load_exchange  = 0;
+    double time_gather_posted       = 0;
 
     // =============== Recv Thread Vars
     int las_recv_task_id = -1;
@@ -1830,17 +1830,35 @@ void* comm_thread_action(void* arg) {
         if(!request_gather_created) {
             action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
             request_gather_created = 1;
+            #if CHAM_STATS_RECORD
+            time_gather_posted = omp_get_wtime();
+            #endif /* CHAM_STATS_RECORD */
         }
 
         int request_gather_avail;
         MPI_Test(&request_gather_out, &request_gather_avail, &status_gather_out);
         if(request_gather_avail) {
-            
             #if CHAM_STATS_RECORD
             _num_load_exchanges_performed++;
+
+            double cur_diff = omp_get_wtime()-time_gather_posted;
+            atomic_add_dbl(_time_between_allgather_and_exchange_sum, cur_diff);
+            _time_between_allgather_and_exchange_count++;
+
+            // calculate time between two load exchanges discarding sleep times
+            if(_comm_thread_load_exchange_happend) {
+                cur_diff = omp_get_wtime()-time_last_load_exchange;
+                atomic_add_dbl(_time_between_load_exchange_sum, cur_diff);
+                _time_between_load_exchange_count++;
+            }
             #endif /* CHAM_STATS_RECORD */
 
             bool exit_true = action_handle_gather_request(&event_exchange_outstanding, buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
+
+            // set flag that exchange has happend
+            if(!_comm_thread_load_exchange_happend) {
+                _comm_thread_load_exchange_happend = 1;
+            }
 
             if(exit_true){
                 _flag_comm_threads_sleeping     = 1;
@@ -1849,6 +1867,11 @@ void* comm_thread_action(void* arg) {
                 DBP("comm_thread_action - thread went to sleep again due to exit condition\n");
                 continue;
             }
+
+            #if CHAM_STATS_RECORD
+            // save last time load exchange happend for current sync cycle
+            time_last_load_exchange = omp_get_wtime();
+            #endif /* CHAM_STATS_RECORD */
         }
 
         #if OFFLOAD_ENABLED

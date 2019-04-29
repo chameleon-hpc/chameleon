@@ -506,6 +506,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
     verify_initialized();
     DBP("chameleon_distributed_taskwait (enter)\n");
+
+    #if CHAM_STATS_RECORD
+    double time_start_tw = omp_get_wtime();
+    #endif /* CHAM_STATS_RECORD */
     
     #if THREAD_ACTIVATION
     // need to wake threads up if not already done
@@ -671,6 +675,12 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     if(!nowait) {
         #pragma omp barrier
     }
+
+    #if CHAM_STATS_RECORD
+    double time_tw_elapsed = omp_get_wtime()-time_start_tw;
+    atomic_add_dbl(_time_taskwait_sum, time_tw_elapsed);
+    _time_taskwait_count++;
+    #endif /* CHAM_STATS_RECORD */
 #ifdef TRACE
     VT_end(event_taskwait);
 #endif

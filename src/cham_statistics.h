@@ -61,6 +61,9 @@ extern std::atomic<int64_t> _time_between_allgather_and_exchange_count;
 extern std::atomic<double>  _time_between_load_exchange_sum;
 extern std::atomic<int64_t> _time_between_load_exchange_count;
 
+extern std::atomic<double>  _time_taskwait_sum;
+extern std::atomic<int>     _time_taskwait_count;
+
 #if CHAMELEON_TOOL_SUPPORT
 extern std::atomic<double>  _time_tool_get_thread_data_sum;
 extern std::atomic<int>     _time_tool_get_thread_data_count;

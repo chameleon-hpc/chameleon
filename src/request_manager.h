@@ -61,6 +61,9 @@ class RequestManager {
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     std::queue<int> _request_queue;
+    std::vector<MPI_Request> _current_request_array;
+    std::unordered_map<int, int> _current_vecid_to_rid;
+    std::atomic<int> _current_num_finished_requests;
     std::unordered_map<int, RequestGroupData> _map_id_to_request_group_data;
     std::unordered_map<int, RequestData> _map_rid_to_request_data;
     std::unordered_map<int, int> _outstanding_reqs_for_group;

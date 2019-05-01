@@ -7,7 +7,7 @@
 #define MAX_REQUESTS 1000
 
 RequestManager::RequestManager()
- : _id(0), _groupId(0) {
+ : _id(0), _groupId(0), _current_request_array(0), _current_num_finished_requests(0) {
 
 }
 
@@ -64,27 +64,30 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
 }
 
 void RequestManager::progressRequests() {
-  std::vector<MPI_Request> requests;
-  std::unordered_map<int, int> vecid_to_rid;
+  //std::vector<MPI_Request> requests;
+  //std::unordered_map<int, int> vecid_to_rid;
 
     /*int i = 0;
     while(!_request_queue.empty()) {
         int rid = _request_queue.front();
         _request_queue.pop();
         MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
-        requests.push_back(request);
+        _current_request_array.push_back(request);
         vecid_to_rid.insert(std::make_pair(i, rid));
         i++;
     }*/
-  for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
-    int rid = _request_queue.front();
-    _request_queue.pop();
-    MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
-    requests.push_back(request);  
-    vecid_to_rid.insert(std::make_pair(i, rid));
+ 
+  if(_current_request_array.size()==0) {
+    for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
+      int rid = _request_queue.front();
+      _request_queue.pop();
+      MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
+      _current_request_array.push_back(request);  
+      _current_vecid_to_rid.insert(std::make_pair(i, rid));
+    }
   }
 
-  int n_requests = requests.size();
+  int n_requests = _current_request_array.size();
  
   if(n_requests==0) return;  
 
@@ -92,11 +95,13 @@ void RequestManager::progressRequests() {
   std::vector<int> arr_of_indices(n_requests);
   std::vector<MPI_Status> arr_of_statuses(n_requests);
 
-  MPI_Testsome(n_requests, &requests[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+  MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+
+  _current_num_finished_requests += outcount;
 
   for(int i=0; i<outcount; i++) {
     int idx = arr_of_indices[i];
-    int rid = vecid_to_rid[idx];
+    int rid = _current_vecid_to_rid[idx];
 
     RequestData request_data = _map_rid_to_request_data[rid];
     int gid = request_data.gid;
@@ -126,11 +131,16 @@ void RequestManager::progressRequests() {
     } 
   }
 
-  for(int i=0; i<n_requests; i++) {
-    if(requests[i]!=MPI_REQUEST_NULL) {
-      _request_queue.push(vecid_to_rid[i]);
-    }
+  if(_current_num_finished_requests==n_requests) {
+    _current_request_array.clear();
+    _current_vecid_to_rid.clear();
+    _current_num_finished_requests=0; 
   }
+  //for(int i=0; i<n_requests; i++) {
+  //  if(requests[i]!=MPI_REQUEST_NULL) {
+  //    _request_queue.push(vecid_to_rid[i]);
+  //  }
+  //}
 }
 
 int RequestManager::getNumberOfOutstandingRequests() {

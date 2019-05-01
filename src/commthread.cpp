@@ -1867,6 +1867,14 @@ void* comm_thread_action(void* arg) {
                 DBP("comm_thread_action - thread went to sleep again due to exit condition\n");
                 continue;
             }
+            // post Iallgather asap!
+            else if(!request_gather_created) {
+                action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
+                request_gather_created = 1;
+                #if CHAM_STATS_RECORD
+                time_gather_posted = omp_get_wtime();
+                #endif /* CHAM_STATS_RECORD */
+            }
 
             #if CHAM_STATS_RECORD
             // save last time load exchange happend for current sync cycle

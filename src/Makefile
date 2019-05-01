@@ -1,4 +1,4 @@
-#INSTALL_DIR=~/chameleon/test
+INSTALL_DIR=~/chameleon/test
 INSTALL_DIR ?=~/install/chameleon-lib/intel_1.0
 
 CXX_COMP_FILES=chameleon.cpp commthread.cpp cham_statistics.cpp cham_strategies.cpp chameleon_common.cpp request_manager.cpp chameleon_tools.cpp
@@ -58,7 +58,7 @@ release:
 		$(MPIF90) -g -O3 $(F90_COMPILE_FLAGS) -c $(F90_COMP_FILES); \
 	fi	
 	$(MPICXX) -g -O3 $(CXX_COMPILE_FLAGS) -c $(CXX_COMP_FILES)
-	$(MPICXX) $(CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(LINKER_FLAGS)
+	$(MPICXX) -g $(CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(LINKER_FLAGS)
 
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
 	@if [ "$(CXX)" = "icpc" ]; then\

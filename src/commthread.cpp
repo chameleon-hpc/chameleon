@@ -1836,7 +1836,16 @@ void* comm_thread_action(void* arg) {
         }
 
         int request_gather_avail;
+        #if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+        #endif
         MPI_Test(&request_gather_out, &request_gather_avail, &status_gather_out);
+        #if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+          _num_slow_communication_operations++;
+        #endif
+
         if(request_gather_avail) {
             #if CHAM_STATS_RECORD
             _num_load_exchanges_performed++;
@@ -1905,8 +1914,25 @@ void* comm_thread_action(void* arg) {
         MPI_Status cur_status_receiveBack;
         int flag_open_request_receiveBack = 0;
 
+        #if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime();
+        #endif
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
+        #if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+          _num_slow_communication_operations++;
+        #endif
+
+        #if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime();
+        #endif
         MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
+        #if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+          _num_slow_communication_operations++;
+        #endif
         // MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
 
         // if( flag_open_request_cancel ) {

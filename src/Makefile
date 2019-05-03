@@ -2,7 +2,7 @@ INSTALL_DIR=~/chameleon/test
 #INSTALL_DIR ?=~/install/chameleon-lib/intel_1.0
 
 CXX_COMP_FILES=chameleon.cpp commthread.cpp cham_statistics.cpp cham_strategies.cpp chameleon_common.cpp request_manager.cpp chameleon_tools.cpp
-CXX_COMPILE_FLAGS=-std=c++11 -fpic
+CXX_COMPILE_FLAGS=-std=c++11 -fpic -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT
 F90_COMP_FILES=chameleon_lib.f90
 F90_COMPILE_FLAGS=-fpic
 

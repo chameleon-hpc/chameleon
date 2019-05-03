@@ -12,6 +12,10 @@
 #define CHAM_STATS_PER_SYNC_INTERVAL 0
 #endif
 
+#ifndef CHAM_SLOW_COMMUNICATION_THRESHOLD
+#define CHAM_SLOW_COMMUNICATION_THRESHOLD 0.001
+#endif
+
 #ifndef CHAM_STATS_PRINT
 #define CHAM_STATS_PRINT 0
 #endif
@@ -24,6 +28,7 @@ extern std::atomic<int>     _num_tasks_canceled;
 extern std::atomic<int>     _num_migration_decision_performed;
 extern std::atomic<int>     _num_migration_done;
 extern std::atomic<int>     _num_load_exchanges_performed;
+extern std::atomic<int>     _num_slow_communication_operations;
 
 extern std::atomic<double>  _time_data_submit_sum;
 extern std::atomic<int>     _time_data_submit_count;

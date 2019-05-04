@@ -4,7 +4,7 @@
 #include <cassert>
 #include "chameleon_common.h"
 
-#define MAX_REQUESTS 1000
+#define MAX_REQUESTS 10000000
 
 RequestManager::RequestManager()
  : _id(0), _groupId(0), _current_request_array(0), _current_num_finished_requests(0) {

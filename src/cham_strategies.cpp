@@ -80,7 +80,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
         } else {
             min_abs_imbalance_before_migration = 2;
         }
-        // RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_abs_imbalance_before_migration);
+        RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_abs_imbalance_before_migration);
     }
 
     static double min_rel_imbalance_before_migration = -1;
@@ -93,7 +93,7 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             // default relative threshold
             min_rel_imbalance_before_migration = 0.05;
         }
-        // RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_rel_imbalance_before_migration);
+        RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_rel_imbalance_before_migration);
     }
 
     // sort load and idx by load
@@ -119,12 +119,9 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
         // determine index
         int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
         // only offload if on the upper side
-        if((pos+1) >= ((double)chameleon_comm_size/2.0))
+        if((pos) >= ((double)chameleon_comm_size/2.0))
         {
-            int other_pos       = chameleon_comm_size-pos;
-            // need to adapt in case of even number
-            if(chameleon_comm_size % 2 == 0)
-                other_pos--;
+            int other_pos       = chameleon_comm_size-pos-1;
             int other_idx       = tmp_sorted_idx[other_pos];
             double other_val    = (double) loadInfoRanks[other_idx];
 
@@ -135,12 +132,12 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
                 return;
             double ratio = cur_diff / (double)cur_load;
             if(other_val < cur_load && ratio >= min_rel_imbalance_before_migration) {
-                int num_tasks = (int)(cur_diff / 10.0);
+                // int num_tasks = (int)(cur_diff / 8.0);
                 // if(num_tasks < 1)
-                num_tasks = 1;
+                //     num_tasks = 1;
+                int num_tasks = 1;
                 // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
 #endif
-                // tasksToOffloadPerRank[other_idx] = 1;
                 tasksToOffloadPerRank[other_idx] = num_tasks;
 #if !FORCE_MIGRATION
             }

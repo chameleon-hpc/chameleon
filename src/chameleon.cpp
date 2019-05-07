@@ -17,6 +17,10 @@
 #include "VT.h"
 #endif
 
+#ifndef DEADLOCK_WARNING_TIMEOUT
+#define DEADLOCK_WARNING_TIMEOUT 20
+#endif
+
 #pragma region Variables
 // ================================================================================
 // Variables
@@ -538,15 +542,28 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
 
     int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
-    
+   
+    double last_time_doing_sth_useful = omp_get_wtime();
+ 
     // as long as there are local tasks run this loop
     while(true) {
         int32_t res = CHAM_SUCCESS;
 
+        if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
+           fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout! \n", chameleon_comm_rank);
+           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
+                                                                  _num_local_tasks_outstanding.load(),
+                                                                  _num_stolen_tasks_outstanding.load());
+           request_manager_receive.printRequestInformation();
+           request_manager_send.printRequestInformation();
+           last_time_doing_sth_useful = omp_get_wtime(); 
+        }
+
 #if OFFLOAD_ENABLED
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
-            
+     
+            last_time_doing_sth_useful = omp_get_wtime();    
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -568,7 +585,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #if !FORCE_MIGRATION
         // ========== Prio 2: work on local tasks
         if(!_local_tasks.empty()) {
-            
+   
+            last_time_doing_sth_useful = omp_get_wtime();
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -594,6 +612,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 3: work on replicated tasks
         if(!_replicated_tasks.empty()) {
             
+            last_time_doing_sth_useful = omp_get_wtime();
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -948,11 +967,11 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
 #endif
             if(!found) {
                 // something went wrong here
-                RELP("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
+                /*RELP("Error: lookup_hst_pointers - Cannot find mapping for arg_tgt: " DPxMOD ", type: %ld, literal: %d, from: %d\n", 
                     DPxPTR(tmp_tgt_ptr),
                     tmp_type,
                     is_lit,
-                    is_from);
+                    is_from);*/
                 return CHAM_FAILURE;
             } else {
                 print_arg_info_w_tgt("lookup_hst_pointers", task, i);

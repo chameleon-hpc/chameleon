@@ -147,7 +147,8 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_between_load_exchange_sum", _time_between_load_exchange_sum, _time_between_load_exchange_count);
     cham_stats_print_stats_w_mean("_time_between_allgather_and_exchange_sum", _time_between_allgather_and_exchange_sum, _time_between_allgather_and_exchange_count);
     cham_stats_print_stats_w_mean("_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
-
+    cham_stats_print_stats_w_mean("_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
+    cham_stats_print_stats_w_mean("_time_taskwait_idling_without_migration_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum), _time_taskwait_count);
     cham_stats_print_stats_w_mean("_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count, true);
 #if CHAMELEON_TOOL_SUPPORT
     cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);

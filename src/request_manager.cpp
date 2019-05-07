@@ -8,7 +8,11 @@
 
 RequestManager::RequestManager()
  : _id(0), _groupId(0), _current_request_array(0), _current_num_finished_requests(0) {
-
+ 
+  std::fill(&_num_posted_requests[0], &_num_posted_requests[5], 0);
+  std::fill(&_num_completed_requests[0], &_num_completed_requests[5], 0);
+  std::fill(&_num_posted_request_groups[0], &_num_posted_request_groups[5], 0);
+  std::fill(&_num_completed_request_groups[0], &_num_completed_request_groups[5], 0);
 }
 
 void RequestManager::submitRequests( int tag, int rank, int n_requests, 
@@ -19,12 +23,17 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
                                 void* buffer,
                                 cham_migratable_task_t* task) {
     DBP("%s - submitting requests for task %ld\n", RequestType_values[type], tag);
+  
+    _num_posted_requests[type]+= n_requests; 
+    _num_posted_request_groups[type]+=1;
   if(block) {
 #if CHAM_STATS_RECORD
      double time = -omp_get_wtime();
 #endif
      MPI_Status sta[n_requests];
      int ierr= MPI_Waitall(n_requests, &requests[0], sta);
+     _num_completed_requests[type]+= n_requests;
+     _num_completed_request_groups[type]+=1; 
      if(ierr!=MPI_SUCCESS) {
         printf("MPI error: %d\n", ierr);
         for(int i = 0; i < n_requests; i++) {
@@ -112,7 +121,11 @@ void RequestManager::progressRequests() {
 
     RequestData request_data = _map_rid_to_request_data[rid];
     int gid = request_data.gid;
-    _outstanding_reqs_for_group[gid]--;
+    
+    RequestGroupData rg_data = _map_id_to_request_group_data[gid];
+    _num_completed_requests[rg_data.type]++;
+
+     _outstanding_reqs_for_group[gid]--;
     _map_rid_to_request_data.erase(rid);
    
     if(_outstanding_reqs_for_group[gid]==0) {
@@ -127,6 +140,7 @@ void RequestManager::progressRequests() {
        int tag = request_group_data.tag;
        int rank = request_group_data.rank;
        RequestType type = request_group_data.type;
+       _num_completed_request_groups[type]++;
        DBP("%s - finally finished all requests for task %ld\n", RequestType_values[type], tag);
 #if CHAM_STATS_RECORD
        double startStamp = request_group_data.start_time;
@@ -150,8 +164,19 @@ void RequestManager::progressRequests() {
   //}
 }
 
+void RequestManager::printRequestInformation() {
+
+ for(int i=0;i<5;i++) {
+  fprintf(stderr, "Stats R#%d:\t_num_posted_requests[%s]\t%d\n", chameleon_comm_rank, RequestType_values[i], _num_posted_requests[i].load());
+  fprintf(stderr, "Stats R#%d:\t_num_completed_requests[%s]\t%d\n", chameleon_comm_rank, RequestType_values[i], _num_completed_requests[i].load());
+  fprintf(stderr, "Stats R#%d:\t_num_posted_request_groups[%s]\t%d\n", chameleon_comm_rank, RequestType_values[i], _num_posted_request_groups[i].load());
+  fprintf(stderr, "Stats R#%d:\t_num_completed_request_groups[%s]\t%d\n", chameleon_comm_rank, RequestType_values[i], _num_completed_request_groups[i].load());
+ }
+ fprintf(stderr, "Stats R#%d:\t_num_outstanding_requests\t%d\n", chameleon_comm_rank, getNumberOfOutstandingRequests());
+}
+
 int RequestManager::getNumberOfOutstandingRequests() {
-  return _request_queue.size();
+  return _request_queue.size()-_current_num_finished_requests;
 }
 
 #if CHAM_STATS_RECORD

@@ -38,6 +38,7 @@ class RequestManager {
                          cham_migratable_task_t* task=NULL);
     void progressRequests();
     int getNumberOfOutstandingRequests();
+    void printRequestInformation();
 
   private:
     struct RequestGroupData {
@@ -67,6 +68,11 @@ class RequestManager {
     std::unordered_map<int, RequestGroupData> _map_id_to_request_group_data;
     std::unordered_map<int, RequestData> _map_rid_to_request_data;
     std::unordered_map<int, int> _outstanding_reqs_for_group;
+
+    std::atomic<int> _num_posted_requests[5];
+    std::atomic<int> _num_completed_requests[5];
+    std::atomic<int> _num_posted_request_groups[5];
+    std::atomic<int> _num_completed_request_groups[5];
 };
 
 #endif

@@ -17,6 +17,10 @@ extern MPI_Comm chameleon_comm_load;
 // communicator for task cancellation
 extern MPI_Comm chameleon_comm_cancel;
 
+extern RequestManager request_manager_send;
+extern RequestManager request_manager_receive;
+extern RequestManager request_manager_cancel;
+
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 

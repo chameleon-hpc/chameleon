@@ -51,12 +51,6 @@ std::atomic<int64_t> _time_between_allgather_and_exchange_count(0);
 std::atomic<double>  _time_taskwait_sum(0.0);
 std::atomic<int>     _time_taskwait_count(0);
 
-std::atomic<double>  _time_recv_added_search_sum(0.0);
-std::atomic<int>     _time_recv_added_search_count(0);
-
-std::atomic<double>  _time_recv_added_insert_sum(0.0);
-std::atomic<int>     _time_recv_added_insert_count(0);
-
 #if CHAMELEON_TOOL_SUPPORT
 std::atomic<double>  _time_tool_get_thread_data_sum(0.0);
 std::atomic<int>     _time_tool_get_thread_data_count(0);
@@ -112,12 +106,6 @@ void cham_stats_reset_for_sync_cycle() {
 
     _time_taskwait_sum = 0.0;
     _time_taskwait_count = 0;
-
-    _time_recv_added_search_sum = 0.0;
-    _time_recv_added_search_count = 0;
-
-    _time_recv_added_insert_sum = 0.0;
-    _time_recv_added_insert_count = 0;
 }
 
 void cham_stats_print_stats_w_mean(std::string name, double sum, int count, bool cummulative = false) {
@@ -161,8 +149,6 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
     cham_stats_print_stats_w_mean("_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
     cham_stats_print_stats_w_mean("_time_taskwait_idling_without_migration_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum), _time_taskwait_count);
-    cham_stats_print_stats_w_mean("_time_recv_added_search_sum", _time_recv_added_search_sum, _time_recv_added_search_count);
-    cham_stats_print_stats_w_mean("_time_recv_added_insert_sum", _time_recv_added_insert_sum, _time_recv_added_insert_count);
     cham_stats_print_stats_w_mean("_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count, true);
 #if CHAMELEON_TOOL_SUPPORT
     cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);

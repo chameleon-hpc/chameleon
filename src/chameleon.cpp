@@ -542,7 +542,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
 
     int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
-   
     double last_time_doing_sth_useful = omp_get_wtime();
  
     // as long as there are local tasks run this loop
@@ -550,7 +549,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         int32_t res = CHAM_SUCCESS;
 
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
-           fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout! \n", chameleon_comm_rank);
+           fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
            fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
                                                                   _num_stolen_tasks_outstanding.load());
@@ -600,11 +599,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             // try to execute a local task
             res = process_local_task();
 
-// #if CHAM_REPLICATION_MODE>0
             // if task has been executed successfully start from beginning
             if(res == CHAM_LOCAL_TASK_SUCCESS)
                 continue;
-// #endif
         }
 #endif
 
@@ -625,8 +622,12 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
             // try to execute a local task
             res = process_replicated_task();
+
+            if(res != CHAM_REPLICATED_TASK_NONE)
+                continue;
         }
 #endif
+
         #if THREAD_ACTIVATION
         // ========== Prio 4: work on a regular OpenMP task
         // make sure that we get info about outstanding tasks with dependences

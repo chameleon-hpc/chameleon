@@ -13,6 +13,7 @@
 #include <hwloc.h>
 #include <hwloc/glibc-sched.h>
 #include <functional>
+#include <set>
 
 #ifdef TRACE
 #include "VT.h"
@@ -111,8 +112,6 @@ std::atomic<int> _num_threads_involved_in_taskwait(INT_MAX);
 std::atomic<int32_t> _num_threads_idle(0);
 std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
-pthread_t           _th_receive_remote_tasks;
-
 pthread_t           _th_service_actions;
 std::atomic<int>    _th_service_actions_created(0);
 pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
@@ -172,9 +171,6 @@ int32_t start_communication_threads() {
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
     int err;
-    // err = pthread_create(&_th_receive_remote_tasks, &attr, receive_remote_tasks, NULL);
-    // if(err != 0)
-    //     handle_error_en(err, "pthread_create - _th_receive_remote_tasks");
     err = pthread_create(&_th_service_actions, &attr, comm_thread_action, NULL);
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_service_actions");
@@ -246,10 +242,6 @@ int32_t stop_communication_threads() {
 
     DBP("stop_communication_threads (enter)\n");
     int err = 0;
-    // first kill all threads
-    // err = pthread_cancel(_th_receive_remote_tasks);
-    // err = pthread_kill(_th_receive_remote_tasks, SIGKILL);
-    
     // safer that way because it leads to severe problems if threads are canceled inside a MPI communication
     _flag_abort_threads = 1;
     // then wait for all threads to finish
@@ -267,7 +259,6 @@ int32_t stop_communication_threads() {
     mem_allocated = 0;
     #endif
 
-    // _th_receive_remote_tasks_created        = 0;
     _th_service_actions_created             = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
     _num_threads_idle                       = 0;
@@ -1084,7 +1075,7 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     MPI_Iallgather(transported_load_values, 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, request_gather_out);
 }
 
-inline bool action_handle_gather_request(int *event_exchange_outstanding, int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
+inline void action_handle_gather_request(int *event_exchange_outstanding, int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
     #ifdef TRACE
     VT_begin(*event_exchange_outstanding);
     #endif
@@ -1152,10 +1143,6 @@ inline bool action_handle_gather_request(int *event_exchange_outstanding, int *b
     #ifdef TRACE
     VT_end(*event_exchange_outstanding);
     #endif
-
-    // Handle exit condition here to avoid that iallgather is posted after iteration finished
-    int tmp = exit_condition_met(0,1);
-    return tmp==1;
 }
 
 inline void action_task_migration(int *event_offload_decision, int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
@@ -1768,9 +1755,6 @@ void* comm_thread_action(void* arg) {
     double time_last_load_exchange  = 0;
     double time_gather_posted       = 0;
 
-    // =============== Recv Thread Vars
-    int las_recv_task_id = -1;
-
     // =============== Send Thread Vars
     int request_gather_created      = 0;
     MPI_Request request_gather_out;
@@ -1781,6 +1765,15 @@ void* comm_thread_action(void* arg) {
     int transported_load_values[3];
     int * buffer_load_values        = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
     std::vector<int32_t> tasksToOffload(chameleon_comm_size);
+
+    // =============== Recv Thread Vars
+    #if CHAM_TRACK_LAST_RECV == 0
+    std::set<int> _req_current_phase_recv_added;
+    #else
+    std::vector<int> _req_current_phase_recv_added(chameleon_comm_size);
+    for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
+        _req_current_phase_recv_added[tmp_i] = -1;
+    #endif
 
     DBP("comm_thread_action (enter)\n");
 
@@ -1817,7 +1810,13 @@ void* comm_thread_action(void* arg) {
         if(flag_set) {
             DBP("comm_thread_action - woke up again\n");
             flag_set = 0;
-            las_recv_task_id = -1;
+            // clear list
+            #if CHAM_TRACK_LAST_RECV == 0
+            _req_current_phase_recv_added.clear();
+            #else
+            for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
+                _req_current_phase_recv_added[tmp_i] = -1;
+            #endif
             num_threads_in_tw = _num_threads_involved_in_taskwait.load();
         }
         #endif
@@ -1862,13 +1861,15 @@ void* comm_thread_action(void* arg) {
             }
             #endif /* CHAM_STATS_RECORD */
 
-            bool exit_true = action_handle_gather_request(&event_exchange_outstanding, buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
+            action_handle_gather_request(&event_exchange_outstanding, buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
 
             // set flag that exchange has happend
             if(!_comm_thread_load_exchange_happend) {
                 _comm_thread_load_exchange_happend = 1;
             }
 
+            // Handle exit condition here to avoid that iallgather is posted after iteration finished
+            bool exit_true = exit_condition_met(0,1);
             if(exit_true){
                 _flag_comm_threads_sleeping     = 1;
                 _comm_thread_service_stopped    = 1;
@@ -1940,9 +1941,43 @@ void* comm_thread_action(void* arg) {
         // }
 
         if ( flag_open_request_receive ) {
-            // avoid double task receive, race condidtion with request handler
-            if(las_recv_task_id != cur_status_receive.MPI_TAG) {
-                las_recv_task_id = cur_status_receive.MPI_TAG;
+            #if CHAM_STATS_RECORD
+            double time_search = omp_get_wtime();
+            #endif
+            
+            #if CHAM_TRACK_LAST_RECV == 0
+            std::set<int>::iterator search = _req_current_phase_recv_added.find(cur_status_receive.MPI_TAG);
+            bool handle_req = search == _req_current_phase_recv_added.end();
+            #else
+            // check last recv id for source rank
+            int last_id_handled = _req_current_phase_recv_added[cur_status_receive.MPI_SOURCE];
+            bool handle_req = last_id_handled != cur_status_receive.MPI_TAG;
+            #endif
+
+            #if CHAM_STATS_RECORD
+            time_search = omp_get_wtime()-time_search;
+            atomic_add_dbl(_time_recv_added_search_sum, time_search);
+            _time_recv_added_search_count++;
+            #endif
+
+            // only handle request if not already done for current phase
+            if (handle_req) {
+                #if CHAM_STATS_RECORD
+                double time_insert = omp_get_wtime();
+                #endif
+                
+                #if CHAM_TRACK_LAST_RECV == 0
+                _req_current_phase_recv_added.insert(cur_status_receive.MPI_TAG);
+                #else
+                _req_current_phase_recv_added[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
+                #endif
+
+                #if CHAM_STATS_RECORD
+                time_insert = omp_get_wtime()-time_insert;
+                atomic_add_dbl(_time_recv_added_insert_sum, time_insert);
+                _time_recv_added_insert_count++;
+                #endif
+
                 action_handle_recv_request(&event_receive_tasks, &cur_status_receive, &request_manager_receive);
             }
         }

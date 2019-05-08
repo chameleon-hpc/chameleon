@@ -94,10 +94,6 @@
 #define CHAMELEON_TOOL_USE_MAP 0
 #endif
 
-#ifndef CHAM_TRACK_LAST_RECV
-#define CHAM_TRACK_LAST_RECV 1
-#endif
-
 #if CHAMELEON_TOOL_SUPPORT
 #include "chameleon_tools.h"
 #endif

@@ -1767,13 +1767,9 @@ void* comm_thread_action(void* arg) {
     std::vector<int32_t> tasksToOffload(chameleon_comm_size);
 
     // =============== Recv Thread Vars
-    #if CHAM_TRACK_LAST_RECV == 0
-    std::set<int> _req_current_phase_recv_added;
-    #else
-    std::vector<int> _req_current_phase_recv_added(chameleon_comm_size);
+    std::vector<int> _tracked_last_req_recv(chameleon_comm_size);
     for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
-        _req_current_phase_recv_added[tmp_i] = -1;
-    #endif
+        _tracked_last_req_recv[tmp_i] = -1;
 
     DBP("comm_thread_action (enter)\n");
 
@@ -1810,13 +1806,9 @@ void* comm_thread_action(void* arg) {
         if(flag_set) {
             DBP("comm_thread_action - woke up again\n");
             flag_set = 0;
-            // clear list
-            #if CHAM_TRACK_LAST_RECV == 0
-            _req_current_phase_recv_added.clear();
-            #else
+            // reset last received ids
             for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
-                _req_current_phase_recv_added[tmp_i] = -1;
-            #endif
+                _tracked_last_req_recv[tmp_i] = -1;
             num_threads_in_tw = _num_threads_involved_in_taskwait.load();
         }
         #endif
@@ -1941,43 +1933,16 @@ void* comm_thread_action(void* arg) {
         // }
 
         if ( flag_open_request_receive ) {
-            #if CHAM_STATS_RECORD
-            double time_search = omp_get_wtime();
-            #endif
-            
-            #if CHAM_TRACK_LAST_RECV == 0
-            std::set<int>::iterator search = _req_current_phase_recv_added.find(cur_status_receive.MPI_TAG);
-            bool handle_req = search == _req_current_phase_recv_added.end();
-            #else
-            // check last recv id for source rank
-            int last_id_handled = _req_current_phase_recv_added[cur_status_receive.MPI_SOURCE];
-            bool handle_req = last_id_handled != cur_status_receive.MPI_TAG;
-            #endif
 
-            #if CHAM_STATS_RECORD
-            time_search = omp_get_wtime()-time_search;
-            atomic_add_dbl(_time_recv_added_search_sum, time_search);
-            _time_recv_added_search_count++;
-            #endif
+            // check last recv id for source rank
+            int last_id_handled = _tracked_last_req_recv[cur_status_receive.MPI_SOURCE];
+            bool handle_req = last_id_handled != cur_status_receive.MPI_TAG;
 
             // only handle request if not already done for current phase
             if (handle_req) {
-                #if CHAM_STATS_RECORD
-                double time_insert = omp_get_wtime();
-                #endif
-                
-                #if CHAM_TRACK_LAST_RECV == 0
-                _req_current_phase_recv_added.insert(cur_status_receive.MPI_TAG);
-                #else
-                _req_current_phase_recv_added[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
-                #endif
-
-                #if CHAM_STATS_RECORD
-                time_insert = omp_get_wtime()-time_insert;
-                atomic_add_dbl(_time_recv_added_insert_sum, time_insert);
-                _time_recv_added_insert_count++;
-                #endif
-
+                // track last id recevied for source rank
+                _tracked_last_req_recv[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
+                // create requests to receive task
                 action_handle_recv_request(&event_receive_tasks, &cur_status_receive, &request_manager_receive);
             }
         }

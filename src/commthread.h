@@ -86,8 +86,6 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 
 void cancel_offloaded_task(cham_migratable_task_t *task);
 
-int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank);
-
 void* comm_thread_action(void *arg);
 
 int32_t start_communication_threads();

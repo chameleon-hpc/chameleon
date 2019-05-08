@@ -75,14 +75,13 @@ thread_safe_task_map_t _map_overall_tasks;
 std::vector<int32_t> _outstanding_jobs_ranks;
 std::atomic<int32_t> _outstanding_jobs_local(0);
 std::atomic<int32_t> _outstanding_jobs_sum(0);
+// counter for current number of offloaded tasks
+std::atomic<int> _num_offloaded_tasks_outstanding(0);
 
 // ====== Info about real load that is open or is beeing processed ======
 std::vector<int32_t> _load_info_ranks;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
-
-// counter for current number of offloaded tasks
-std::atomic<int> _num_offloaded_tasks_outstanding (0);
 
 #if OFFLOAD_BLOCKING
 // only enable offloading when a task has finished on local rank (change has been made)
@@ -103,6 +102,7 @@ std::atomic<int> _comm_threads_ended_count(0);
 
 // flag that signalizes comm threads to abort their work
 std::atomic<int> _flag_abort_threads(0);
+int tag_counter_send_tasks = 0;
 
 // variables to indicate when it is save to break out of taskwait
 std::mutex _mtx_taskwait;
@@ -126,11 +126,12 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
-void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size);
-cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag);
+void* encode_send_buffer(cham_migratable_task_t *tasks, int32_t num_tasks, int32_t *buffer_size);
+cham_migratable_task_t* decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks);
 
 short pin_thread_to_last_core(int n_last_core);
-void offload_action(cham_migratable_task_t *task, int target_rank);
+void offload_action(cham_migratable_task_t *tasks, int32_t num_tasks, int target_rank);
+int32_t offload_tasks_to_rank(cham_migratable_task_t *tasks, int32_t num_tasks, int target_rank);
 
 static void send_handler(void* buffer, int tag, int rank, cham_migratable_task_t* task);
 static void receive_handler(void* buffer, int tag, int rank, cham_migratable_task_t* task);
@@ -585,47 +586,49 @@ void cancel_offloaded_task(cham_migratable_task_t *task) {
                                            nullptr);
 }
 
-int32_t offload_task_to_rank(cham_migratable_task_t *task, int target_rank) {
-#ifdef TRACE
+int32_t offload_tasks_to_rank(cham_migratable_task_t *tasks, int32_t num_tasks, int target_rank) {
+    #ifdef TRACE
     static int event_offload = -1;
-    std::string event_offload_name = "offload_task";
+    std::string event_offload_name = "offload_tasks";
     if(event_offload == -1) 
         int ierr = VT_funcdef(event_offload_name.c_str(), VT_NOCLASS, &event_offload);
     VT_begin(event_offload);
-#endif
-    int has_outputs = task->HasAtLeastOneOutput();
-    DBP("offload_task_to_rank (enter) - task_entry (task_id=%ld) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->arg_num, target_rank, has_outputs);
+    #endif /* TRACE */
 
-    DBP("offload_task_to_rank (enter) - replicating task_entry (task_id=%ld), replicated tasks: %d\n", task->task_id, _num_replicated_tasks_outstanding.load());
+    DBP("offload_tasks_to_rank (enter) - num_tasks: %d, task_entry (task_id=%ld) " DPxMOD ", num_args: %d, rank: %d\n", num_tasks, tasks[0]->task_id, DPxPTR(tasks[0]->tgt_entry_ptr), tasks[0]->arg_num, target_rank);
     assert(task->sync_commthread_lock.load()==false);
-    _replicated_tasks.push_back(task);
-    _num_replicated_tasks_outstanding++;
 
+    #if CHAM_REPLICATION_MODE > 0
+    for(int i = 0; i < num_tasks; i++)
+        _replicated_tasks.push_back(tasks[i]);
+    _num_replicated_tasks_outstanding += num_tasks;
+    #endif /* CHAM_REPLICATION_MODE */
 
-    // directly use base function
-    offload_action(task, target_rank);
-    _num_offloaded_tasks_outstanding++;
+    offload_action(tasks, num_tasks, target_rank);
+    _num_offloaded_tasks_outstanding += num_tasks;
 
-#if CHAM_STATS_RECORD
-    _num_tasks_offloaded++;
-#endif
+    #if CHAM_STATS_RECORD
+    _num_tasks_offloaded += num_tasks;
+    #endif
 
-    DBP("offload_task_to_rank (exit)\n");
-#ifdef TRACE
+    DBP("offload_tasks_to_rank (exit)\n");
+    
+    #ifdef TRACE
     VT_end(event_offload);
-#endif
+    #endif
     return CHAM_SUCCESS;
 }
 
-void offload_action(cham_migratable_task_t *task, int target_rank) {
-    int has_outputs = task->HasAtLeastOneOutput();
-    DBP("offload_action (enter) - task_entry (task_id=%d) " DPxMOD ", num_args: %d, rank: %d, has_output: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->arg_num, target_rank, has_outputs);
+void offload_action(cham_migratable_task_t *tasks, int32_t num_tasks, int target_rank) {
+    DBP("offload_action (enter) - num_tasks: %d, task_entry (task_id=%d) " DPxMOD ", num_args: %d, rank: %d\n", num_tasks, tasks[0]->task_id, DPxPTR(tasks[0]->tgt_entry_ptr), tasks[0]->arg_num, target_rank);
     
-    // use unique task id as a tag
-    TYPE_TASK_ID tmp_tag = task->task_id;
+    // use unique tag for current offload in this sync cycle
+    int tmp_tag = tag_counter_send_tasks++;
 
     // store target rank in task
-    task->target_mpi_rank = target_rank;
+    for(int i = 0; i < num_tasks; i++) {
+        tasks[i]->target_mpi_rank = target_rank;
+    }
 
     // encode buffer
     int32_t buffer_size = 0;
@@ -635,7 +638,7 @@ void offload_action(cham_migratable_task_t *task, int target_rank) {
     double cur_time;
     cur_time = omp_get_wtime();
 #endif
-    buffer = encode_send_buffer(task, &buffer_size);
+    buffer = encode_send_buffer(tasks, num_tasks, &buffer_size);
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     atomic_add_dbl(_time_encode_sum, cur_time);
@@ -722,134 +725,171 @@ void offload_action(cham_migratable_task_t *task, int target_rank) {
     DBP("offload_action (exit)\n");
 }
 
-void * encode_send_buffer(cham_migratable_task_t *task, int32_t *buffer_size) {
-#ifdef TRACE
+void * encode_send_buffer(cham_migratable_task_t *tasks, int32_t num_tasks, int32_t *buffer_size) {
+    #ifdef TRACE
     static int event_encode = -1;
     std::string event_encode_name = "encode";
     if(event_encode == -1) 
         int ierr = VT_funcdef(event_encode_name.c_str(), VT_NOCLASS, &event_encode);
     VT_begin(event_encode);
-#endif 
-    DBP("encode_send_buffer (enter) - task_entry (task_id=%ld) " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+    #endif
+
+    DBP("encode_send_buffer (enter) - num_tasks: %d, task_entry (task_id=%ld) " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", num_tasks, tasks[0]->task_id, DPxPTR(tasks[0]->tgt_entry_ptr), tasks[0]->idx_image, (int)tasks[0]->entry_image_offset, tasks[0]->arg_num);
 
     // FORMAT:
+    //      0. number of tasks
+    // 
+    //      Then for each task:
     //      1. target function pointer = address (intptr_t)
     //      2. image index
     //      3. offset of entry point inside image
-    //      4. number of arguments = int32_t
-    //      5. array with argument types = n_args * int64_t
-    //      6. array with argument offsets = n_args * int64_t
-    //      7. array with length of argument pointers = n_args * int64_t
-    //      8. array with values
+    //      4. task id
+    //      5. number of arguments = int32_t
+    //      6. array with argument sizes = n_args * int64_t
+    //      7. array with argument offsets = n_args * int64_t
+    //      8. array with argument types = n_args * int64_t
+    //      9. array with values (only for OFFLOAD_DATA_PACKING_TYPE == 0 )
+    //     10. annotations
+    //     11. tool data if available
 
-    int total_size = sizeof(intptr_t)           // 1. target entry pointer
-        + sizeof(int32_t)                       // 2. img index
-        + sizeof(ptrdiff_t)                     // 3. offset inside image
-        + sizeof(int32_t)                       // 4. number of arguments
-        + task->arg_num * sizeof(int64_t)       // 5. argument sizes
-        + task->arg_num * sizeof(ptrdiff_t)     // 6. offsets
-        + task->arg_num * sizeof(int64_t);      // 7. argument types
+    int total_size = sizeof(int);                   // 0. number of tasks
 
-#if OFFLOAD_DATA_PACKING_TYPE == 0
-    for(int i = 0; i < task->arg_num; i++) {
-        total_size += task->arg_sizes[i];
+    for (int i = 0; i < num_tasks; i++) {
+        total_size += sizeof(intptr_t)              // 1. target entry pointer
+            + sizeof(int32_t)                       // 2. img index
+            + sizeof(ptrdiff_t)                     // 3. offset inside image
+            + sizeof(TYPE_TASK_ID)                  // 4. task id
+            + sizeof(int32_t)                       // 5. number of arguments
+            + tasks[i]->arg_num * sizeof(int64_t)    // 6. argument sizes
+            + tasks[i]->arg_num * sizeof(ptrdiff_t)  // 7. offsets
+            + tasks[i]->arg_num * sizeof(int64_t);   // 8. argument types
+
+        #if OFFLOAD_DATA_PACKING_TYPE == 0
+        for(int i_arg = 0; i_arg < task[i]->arg_num; i_arg++) {
+            total_size += task[i]->arg_sizes[i_arg];
+        }
+        #endif /* OFFLOAD_DATA_PACKING_TYPE */
     }
-#endif
 
-#if CHAM_MIGRATE_ANNOTATIONS
-    // handle annotations
-    int32_t task_annotations_buf_size = 0;
-    void *task_annotations_buffer = nullptr;
-    task_annotations_buffer = task->task_annotations.pack(&task_annotations_buf_size);
-    total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
-#endif
+    #if CHAM_MIGRATE_ANNOTATIONS
+    std::list<int32_t> annotation_sizes;
+    std::list<void*> annotation_buffers;
+    for (int i = 0; i < num_tasks; i++) {
+        int32_t task_annotations_buf_size = 0;
+        void *task_annotations_buffer = nullptr;
+        task_annotations_buffer = tasks[i]->task_annotations.pack(&task_annotations_buf_size);
+        total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
+        
+        annotation_sizes.push_back(task_annotations_buf_size);
+        annotation_buffers.push_back(task_annotations_buffer);
+    }
+    #endif
 
-#if CHAMELEON_TOOL_SUPPORT
-    int32_t task_tool_buf_size = 0;
-    void *task_tool_buffer = nullptr;
-
+    #if CHAMELEON_TOOL_SUPPORT
+    std::list<int32_t> tool_data_buffer_sizes;
+    std::list<void*> tool_data_buffers;
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
-        task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(task, &(task->task_tool_data), &task_tool_buf_size);
-        total_size += sizeof(int32_t) + task_tool_buf_size; // size information + buffer size
+        for (int i = 0; i < num_tasks; i++) {
+            int32_t task_tool_buf_size = 0;
+            void *task_tool_buffer = nullptr;
+            task_tool_buffer = cham_t_status.cham_t_callback_encode_task_tool_data(tasks[i], &(tasks[i]->task_tool_data), &task_tool_buf_size);
+            total_size += sizeof(int32_t) + task_tool_buf_size; // size information + buffer size
+            
+            tool_data_buffer_sizes.push_back(task_tool_buf_size);
+            tool_data_buffers.push_back(task_tool_buffer);
+        }
     }
-#endif
+    #endif
 
     // allocate memory for transfer
     char *buff = (char *) malloc(total_size);
     char *cur_ptr = (char *)buff;
 
-    // 1. target entry address
-    ((intptr_t *) cur_ptr)[0] = (intptr_t) task->tgt_entry_ptr;
-    cur_ptr += sizeof(intptr_t);
+    for (int i = 0; i < num_tasks; i++) {
 
-    // 2. img index
-    ((int32_t *) cur_ptr)[0] = task->idx_image;
-    cur_ptr += sizeof(int32_t);
+        // 1. target entry address
+        ((intptr_t *) cur_ptr)[0] = (intptr_t) tasks[i]->tgt_entry_ptr;
+        cur_ptr += sizeof(intptr_t);
 
-    // 3. offset
-    ((ptrdiff_t *) cur_ptr)[0] = task->entry_image_offset;
-    cur_ptr += sizeof(ptrdiff_t);
-
-    // 4. number of arguments
-    ((int32_t *) cur_ptr)[0] = task->arg_num;
-    cur_ptr += sizeof(int32_t);
-
-    // 5. argument sizes
-    memcpy(cur_ptr, &(task->arg_sizes[0]), task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-    // 6. offsets
-    memcpy(cur_ptr, &(task->arg_tgt_offsets[0]), task->arg_num * sizeof(ptrdiff_t));
-    cur_ptr += task->arg_num * sizeof(ptrdiff_t);
-
-    // 7. argument types
-    memcpy(cur_ptr, &(task->arg_types[0]), task->arg_num * sizeof(int64_t));
-    cur_ptr += task->arg_num * sizeof(int64_t);
-
-#if OFFLOAD_DATA_PACKING_TYPE == 0
-    // 8. loop through arguments and copy values
-    for(int32_t i = 0; i < task->arg_num; i++) {
-        int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-        int is_from     = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
-
-        print_arg_info("encode_send_buffer", task, i);
-
-        // copy value from host pointer directly
-        if(is_lit) {
-            ((intptr_t *) cur_ptr)[0] = (intptr_t) task->arg_hst_pointers[i];
-        } else {
-            memcpy(cur_ptr, (char*)task->arg_hst_pointers[i], task->arg_sizes[i]);
-        }
-        cur_ptr += task->arg_sizes[i];
-    }
-#endif
-
-#if CHAM_MIGRATE_ANNOTATIONS
-    ((int32_t *) cur_ptr)[0] = task_annotations_buf_size;
-    cur_ptr += sizeof(int32_t);
-
-    if(task_annotations_buf_size > 0) {
-        memcpy(cur_ptr, task_annotations_buffer, task_annotations_buf_size);
-        cur_ptr += task_annotations_buf_size;
-        // clean up again
-        free(task_annotations_buffer);
-    }
-#endif
-
-#if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
-        // remember size of buffer
-        ((int32_t *) cur_ptr)[0] = task_tool_buf_size;
+        // 2. img index
+        ((int32_t *) cur_ptr)[0] = tasks[i]->idx_image;
         cur_ptr += sizeof(int32_t);
 
-        if(task_tool_buf_size) {
-            memcpy(cur_ptr, task_tool_buffer, task_tool_buf_size);
-            cur_ptr += task_tool_buf_size;
-            // clean up again
-            free(task_tool_buffer);
+        // 3. offset
+        ((ptrdiff_t *) cur_ptr)[0] = tasks[i]->entry_image_offset;
+        cur_ptr += sizeof(ptrdiff_t);
+
+        // 4. task id
+        ((TYPE_TASK_ID *) cur_ptr)[0] = tasks[i]->task_id;
+        cur_ptr += sizeof(TYPE_TASK_ID);
+
+        // 5. number of arguments
+        ((int32_t *) cur_ptr)[0] = tasks[i]->arg_num;
+        cur_ptr += sizeof(int32_t);
+
+        // 6. argument sizes
+        memcpy(cur_ptr, &(tasks[i]->arg_sizes[0]), tasks[i]->arg_num * sizeof(int64_t));
+        cur_ptr += tasks[i]->arg_num * sizeof(int64_t);
+
+        // 7. offsets
+        memcpy(cur_ptr, &(tasks[i]->arg_tgt_offsets[0]), tasks[i]->arg_num * sizeof(ptrdiff_t));
+        cur_ptr += tasks[i]->arg_num * sizeof(ptrdiff_t);
+
+        // 8. argument types
+        memcpy(cur_ptr, &(tasks[i]->arg_types[0]), tasks[i]->arg_num * sizeof(int64_t));
+        cur_ptr += tasks[i]->arg_num * sizeof(int64_t);
+
+        #if OFFLOAD_DATA_PACKING_TYPE == 0
+        // 9. loop through arguments and copy values
+        for(int32_t i_arg = 0; i_arg < tasks[i]->arg_num; i_arg++) {
+            int is_lit      = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            int is_from     = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_FROM;
+
+            print_arg_info("encode_send_buffer", tasks[i], i_arg);
+
+            // copy value from host pointer directly
+            if(is_lit) {
+                ((intptr_t *) cur_ptr)[0] = (intptr_t) tasks[i]->arg_hst_pointers[i_arg];
+            } else {
+                memcpy(cur_ptr, (char*)tasks[i]->arg_hst_pointers[i_arg], tasks[i]->arg_sizes[i_arg]);
+            }
+            cur_ptr += tasks[i]->arg_sizes[i_arg];
         }
+        #endif /* OFFLOAD_DATA_PACKING_TYPE */
+
+        #if CHAM_MIGRATE_ANNOTATIONS
+        int32_t task_annotations_buf_size = annotation_sizes[i];
+        void * task_annotations_buffer = annotation_buffers[i];
+
+        ((int32_t *) cur_ptr)[0] = task_annotations_buf_size;
+        cur_ptr += sizeof(int32_t);
+
+        if(task_annotations_buf_size > 0) {
+            memcpy(cur_ptr, task_annotations_buffer, task_annotations_buf_size);
+            cur_ptr += task_annotations_buf_size;
+            // clean up again
+            free(task_annotations_buffer);
+        }
+        #endif /* CHAM_MIGRATE_ANNOTATIONS */
+
+        #if CHAMELEON_TOOL_SUPPORT
+        if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
+            int32_t task_tool_buf_size = tool_data_buffer_sizes[i];
+            void * task_tool_buffer = tool_data_buffers[i];
+
+            // remember size of buffer
+            ((int32_t *) cur_ptr)[0] = task_tool_buf_size;
+            cur_ptr += sizeof(int32_t);
+
+            if(task_tool_buf_size) {
+                memcpy(cur_ptr, task_tool_buffer, task_tool_buf_size);
+                cur_ptr += task_tool_buf_size;
+                // clean up again
+                free(task_tool_buffer);
+            }
+        }
+        #endif /* CHAMELEON_TOOL_SUPPORT */
     }
-#endif
 
     // set output size
     *buffer_size = total_size;
@@ -1239,7 +1279,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         // get task by id
                         cham_migratable_task_t* task = _local_tasks.pop_task_by_id(cur_task_id);
                         if(task) {
-                            offload_task_to_rank(task, cur_rank_id);
+                            offload_tasks_to_rank(task, n_tasks, cur_rank_id);
                             offload_done = true;
                             
                             #if OFFLOAD_BLOCKING
@@ -1256,7 +1296,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         for(int t=0; t<targetOffloadedTasks; t++) {
                             cham_migratable_task_t *task = _local_tasks.pop_front();
                             if(task) {
-                                offload_task_to_rank(task, r);
+                                offload_tasks_to_rank(task, n_tasks, r);
                                 offload_done = true;
 
                                 #if OFFLOAD_BLOCKING
@@ -1806,6 +1846,7 @@ void* comm_thread_action(void* arg) {
         if(flag_set) {
             DBP("comm_thread_action - woke up again\n");
             flag_set = 0;
+            tag_counter_send_tasks = 0;
             // reset last received ids
             for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
                 _tracked_last_req_recv[tmp_i] = -1;

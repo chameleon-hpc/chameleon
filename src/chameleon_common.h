@@ -278,7 +278,7 @@ typedef struct cham_migratable_task_t {
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
-    int32_t source_mpi_tag      = 0;
+    //int32_t source_mpi_tag      = 0;
     int32_t target_mpi_rank     = -1;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task

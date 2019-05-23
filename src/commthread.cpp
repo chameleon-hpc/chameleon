@@ -422,12 +422,6 @@ static void send_handler(void* buffer, int tag, int source, cham_migratable_task
 };
 
 static void receive_handler_data(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
-    _mtx_load_exchange.lock();
-    _num_stolen_tasks_outstanding += num_tasks;
-    DBP("receive_handler_data - increment stolen outstanding count for tag %d by %d\n", tag, num_tasks);
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
-
     // add tasks to stolen list
     for (int i_task = 0; i_task < num_tasks; i_task++) {
         cham_migratable_task_t *task = tasks[i_task];        
@@ -452,6 +446,13 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     atomic_add_dbl(_time_decode_sum, cur_time_decode);
     _time_decode_count++;
 #endif
+
+    // add stolen load as soon as possible to avoid wrong decision making
+    _mtx_load_exchange.lock();
+    _num_stolen_tasks_outstanding += n_tasks;
+    DBP("receive_handler - increment stolen outstanding count for tag %d by %d\n", tag, num_tasks);
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
 
     // set mpi source + copy pointers to separate array
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(n_tasks*sizeof(cham_migratable_task_t*));
@@ -519,11 +520,11 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     assert(ierr==MPI_SUCCESS);
     ierr = MPI_Type_free(&type_mapped_vars);
     assert(ierr==MPI_SUCCESS);
-#endif
+#endif /* OFFLOAD_DATA_PACKING_TYPE == ... */
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
-#endif
+#endif /* CHAM_STATS_RECORD */
     request_manager_receive.submitRequests(tag, 
                                     source,
                                     num_requests, 
@@ -535,7 +536,7 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
                                     p_tasks,
                                     n_tasks);
     delete[] requests;
-#endif
+#endif /* OFFLOAD_DATA_PACKING_TYPE > 0 */
 }
 
 static void send_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -654,9 +655,10 @@ int32_t offload_tasks_to_rank(std::vector<cham_migratable_task_t *> &tasks, int3
 }
 
 void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tasks, int target_rank) {
-    DBP("offload_action (enter) - num_tasks: %d, target_rank: %d\n", num_tasks, target_rank);
     // use unique tag for current offload in this sync cycle
     int tmp_tag = tag_counter_send_tasks++;
+    DBP("offload_action (enter) - num_tasks: %d, target_rank: %d mpi_tag: %d\n", num_tasks, target_rank, tmp_tag);
+
     // store target rank in task
     for(int i = 0; i < num_tasks; i++) {
         tasks[i]->target_mpi_rank = target_rank;
@@ -688,7 +690,7 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
     int n_requests = 2;
 #endif
     // send data to target rank
-    DBP("offload_action - sending data to target rank %d with tag: %d\n", target_rank, tmp_tag);
+    DBP("offload_action - sending data to target rank %d with mpi_tag: %d\n", target_rank, tmp_tag);
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime();
 #endif
@@ -750,7 +752,7 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
     for(int i_task = 0; i_task < num_tasks; i_task++) {
         cham_migratable_task_t *task = tasks[i_task];
         if(task->HasAtLeastOneOutput()) {
-            _map_offloaded_tasks_with_outputs.insert(tmp_tag, task);
+            _map_offloaded_tasks_with_outputs.insert(task->task_id, task);
         } else {
             // TODO: if replication enabled: do not free task here
             // TODO: currently we dont have test cases that will use this portion of the code but do not free here but in handler instead
@@ -1263,14 +1265,13 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         } else {
             min_local_tasks_in_queue_before_migration = 2;
         }
-        // RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", min_local_tasks_in_queue_before_migration);
+        RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", min_local_tasks_in_queue_before_migration);
     }
 
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
     if(_comm_thread_load_exchange_happend && *offload_triggered == 0) {
     #else
-    // if(_comm_thread_load_exchange_happend && _local_tasks.size() > (*num_threads_in_tw*2)  && !*offload_triggered) {
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= min_local_tasks_in_queue_before_migration) {
     #endif
 
@@ -1335,6 +1336,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             #endif
 
             bool offload_done = false;
+            double my_current_load = (double) _load_info_ranks[chameleon_comm_rank];
 
             if(strategy_type == 1)
             {
@@ -1378,6 +1380,12 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         if(num_tasks > 0) {
                             offload_tasks_to_rank(cur_tasks, num_tasks, r);
                             offload_done = true;
+
+                            double victim_load = (double) _load_info_ranks[r];
+                            double cur_diff = (my_current_load-victim_load);
+                            double cur_ratio = cur_diff / victim_load;
+                            
+                            RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
 
                             #if OFFLOAD_BLOCKING
                             _offload_blocked = 1;

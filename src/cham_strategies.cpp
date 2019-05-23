@@ -132,10 +132,10 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
                 return;
             double ratio = cur_diff / (double)cur_load;
             if(other_val < cur_load && ratio >= min_rel_imbalance_before_migration) {
-                // int num_tasks = (int)(cur_diff / 8.0);
-                // if(num_tasks < 1)
-                //     num_tasks = 1;
-                int num_tasks = 1;
+                int num_tasks = (int)(cur_diff / 10.0);
+                if(num_tasks < 1)
+                    num_tasks = 1;
+                // int num_tasks = 1;
                 // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
 #endif
                 tasksToOffloadPerRank[other_idx] = num_tasks;
@@ -149,7 +149,13 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
 
 int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen) {
     // simply return number of tasks in queue
-    int32_t num_ids = num_tasks_local + num_tasks_stolen;
+    // int32_t num_ids = num_tasks_local + num_tasks_stolen;
+    int32_t num_ids;
+    int tmp_num_stolen = _num_stolen_tasks_outstanding.load();
+    if (tmp_num_stolen > num_tasks_stolen)
+        num_ids = num_tasks_local + tmp_num_stolen;
+    else
+        num_ids = num_tasks_local + num_tasks_stolen;
     return num_ids;
 }
 #pragma endregion Strategies

@@ -24,6 +24,7 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
                                 cham_migratable_task_t** tasks,
                                 int num_tasks) {
     
+    #if CHAM_DEBUG
     std::string str_task_ids = "";
     if(tasks != NULL) {
         str_task_ids = std::to_string(tasks[0]->task_id);
@@ -32,6 +33,7 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
         }
     }
     DBP("%s - submitting requests for tag %d and tasks %s\n", RequestType_values[type], tag, str_task_ids.c_str());
+    #endif
   
     _num_posted_requests[type]+= n_requests; 
     _num_posted_request_groups[type]+=1;

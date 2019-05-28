@@ -71,31 +71,6 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             output_l = loadInfoRanks[output_r];
     }
 #else
-    static double min_abs_imbalance_before_migration = -1;
-    if(min_abs_imbalance_before_migration == -1) {
-        // try to load it once
-        char *min_abs_balance = std::getenv("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION");
-        if(min_abs_balance) {
-            min_abs_imbalance_before_migration = std::atof(min_abs_balance);
-        } else {
-            min_abs_imbalance_before_migration = 2;
-        }
-        RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_abs_imbalance_before_migration);
-    }
-
-    static double min_rel_imbalance_before_migration = -1;
-    if(min_rel_imbalance_before_migration == -1) {
-        // try to load it once
-        char *min_rel_balance = std::getenv("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION");
-        if(min_rel_balance) {
-            min_rel_imbalance_before_migration = std::atof(min_rel_balance);
-        } else {
-            // default relative threshold
-            min_rel_imbalance_before_migration = 0.05;
-        }
-        RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", min_rel_imbalance_before_migration);
-    }
-
     // sort load and idx by load
     std::vector<size_t> tmp_sorted_idx = sort_indexes(loadInfoRanks);
 
@@ -109,10 +84,10 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
     }
 #if !FORCE_MIGRATION
     // check absolute condition
-    if((cur_load-min_val) < min_abs_imbalance_before_migration)
+    if((cur_load-min_val) < MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION)
         return;
 
-    if(ratio_lb >= min_rel_imbalance_before_migration) {
+    if(ratio_lb >= MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION) {
 #else
     if(true) {
 #endif
@@ -125,19 +100,18 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
             int other_idx       = tmp_sorted_idx[other_pos];
             double other_val    = (double) loadInfoRanks[other_idx];
 
-#if !FORCE_MIGRATION
             double cur_diff = cur_load-other_val;
+#if !FORCE_MIGRATION
             // check absolute condition
-            if(cur_diff < min_abs_imbalance_before_migration)
+            if(cur_diff < MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION)
                 return;
             double ratio = cur_diff / (double)cur_load;
-            if(other_val < cur_load && ratio >= min_rel_imbalance_before_migration) {
-                int num_tasks = (int)(cur_diff / 10.0);
+            if(other_val < cur_load && ratio >= MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION) {
+#endif
+                int num_tasks = (int)(cur_diff * PERCENTAGE_DIFF_TASKS_TO_MIGRATE);
                 if(num_tasks < 1)
                     num_tasks = 1;
-                // int num_tasks = 1;
                 // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, other_idx, cur_load, other_val, ratio, cur_diff);
-#endif
                 tasksToOffloadPerRank[other_idx] = num_tasks;
 #if !FORCE_MIGRATION
             }

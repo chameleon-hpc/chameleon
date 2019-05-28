@@ -33,12 +33,6 @@
 
 #include "chameleon.h"
 
-// Whether to use a list of objects or unordered map for lookups
-#ifndef DATA_ENTRY_APPROACH
-// #define DATA_ENTRY_APPROACH 0 // list
-#define DATA_ENTRY_APPROACH 1 // unordered map
-#endif
-
 // Flag wether offloading in general is enabled or disabled
 #ifndef OFFLOAD_ENABLED
 #define OFFLOAD_ENABLED 1
@@ -64,6 +58,10 @@
 // #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
 // #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
 #define OFFLOAD_DATA_PACKING_TYPE 2     // 2 = zero copy approach, only pack meta data (num_args, arg types ...) + ONE separat send for with mapped arguments
+#endif
+
+#ifndef OFFLOAD_SEND_TASKS_SEPARATELY
+#define OFFLOAD_SEND_TASKS_SEPARATELY 0
 #endif
 
 #ifndef THREAD_ACTIVATION
@@ -92,6 +90,10 @@
 
 #ifndef CHAMELEON_TOOL_USE_MAP
 #define CHAMELEON_TOOL_USE_MAP 0
+#endif
+
+#ifndef SHOW_DEADLOCK_WARNING
+#define SHOW_DEADLOCK_WARNING 0
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -619,6 +621,14 @@ extern ch_rank_data_t       __rank_data;
 #ifdef CHAM_DEBUG
 extern std::atomic<long> mem_allocated;
 #endif
+
+// config values defined through environment variables
+extern std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION;
+extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE;
+
+extern std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION;
+extern std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION;
+extern std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE;
 #pragma endregion
 
 #pragma region Functions
@@ -689,6 +699,43 @@ static void split_string(const std::string& str, Container& cont, char delim = '
     while (std::getline(ss, token, delim)) {
         cont.push_back(token);
     }
+}
+
+static void load_config_values() {
+    char *tmp = nullptr;
+    tmp = std::getenv("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION");
+    if(tmp) {
+        MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION = std::atof(tmp);
+    }
+    RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
+
+    tmp = nullptr;
+    tmp = std::getenv("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION");
+    if(tmp) {
+        MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION = std::atof(tmp);
+    }
+    RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
+
+    tmp = nullptr;
+    tmp = std::getenv("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION");
+    if(tmp) {
+        MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION = std::atof(tmp);
+    }
+    RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());
+
+    tmp = nullptr;
+    tmp = std::getenv("MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE");
+    if(tmp) {
+        MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE = std::atof(tmp);
+    }
+    RELP("MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE.load());
+
+    tmp = nullptr;
+    tmp = std::getenv("PERCENTAGE_DIFF_TASKS_TO_MIGRATE");
+    if(tmp) {
+        PERCENTAGE_DIFF_TASKS_TO_MIGRATE = std::atof(tmp);
+    }
+    RELP("PERCENTAGE_DIFF_TASKS_TO_MIGRATE=%f\n", PERCENTAGE_DIFF_TASKS_TO_MIGRATE.load());
 }
 #pragma endregion
 

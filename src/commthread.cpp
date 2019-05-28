@@ -126,12 +126,12 @@ extern "C" {
 // ================================================================================
 // Forward declartion of internal functions (just called inside shared library)
 // ================================================================================
-void* encode_send_buffer(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tasks, int32_t *buffer_size);
+void* encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int32_t *buffer_size);
 void decode_send_buffer(void *buffer, int mpi_tag, int32_t *num_tasks, std::vector<cham_migratable_task_t*> &tasks);
 
 short pin_thread_to_last_core(int n_last_core);
-void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tasks, int target_rank);
-int32_t offload_tasks_to_rank(std::vector<cham_migratable_task_t *> &tasks, int32_t num_tasks, int target_rank);
+void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank);
+int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank);
 
 static void send_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
 static void receive_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
@@ -466,18 +466,26 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     cur_time = omp_get_wtime();
 #endif
 #if OFFLOAD_DATA_PACKING_TYPE == 1
-    int num_requests = task->arg_num;
+    int num_requests = 0;
+    for(int i_task = 0; i_task < n_tasks; i_task++) {
+        num_requests += list_tasks[i_task]->arg_num;
+    }
     MPI_Request *requests = new MPI_Request[num_requests];
-    for(int i=0; i<task->arg_num; i++) {
-        int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-        if(is_lit) {
-            int ierr = MPI_Irecv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[i]);
-            assert(ierr==MPI_SUCCESS);
-        } else {
-	    int ierr = MPI_Irecv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[i]);
-            assert(ierr==MPI_SUCCESS);
+    int cur_req_num = 0;
+    for(int i_task = 0; i_task < n_tasks; i_task++) {
+        cham_migratable_task_t *task = list_tasks[i_task];
+        for(int i=0; i<task->arg_num; i++) {
+            int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            if(is_lit) {
+                int ierr = MPI_Irecv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
+                assert(ierr==MPI_SUCCESS);
+            } else {
+                int ierr = MPI_Irecv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
+                assert(ierr==MPI_SUCCESS);
+            }
+            cur_req_num++;
+            print_arg_info("receive_handler - receiving argument", task, i);
         }
-        print_arg_info("receive_handler - receiving argument", task, i);
     }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     int num_requests = 1;
@@ -615,7 +623,7 @@ void cancel_offloaded_task(cham_migratable_task_t *task) {
                                            nullptr);
 }
 
-int32_t offload_tasks_to_rank(std::vector<cham_migratable_task_t *> &tasks, int32_t num_tasks, int target_rank) {
+int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank) {
     #ifdef TRACE
     static int event_offload = -1;
     std::string event_offload_name = "offload_tasks";
@@ -625,13 +633,15 @@ int32_t offload_tasks_to_rank(std::vector<cham_migratable_task_t *> &tasks, int3
     #endif /* TRACE */
 
     assert(tasks[0]->sync_commthread_lock.load()==false);
+
+    #if CHAM_DEBUG
     std::string str_task_ids = std::to_string(tasks[0]->task_id);
     for(int i_task = 1; i_task < num_tasks; i_task++) {
         assert(tasks[i_task]->sync_commthread_lock.load()==false);
         str_task_ids.append("," + std::to_string(tasks[i_task]->task_id));
     }
-
     DBP("offload_tasks_to_rank (enter) - num_tasks: %d, target_rank: %d, task_ids: %s\n", num_tasks, target_rank, str_task_ids.c_str());
+    #endif
     
     #if CHAM_REPLICATION_MODE > 0
     _num_replicated_tasks_outstanding += num_tasks;
@@ -654,7 +664,7 @@ int32_t offload_tasks_to_rank(std::vector<cham_migratable_task_t *> &tasks, int3
     return CHAM_SUCCESS;
 }
 
-void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tasks, int target_rank) {
+void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank) {
     // use unique tag for current offload in this sync cycle
     int tmp_tag = tag_counter_send_tasks++;
     DBP("offload_action (enter) - num_tasks: %d, target_rank: %d mpi_tag: %d\n", num_tasks, target_rank, tmp_tag);
@@ -684,11 +694,15 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
     int n_requests = 1;
 #elif OFFLOAD_DATA_PACKING_TYPE == 1
     // RELP("Packing Type: Zero Copy\n");
-    int n_requests = 1 + task->arg_num;
+    int n_requests = 1;
+    for(int i_task = 0; i_task < num_tasks; i_task++) {
+        n_requests += tasks[i_task]->arg_num;
+    }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     // RELP("Packing Type: Zero Copy Single Message\n");
     int n_requests = 2;
 #endif
+
     // send data to target rank
     DBP("offload_action - sending data to target rank %d with mpi_tag: %d\n", target_rank, tmp_tag);
 #if CHAM_STATS_RECORD
@@ -698,16 +712,21 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
     MPI_Isend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
 
 #if OFFLOAD_DATA_PACKING_TYPE == 1
-    for(int i=0; i<task->arg_num; i++) {
-        int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-        if(is_lit) {
-            MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[i+1]);
+    int cur_req_index = 1;
+    for(int i_task = 0; i_task < num_tasks; i_task++) {
+        cham_migratable_task_t *task = tasks[i_task];
+        for(int i=0; i<task->arg_num; i++) {
+            int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            if(is_lit) {
+                MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+            }
+            else{
+                MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+            }
+            cur_req_index++;
+            print_arg_info("offload_action - sending argument", task, i);
         }
-        else{
-            MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[i+1]);
-        } 
-        print_arg_info("offload_action - sending argument", task, i);
-   }
+    }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     int tmp_overall_arg_nums = 0;
     for(int i_task = 0; i_task < num_tasks; i_task++) {
@@ -753,10 +772,6 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
         cham_migratable_task_t *task = tasks[i_task];
         if(task->HasAtLeastOneOutput()) {
             _map_offloaded_tasks_with_outputs.insert(task->task_id, task);
-        } else {
-            // TODO: if replication enabled: do not free task here
-            // TODO: currently we dont have test cases that will use this portion of the code but do not free here but in handler instead
-            // free_migratable_task(task, false);
         }
     }
 #if CHAM_STATS_RECORD
@@ -774,7 +789,7 @@ void offload_action(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tas
     DBP("offload_action (exit)\n");
 }
 
-void * encode_send_buffer(std::vector<cham_migratable_task_t*> &tasks, int32_t num_tasks, int32_t *buffer_size) {
+void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int32_t *buffer_size) {
     #ifdef TRACE
     static int event_encode = -1;
     std::string event_encode_name = "encode";
@@ -1218,35 +1233,17 @@ inline void action_handle_gather_request(int *event_exchange_outstanding, int *b
     #if OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
     if(*last_known_sum_outstanding == -1) {
         *last_known_sum_outstanding = sum_outstanding;
-        
-        #ifdef CHAM_DEBUG
-        if(*offload_triggered > 0)
-            RELP("RESET offload_triggered = 0\n");
-        #endif /* CHAM_DEBUG */
-
         *offload_triggered = 0;
         // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
     } else {
         // check whether changed.. only allow new offload after change
         if(*last_known_sum_outstanding != sum_outstanding) {
             *last_known_sum_outstanding = sum_outstanding;
-
-            #ifdef CHAM_DEBUG
-            if(*offload_triggered > 0)
-                RELP("RESET offload_triggered = 0\n");
-            #endif /* CHAM_DEBUG */
-
             *offload_triggered = 0;
             // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
         }
     }
-    #else /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
-
-    #ifdef CHAM_DEBUG
-    if(*offload_triggered > 0)
-        RELP("RESET offload_triggered = 0\n");
-    #endif /* CHAM_DEBUG */
-
+    #else
     *offload_triggered = 0;
     #endif /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
 
@@ -1256,23 +1253,12 @@ inline void action_handle_gather_request(int *event_exchange_outstanding, int *b
 }
 
 inline void action_task_migration(int *event_offload_decision, int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
-    static double min_local_tasks_in_queue_before_migration = -1;
-    if(min_local_tasks_in_queue_before_migration == -1) {
-        // try to load it once
-        char *min_local_tasks = std::getenv("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION");
-        if(min_local_tasks) {
-            min_local_tasks_in_queue_before_migration = std::atof(min_local_tasks);
-        } else {
-            min_local_tasks_in_queue_before_migration = 2;
-        }
-        RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", min_local_tasks_in_queue_before_migration);
-    }
-
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
     if(_comm_thread_load_exchange_happend && *offload_triggered == 0) {
     #else
-    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= min_local_tasks_in_queue_before_migration) {
+    // also only proceed if offloading not already performed.. wait for new load exchange
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && *offload_triggered == 0) {
     #endif
 
         #if OFFLOAD_BLOCKING
@@ -1286,8 +1272,6 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         // - Sorted approach: rank with highest load should offload to rank with minimal load
         // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
         
-        // only proceed if offloading not already performed
-        if(*offload_triggered < 1) {
             #ifdef TRACE
             VT_begin(*event_offload_decision);
             #endif
@@ -1327,9 +1311,8 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             #endif
 
             #if CHAM_STATS_RECORD
-            // RELP("MIGRATION DECISION offload_triggered = %d\n", *offload_triggered);
             _num_migration_decision_performed++;
-            #endif /* CHAM_STATS_RECORD */
+            #endif
 
             #ifdef TRACE
             VT_end(*event_offload_decision);
@@ -1343,6 +1326,10 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                 // strategy type that uses tupels of task_id and target rank
                 if(migration_tupels) {
 
+                    // temporary maps to collect tasks per target rank
+                    std::unordered_map<int, std::vector<cham_migratable_task_t*>> map_task_vec;
+                    std::unordered_map<int, int> map_task_num;
+
                     for(int32_t t = 0; t < num_tuples; t++) {
                         TYPE_TASK_ID cur_task_id    = migration_tupels[t].task_id;
                         int cur_rank_id             = migration_tupels[t].rank_id;
@@ -1350,15 +1337,46 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         // get task by id
                         cham_migratable_task_t* task = _local_tasks.pop_task_by_id(cur_task_id);
                         if(task) {
-                            // TODO: rewrite to use list
-                            // offload_tasks_to_rank(task, n_tasks, cur_rank_id);
-                            offload_done = true;
                             
+                            // check whether vector for rank already existing
+                            std::vector<cham_migratable_task_t*> cur_map;
+                            std::unordered_map<int, std::vector<cham_migratable_task_t*>>::const_iterator got = map_task_vec.find(cur_rank_id);
+                            if(got != map_task_vec.end()) {
+                                cur_map = got->second;
+                            } else {
+                                // cur_map = std::vector<cham_migratable_task_t*>();
+                                map_task_vec.insert(std::make_pair(cur_rank_id, cur_map));
+                                map_task_num.insert(std::make_pair(cur_rank_id, 0));
+                            }
+
+                            // add task to vector
+                            if(map_task_num[cur_rank_id] < MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE) {
+                                map_task_num[cur_rank_id]++;
+                                map_task_vec[cur_rank_id].push_back(task);
+                            }
+
+                            offload_done = true;
+
                             #if OFFLOAD_BLOCKING
                             _offload_blocked = 1;
                             #endif
                         }
                     }
+
+                    std::vector<int> keys;
+                    keys.reserve(map_task_num.size());
+
+                    for(auto kv : map_task_num) {
+                        keys.push_back(kv.first);
+                    }
+
+                    for (auto &r_id : keys) {
+                        std::vector<cham_migratable_task_t*> cur_tasks = map_task_vec[r_id];
+                        int num_tasks = map_task_num[r_id];
+                        offload_tasks_to_rank(&cur_tasks[0], num_tasks, r_id);
+                    }
+
+                    // cleanup tupels again
                     free(migration_tupels);
                 }
             } else {
@@ -1374,19 +1392,29 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                             if(task) {
                                 cur_tasks[num_tasks] = task;
                                 num_tasks++;
+
+                                // stop when limit reached
+                                if(num_tasks >= MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE) {
+                                    // RELP("num_tasks:%d, MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE:%f\n", num_tasks, MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE.load())
+                                    break;
+                                }
                             }
                         }
 
                         if(num_tasks > 0) {
-                            offload_tasks_to_rank(cur_tasks, num_tasks, r);
-                            offload_done = true;
-
-                            double victim_load = (double) _load_info_ranks[r];
-                            double cur_diff = (my_current_load-victim_load);
-                            double cur_ratio = cur_diff / victim_load;
-                            
+                            #if OFFLOAD_SEND_TASKS_SEPARATELY
+                            for(int i_task = 0; i_task < num_tasks; i_task++) {
+                                offload_tasks_to_rank(&cur_tasks[i_task], 1, r);
+                            }
+                            #else
+                            double victim_load  = (double) _load_info_ranks[r];
+                            double cur_diff     = (my_current_load-victim_load);
+                            double cur_ratio    = cur_diff / victim_load;
                             RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
+                            offload_tasks_to_rank(&cur_tasks[0], num_tasks, r);
+                            #endif
 
+                            offload_done = true;
                             #if OFFLOAD_BLOCKING
                             _offload_blocked = 1;
                             #endif
@@ -1394,15 +1422,12 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                     }
                 }
             }
-            
             if(offload_done) {
-                // increment counter
-                *offload_triggered = *offload_triggered + 1;
+                *offload_triggered = 1;
                 #if CHAM_STATS_RECORD
                 _num_migration_done++;
-                #endif /* CHAM_STATS_RECORD */
+                #endif /* CHAM_STATS_RECORD */    
             }
-        }
         #if OFFLOAD_BLOCKING
         }
         #endif

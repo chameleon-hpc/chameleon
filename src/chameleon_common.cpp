@@ -10,6 +10,14 @@ __thread int32_t __ch_gtid = -1;
 
 ch_thread_data_t*   __thread_data;
 ch_rank_data_t      __rank_data;
+
+// config values defined through environment variables
+std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
+std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE(1);
+
+std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION(2);
+std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION(0.05);
+std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(1);
 #pragma endregion
 
 #pragma region Functions

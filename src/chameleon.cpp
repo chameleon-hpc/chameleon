@@ -41,11 +41,7 @@ __thread TYPE_TASK_ID __last_task_id_added = -1;
 
 // list with data that has been mapped in map clauses
 std::mutex _mtx_data_entry;
-#if DATA_ENTRY_APPROACH == 0
-std::list<migratable_data_entry_t*> _data_entries;
-#else
 std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
-#endif
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
 thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
@@ -308,6 +304,9 @@ int32_t chameleon_init() {
     mem_allocated = 0;
 #endif
 
+    // load config values that were speicified by environment variables
+    load_config_values();
+
     // initilize thread data here
     __rank_data.comm_rank = chameleon_comm_rank;
     __rank_data.comm_size = chameleon_comm_size;
@@ -542,12 +541,16 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
 
     int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
+    
+    #if SHOW_DEADLOCK_WARNING
     double last_time_doing_sth_useful = omp_get_wtime();
+    #endif
  
     // as long as there are local tasks run this loop
     while(true) {
         int32_t res = CHAM_SUCCESS;
 
+        #if SHOW_DEADLOCK_WARNING
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
            fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
@@ -557,12 +560,16 @@ int32_t chameleon_distributed_taskwait(int nowait) {
            request_manager_send.printRequestInformation();
            last_time_doing_sth_useful = omp_get_wtime(); 
         }
+        #endif
 
 #if OFFLOAD_ENABLED
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
      
-            last_time_doing_sth_useful = omp_get_wtime();    
+            #if SHOW_DEADLOCK_WARNING
+            last_time_doing_sth_useful = omp_get_wtime();
+            #endif
+
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -585,7 +592,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 2: work on local tasks
         if(!_local_tasks.empty()) {
    
+            #if SHOW_DEADLOCK_WARNING
             last_time_doing_sth_useful = omp_get_wtime();
+            #endif
+            
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -609,7 +619,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 3: work on replicated tasks
         if(!_replicated_tasks.empty()) {
             
+            #if SHOW_DEADLOCK_WARNING
             last_time_doing_sth_useful = omp_get_wtime();
+            #endif
+            
             #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
@@ -721,26 +734,6 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
     double cur_time = omp_get_wtime()-cur_time;
 #endif
     // check list if already in
-#if DATA_ENTRY_APPROACH == 0
-    _mtx_data_entry.lock();
-    int found = 0;
-    for(auto &entry : _data_entries) {
-        // maybe we need to compare all parameters
-        // if(entry->tgt_ptr == tgt_ptr && entry->hst_ptr == hst_ptr && entry->size == size) {
-        if(entry->tgt_ptr == tgt_ptr) {
-            found = 1;
-            break;
-        }
-    }
-    if(!found) {
-        DBP("chameleon_submit_data - new entry for tgt_ptr: " DPxMOD ", hst_ptr: " DPxMOD ", size: %ld\n", DPxPTR(tgt_ptr), DPxPTR(hst_ptr), size);
-        // add it to list
-        migratable_data_entry_t *new_entry = new migratable_data_entry_t(tgt_ptr, hst_ptr, size);
-        // printf("Creating new Data Entry with address (" DPxMOD ")\n", DPxPTR(&new_entry));
-        _data_entries.push_back(new_entry);
-    }
-    _mtx_data_entry.unlock();
-#else
     // maybe we need to compare all parameters ==> then we need to come up with a splitted maps and a key generated from parameters
     _mtx_data_entry.lock();
     std::unordered_map<void* ,migratable_data_entry_t*>::const_iterator got = _data_entries.find(tgt_ptr);
@@ -751,7 +744,6 @@ int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size) {
         _data_entries.insert(std::make_pair(tgt_ptr, new_entry));
     }
     _mtx_data_entry.unlock();
-#endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     if(cur_time > 0) {
@@ -767,25 +759,10 @@ void chameleon_free_data(void *tgt_ptr) {
 #if CHAM_STATS_RECORD
     double cur_time = omp_get_wtime()-cur_time;
 #endif
-#if DATA_ENTRY_APPROACH == 0
-    _mtx_data_entry.lock();
-    for(auto &entry : _data_entries) {
-        if(entry->tgt_ptr == tgt_ptr) {
-            free(entry->tgt_ptr);
-#ifdef CHAM_DEBUG
-            mem_allocated -= entry->size;
-#endif
-            _data_entries.remove(entry);
-            break;
-        }
-    }
-    _mtx_data_entry.unlock();
-#else
     _mtx_data_entry.lock();
     _data_entries.erase(tgt_ptr);
     _mtx_data_entry.unlock();
     free(tgt_ptr);
-#endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
     if(cur_time > 0) {
@@ -933,16 +910,6 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
             int count = 0;
             while(!found && count < 2) {
                 _mtx_data_entry.lock();
-#if DATA_ENTRY_APPROACH == 0                
-                for(auto &entry : _data_entries) {
-                    if(entry->tgt_ptr == tmp_tgt_ptr) {
-                        task->arg_sizes[i] = entry->size;
-                        task->arg_hst_pointers[i] = entry->hst_ptr;
-                        found = 1;
-                        break;
-                    }
-                }
-#else
                 std::unordered_map<void* ,migratable_data_entry_t*>::const_iterator got = _data_entries.find(tmp_tgt_ptr);
                 found = got!=_data_entries.end() ? 1 : 0;
                 if(found) {
@@ -950,7 +917,6 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
                     task->arg_sizes[i]              = entry->size;
                     task->arg_hst_pointers[i]       = entry->hst_ptr;
                 }
-#endif
                 _mtx_data_entry.unlock();
                 count++;
                 if(!found) {

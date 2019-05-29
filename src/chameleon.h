@@ -188,6 +188,8 @@ int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int 
 
 int32_t chameleon_determine_base_addresses(void * main_ptr);
 
+void chameleon_set_tracing_enabled(int enabled);
+
 #ifdef __cplusplus
 }
 #endif

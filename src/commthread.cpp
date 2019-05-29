@@ -220,6 +220,15 @@ int32_t chameleon_wake_up_comm_threads() {
     _comm_thread_service_stopped        = 0;
     _flag_comm_threads_sleeping         = 0;
 
+    #if defined(TRACE) || ENABLE_TRACING_FOR_SYNC_CYCLES
+    _num_sync_cycle++;
+    if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
+        _tracing_enabled = 1;
+    } else {
+        _tracing_enabled = 0;
+    }
+    #endif
+
     _mtx_taskwait.unlock();
     DBP("chameleon_wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
     return CHAM_SUCCESS;
@@ -629,7 +638,7 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     std::string event_offload_name = "offload_tasks";
     if(event_offload == -1) 
         int ierr = VT_funcdef(event_offload_name.c_str(), VT_NOCLASS, &event_offload);
-    VT_begin(event_offload);
+    VT_BEGIN_CONSTRAINED(event_offload);
     #endif /* TRACE */
 
     assert(tasks[0]->sync_commthread_lock.load()==false);
@@ -659,7 +668,7 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     DBP("offload_tasks_to_rank (exit)\n");
     
     #ifdef TRACE
-    VT_end(event_offload);
+    VT_END_W_CONSTRAINED(event_offload);
     #endif
     return CHAM_SUCCESS;
 }
@@ -795,7 +804,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
     std::string event_encode_name = "encode";
     if(event_encode == -1) 
         int ierr = VT_funcdef(event_encode_name.c_str(), VT_NOCLASS, &event_encode);
-    VT_begin(event_encode);
+    VT_BEGIN_CONSTRAINED(event_encode);
     #endif
 
     DBP("encode_send_buffer (enter) - num_tasks: %d\n", num_tasks);
@@ -965,7 +974,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
     // set output size
     *buffer_size = total_size;
 #ifdef TRACE
-    VT_end(event_encode);
+    VT_END_W_CONSTRAINED(event_encode);
 #endif
     return buff;
 }
@@ -976,7 +985,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
     std::string event_decode_name = "decode";
     if(event_decode == -1) 
         int ierr = VT_funcdef(event_decode_name.c_str(), VT_NOCLASS, &event_decode);
-    VT_begin(event_decode);
+    VT_BEGIN_CONSTRAINED(event_decode);
 #endif
     // current pointer position
     char *cur_ptr = (char*) buffer;
@@ -1092,7 +1101,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
     }
 
 #ifdef TRACE
-    VT_end(event_decode);
+    VT_END_W_CONSTRAINED(event_decode);
 #endif
 }
 #pragma endregion Offloading / Packing
@@ -1202,7 +1211,7 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
 
 inline void action_handle_gather_request(int *event_exchange_outstanding, int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
     #ifdef TRACE
-    VT_begin(*event_exchange_outstanding);
+    VT_BEGIN_CONSTRAINED(*event_exchange_outstanding);
     #endif
     // sum up that stuff
     // DBP("action_handle_gather_request - gathered new load info\n");
@@ -1248,7 +1257,7 @@ inline void action_handle_gather_request(int *event_exchange_outstanding, int *b
     #endif /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
 
     #ifdef TRACE
-    VT_end(*event_exchange_outstanding);
+    VT_END_W_CONSTRAINED(*event_exchange_outstanding);
     #endif
 }
 
@@ -1273,7 +1282,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
         
             #ifdef TRACE
-            VT_begin(*event_offload_decision);
+            VT_BEGIN_CONSTRAINED(*event_offload_decision);
             #endif
 
             int strategy_type;
@@ -1315,7 +1324,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             #endif
 
             #ifdef TRACE
-            VT_end(*event_offload_decision);
+            VT_END_W_CONSTRAINED(*event_offload_decision);
             #endif
 
             bool offload_done = false;
@@ -1350,7 +1359,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                             }
 
                             // add task to vector
-                            if(map_task_num[cur_rank_id] < MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE) {
+                            if(map_task_num[cur_rank_id] < MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE) {
                                 map_task_num[cur_rank_id]++;
                                 map_task_vec[cur_rank_id].push_back(task);
                             }
@@ -1401,8 +1410,8 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                                 num_tasks++;
 
                                 // stop when limit reached
-                                if(num_tasks >= MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE) {
-                                    // RELP("num_tasks:%d, MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE:%f\n", num_tasks, MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE.load())
+                                if(num_tasks >= MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE) {
+                                    // RELP("num_tasks:%d, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE:%f\n", num_tasks, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load())
                                     break;
                                 }
                             }
@@ -1443,7 +1452,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
 
 inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_task_t *cur_task, RequestManager *request_manager_send) {
     #ifdef TRACE
-    VT_begin(*event_send_back);
+    VT_BEGIN_CONSTRAINED(*event_send_back);
     #endif
 
     DBP("send_back_stolen_tasks - sending back data to rank %d with tag %d for (task_id=%ld)\n", cur_task->source_mpi_rank, cur_task->task_id, cur_task->task_id);
@@ -1554,7 +1563,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     _mtx_load_exchange.unlock();
 
     #ifdef TRACE
-    VT_end(*event_send_back);
+    VT_END_W_CONSTRAINED(*event_send_back);
     #endif
 }
 
@@ -1620,7 +1629,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             void * buffer = malloc(recv_buff_size);
             
             #ifdef TRACE
-            VT_begin(*event_recv_back);
+            VT_BEGIN_CONSTRAINED(*event_recv_back);
             #endif
 
             #if CHAM_STATS_RECORD
@@ -1644,13 +1653,13 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                                                     buffer);
 
             #ifdef TRACE
-            VT_end(*event_recv_back);
+            VT_END_W_CONSTRAINED(*event_recv_back);
             #endif
 
             #elif OFFLOAD_DATA_PACKING_TYPE == 1
 
             #ifdef TRACE
-            VT_begin(*event_recv_back);
+            VT_BEGIN_CONSTRAINED(*event_recv_back);
             #endif
 
             #if CHAM_STATS_RECORD
@@ -1681,13 +1690,13 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             delete[] requests;
             
             #ifdef TRACE
-            VT_end(*event_recv_back);
+            VT_END_W_CONSTRAINED(*event_recv_back);
             #endif
 
             #elif OFFLOAD_DATA_PACKING_TYPE == 2
 
             #ifdef TRACE
-            VT_begin(*event_recv_back);
+            VT_BEGIN_CONSTRAINED(*event_recv_back);
             #endif
 
             #if CHAM_STATS_RECORD
@@ -1748,7 +1757,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             delete[] requests;
 
             #ifdef TRACE 
-            VT_end(*event_recv_back);
+            VT_END_W_CONSTRAINED(*event_recv_back);
             #endif
             #endif /* OFFLOAD_DATA_PACKING_TYPE */
         }  //CAS
@@ -1824,7 +1833,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
 inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur_status_receive, RequestManager *request_manager_receive) {
     #ifdef TRACE
-    VT_begin(*event_receive_tasks);
+    VT_BEGIN_CONSTRAINED(*event_receive_tasks);
     #endif
 
     DBP("Incoming receive request for task id %d from rank %d\n", cur_status_receive->MPI_TAG, cur_status_receive->MPI_SOURCE);
@@ -1858,7 +1867,7 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
                                     buffer);
 
     #ifdef TRACE
-    VT_end(*event_receive_tasks);
+    VT_END_W_CONSTRAINED(*event_receive_tasks);
     #endif
 }
 
@@ -1937,16 +1946,16 @@ void* comm_thread_action(void* arg) {
     while(true) {
         // request_manager_cancel.progressRequests();
         #ifdef TRACE
-        VT_begin(event_progress_send);
+        VT_BEGIN_CONSTRAINED(event_progress_send);
         #endif
         request_manager_send.progressRequests();
         #ifdef TRACE
-        VT_end(event_progress_send);
-        VT_begin(event_progress_recv);
+        VT_END_W_CONSTRAINED(event_progress_send);
+        VT_BEGIN_CONSTRAINED(event_progress_recv);
         #endif
         request_manager_receive.progressRequests();
         #ifdef TRACE
-        VT_end(event_progress_recv);
+        VT_END_W_CONSTRAINED(event_progress_recv);
         #endif
 
         #if THREAD_ACTIVATION

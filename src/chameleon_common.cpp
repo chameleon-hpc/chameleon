@@ -2,6 +2,8 @@
 #define _CHAMELEON_COMMON_CPP_
 
 #include "chameleon_common.h"
+#include <stdint.h>
+#include <limits.h>
 
 #pragma region Variables
 // atomic counter for task ids
@@ -11,13 +13,24 @@ __thread int32_t __ch_gtid = -1;
 ch_thread_data_t*   __thread_data;
 ch_rank_data_t      __rank_data;
 
-// config values defined through environment variables
-std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
-std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE(1);
+std::atomic<int> _tracing_enabled(1);
+std::atomic<int> _num_sync_cycle(0);
 
+// ============================================================ 
+// config values defined through environment variables
+// ============================================================
+// general settings for migration
+std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
+std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE(1);
+
+// settings to manipulate default migration strategy
 std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION(2);
 std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION(0.05);
 std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(1);
+
+// settings to enable / disable tracing only for specific range of synchronization cycles
+std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE(-1);
+std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE(INT_MAX);
 #pragma endregion
 
 #pragma region Functions

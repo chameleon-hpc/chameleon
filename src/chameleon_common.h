@@ -96,6 +96,14 @@
 #define SHOW_DEADLOCK_WARNING 0
 #endif
 
+#ifndef PRINT_CONFIG_VALUES
+#define PRINT_CONFIG_VALUES 1
+#endif
+
+#ifndef ENABLE_TRACING_FOR_SYNC_CYCLES
+#define ENABLE_TRACING_FOR_SYNC_CYCLES 0
+#endif
+
 #if CHAMELEON_TOOL_SUPPORT
 #include "chameleon_tools.h"
 #endif
@@ -618,17 +626,28 @@ extern std::mutex _mtx_relp;
 extern ch_thread_data_t*    __thread_data;
 extern ch_rank_data_t       __rank_data;
 
+extern std::atomic<int> _tracing_enabled;
+extern std::atomic<int> _num_sync_cycle;
+
 #ifdef CHAM_DEBUG
 extern std::atomic<long> mem_allocated;
 #endif
 
+// ============================================================ 
 // config values defined through environment variables
+// ============================================================
+// general settings for migration
 extern std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION;
-extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE;
+extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
 
+// settings to manipulate default migration strategy
 extern std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION;
 extern std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION;
 extern std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE;
+
+// settings to enable / disable tracing only for specific range of synchronization cycles
+extern std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE;
+extern std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE;
 #pragma endregion
 
 #pragma region Functions
@@ -691,6 +710,14 @@ static void free_migratable_task(cham_migratable_task_t *task, bool is_remote_ta
 #define handle_error_en(en, msg) \
            do { errno = en; RELP("ERROR: %s : %s\n", msg, strerror(en)); exit(EXIT_FAILURE); } while (0)
 
+#ifndef VT_BEGIN_CONSTRAINED
+#define VT_BEGIN_CONSTRAINED(event_id) if (_tracing_enabled) VT_begin(event_id);
+#endif
+
+#ifndef VT_END_W_CONSTRAINED
+#define VT_END_W_CONSTRAINED(event_id) if (_tracing_enabled) VT_end(event_id);
+#endif
+
 template <class Container>
 static void split_string(const std::string& str, Container& cont, char delim = ' ')
 {
@@ -707,35 +734,52 @@ static void load_config_values() {
     if(tmp) {
         MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION = std::atof(tmp);
     }
-    RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
 
     tmp = nullptr;
     tmp = std::getenv("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION");
     if(tmp) {
         MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION = std::atof(tmp);
     }
-    RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
 
     tmp = nullptr;
     tmp = std::getenv("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION");
     if(tmp) {
         MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION = std::atof(tmp);
     }
-    RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());
 
     tmp = nullptr;
-    tmp = std::getenv("MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE");
+    tmp = std::getenv("MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE");
     if(tmp) {
-        MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE = std::atof(tmp);
+        MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE = std::atof(tmp);
     }
-    RELP("MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_MIGRATION_AT_ONCE.load());
 
     tmp = nullptr;
     tmp = std::getenv("PERCENTAGE_DIFF_TASKS_TO_MIGRATE");
     if(tmp) {
         PERCENTAGE_DIFF_TASKS_TO_MIGRATE = std::atof(tmp);
     }
+
+    tmp = nullptr;
+    tmp = std::getenv("ENABLE_TRACE_FROM_SYNC_CYCLE");
+    if(tmp) {
+        ENABLE_TRACE_FROM_SYNC_CYCLE = std::atof(tmp);
+    }
+
+    tmp = nullptr;
+    tmp = std::getenv("ENABLE_TRACE_TO_SYNC_CYCLE");
+    if(tmp) {
+        ENABLE_TRACE_TO_SYNC_CYCLE = std::atof(tmp);
+    }
+}
+
+static void print_config_values() {
+    RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
+    RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
+    RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());
+    RELP("MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load());
     RELP("PERCENTAGE_DIFF_TASKS_TO_MIGRATE=%f\n", PERCENTAGE_DIFF_TASKS_TO_MIGRATE.load());
+    RELP("ENABLE_TRACE_FROM_SYNC_CYCLE=%d\n", ENABLE_TRACE_FROM_SYNC_CYCLE.load());
+    RELP("ENABLE_TRACE_TO_SYNC_CYCLE=%d\n", ENABLE_TRACE_TO_SYNC_CYCLE.load());
 }
 #pragma endregion
 

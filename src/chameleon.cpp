@@ -306,6 +306,9 @@ int32_t chameleon_init() {
 
     // load config values that were speicified by environment variables
     load_config_values();
+    #if PRINT_CONFIG_VALUES
+    print_config_values();
+    #endif
 
     // initilize thread data here
     __rank_data.comm_rank = chameleon_comm_rank;
@@ -454,6 +457,12 @@ int32_t chameleon_determine_base_addresses(void * main_ptr) {
     free(start_ptr);
     return CHAM_SUCCESS;
 }
+
+void chameleon_set_tracing_enabled(int enabled) {
+    #ifdef TRACE
+    _tracing_enabled = enabled;
+    #endif
+}
 #pragma endregion Init / Finalize / Helper
 
 #pragma region Distributed Taskwait + Taskyield
@@ -504,7 +513,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     if(event_taskwait == -1) 
         int ierr = VT_funcdef(event_taskwait_name.c_str(), VT_NOCLASS, &event_taskwait);
 
-     VT_begin(event_taskwait);
+    VT_BEGIN_CONSTRAINED(event_taskwait);
 #endif
 
     verify_initialized();
@@ -715,7 +724,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     _time_taskwait_count++;
     #endif /* CHAM_STATS_RECORD */
 #ifdef TRACE
-    VT_end(event_taskwait);
+    VT_END_W_CONSTRAINED(event_taskwait);
 #endif
     DBP("chameleon_distributed_taskwait (exit)\n");
     return CHAM_SUCCESS;
@@ -780,7 +789,7 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     std::string event_name = "task_create";
     if(event_task_create == -1) 
         int ierr = VT_funcdef(event_name.c_str(), VT_NOCLASS, &event_task_create);
-    VT_begin(event_task_create);
+    VT_BEGIN_CONSTRAINED(event_task_create);
 #endif
     
     // perform lookup only when task has been created with libomptarget
@@ -809,7 +818,7 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 #ifdef TRACE
-    VT_end(event_task_create);
+    VT_END_W_CONSTRAINED(event_task_create);
 #endif
     return CHAM_SUCCESS;
 }
@@ -1091,7 +1100,7 @@ inline int32_t process_replicated_task() {
         static const std::string event_process_replicated_name = "process_replicated";
         if( event_process_replicated == -1) 
             int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated);
-        VT_begin(event_process_replicated);
+        VT_BEGIN_CONSTRAINED(event_process_replicated);
 #endif  
         
 #if CHAM_STATS_RECORD
@@ -1127,7 +1136,7 @@ inline int32_t process_replicated_task() {
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 #ifdef TRACE
-        VT_end(event_process_replicated);
+        VT_END_W_CONSTRAINED(event_process_replicated);
 #endif
         //Do not free replicated task here, as the communication thread may later receive back 
         //this task and needs to access the task (check flag + post receive requests to trash buffer)
@@ -1160,7 +1169,7 @@ inline int32_t process_remote_task() {
     static const std::string event_process_remote_name = "process_remote";
     if( event_process_remote == -1) 
         int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
-    VT_begin(event_process_remote);
+    VT_BEGIN_CONSTRAINED(event_process_remote);
 #endif
 
     // execute region now
@@ -1201,7 +1210,7 @@ inline int32_t process_remote_task() {
     _num_executed_tasks_stolen++;
 #endif
 #ifdef TRACE
-    VT_end(event_process_remote);
+    VT_END_W_CONSTRAINED(event_process_remote);
 #endif
     return CHAM_REMOTE_TASK_SUCCESS;
 }
@@ -1224,13 +1233,13 @@ inline int32_t process_local_task() {
     double cur_time = omp_get_wtime();
 #endif
 #ifdef TRACE
-    VT_begin(event_process_local);
+    VT_BEGIN_CONSTRAINED(event_process_local);
 #endif
     int32_t res = execute_target_task(task);
     if(res != CHAM_SUCCESS)
         handle_error_en(1, "execute_target_task - local");
 #ifdef TRACE
-    VT_end(event_process_local);
+    VT_END_W_CONSTRAINED(event_process_local);
 #endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;

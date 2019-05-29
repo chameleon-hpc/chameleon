@@ -93,9 +93,11 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
 #endif
         // determine index
         int pos = std::find(tmp_sorted_idx.begin(), tmp_sorted_idx.end(), chameleon_comm_rank) - tmp_sorted_idx.begin();
+#if !FORCE_MIGRATION
         // only offload if on the upper side
         if((pos) >= ((double)chameleon_comm_size/2.0))
         {
+#endif
             int other_pos       = chameleon_comm_size-pos-1;
             int other_idx       = tmp_sorted_idx[other_pos];
             double other_val    = (double) loadInfoRanks[other_idx];
@@ -115,8 +117,8 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
                 tasksToOffloadPerRank[other_idx] = num_tasks;
 #if !FORCE_MIGRATION
             }
-#endif
         }
+#endif
     }
 #endif
 }

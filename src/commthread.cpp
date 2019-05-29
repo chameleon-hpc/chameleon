@@ -1373,7 +1373,14 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                     for (auto &r_id : keys) {
                         std::vector<cham_migratable_task_t*> cur_tasks = map_task_vec[r_id];
                         int num_tasks = map_task_num[r_id];
+
+                        #if OFFLOAD_SEND_TASKS_SEPARATELY
+                        for(int i_task = 0; i_task < num_tasks; i_task++) {
+                            offload_tasks_to_rank(&cur_tasks[i_task], 1, r_id);
+                        }
+                        #else
                         offload_tasks_to_rank(&cur_tasks[0], num_tasks, r_id);
+                        #endif
                     }
 
                     // cleanup tupels again
@@ -1407,10 +1414,10 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                                 offload_tasks_to_rank(&cur_tasks[i_task], 1, r);
                             }
                             #else
-                            double victim_load  = (double) _load_info_ranks[r];
-                            double cur_diff     = (my_current_load-victim_load);
-                            double cur_ratio    = cur_diff / victim_load;
-                            RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
+                            // double victim_load  = (double) _load_info_ranks[r];
+                            // double cur_diff     = (my_current_load-victim_load);
+                            // double cur_ratio    = cur_diff / victim_load;
+                            // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
                             offload_tasks_to_rank(&cur_tasks[0], num_tasks, r);
                             #endif
 

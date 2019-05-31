@@ -104,12 +104,12 @@ void* chameleon_create_annotation_container_fortran() {
 }
 
 int chameleon_set_annotation_int_fortran(void* ann, int value) {
-    return chameleon_set_annotation_int((chameleon_annotations_t*)ann, "num_cells", value);
+    return chameleon_set_annotation_int((chameleon_annotations_t*)ann, (char*)"num_cells", value);
 }
 
 int chameleon_get_annotation_int_fortran(void* ann) {
     int res;
-    int found = chameleon_get_annotation_int((chameleon_annotations_t*) ann, "num_cells", &res);
+    int found = chameleon_get_annotation_int((chameleon_annotations_t*) ann, (char*)"num_cells", &res);
     return found ? res : -1;
 }
 
@@ -848,7 +848,7 @@ int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void 
 int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int num_args, void *args_info, void* annotations) {
     chameleon_map_data_entry_t *args_entries = (chameleon_map_data_entry_t *) args_info;
     chameleon_annotations_t * anno = (chameleon_annotations_t *) annotations;
-    chameleon_add_task_manual_w_annotations(entry_point, num_args, args_entries, anno);
+    return chameleon_add_task_manual_w_annotations(entry_point, num_args, args_entries, anno);
 }
 
 int32_t chameleon_add_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args) {

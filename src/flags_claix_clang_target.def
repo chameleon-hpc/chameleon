@@ -1,0 +1,8 @@
+MPICXX              =I_MPI_CXX=clang++ mpiicpc
+MPIF90              =
+
+#used with manual API
+#CXX_COMPILE_FLAGS  =-std=c++11 -fpic -fopenmp -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT 
+CXX_COMPILE_FLAGS   =-std=c++11 -fpic -fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT 
+F90_COMPILE_FLAGS   =
+LINKER_FLAGS        =-shared -lffi -lpthread -lhwloc -ldl -fopenmp-targets=x86_64-unknown-linux-gnu

@@ -9,7 +9,7 @@
 #include "chameleon.h"
 #include "chameleon_common.h"
 #include "commthread.h"
-#include "cham_statistics.h"
+#include "chameleon_statistics.h"
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
 
@@ -1188,10 +1188,6 @@ inline int32_t process_remote_task() {
     _map_tag_to_stolen_task.erase(task->task_id);
     _map_overall_tasks.erase(task->task_id);
 
-#if OFFLOAD_BLOCKING
-    _offload_blocked = 0;
-#endif
-
     if(task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
         _stolen_remote_tasks_send_back.push_back(task);
@@ -1256,9 +1252,6 @@ inline int32_t process_local_task() {
     DBP("process_local_task - decrement local outstanding count for task %ld\n", task->task_id);
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
-#if OFFLOAD_BLOCKING
-    _offload_blocked = 0;
-#endif
 
 #if CHAM_STATS_RECORD
     _num_executed_tasks_local++;

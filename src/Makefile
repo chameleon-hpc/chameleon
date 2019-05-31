@@ -11,9 +11,9 @@ FILES_COPY_LIB=libchameleon.so
 FLAGS_OPTIMIZATION=-g -O3
 
 ifneq ($(TARGET),)
-include ./flags_$(TARGET).def
+include ../flags_$(TARGET).def
 else
-include ./flags_claix_intel.def
+include ../flags_claix_intel.def
 endif
 
 default: release
@@ -32,11 +32,11 @@ trace: generic
 
 generic:
 	@if [ ! -z "$(MPIF90)" -a "$(MPIF90)" != "" ]; then\
-		echo "$(MPIF90) $(FLAGS_OPTIMIZATION) $(F90_COMPILE_FLAGS) -c $(FILES_F90_COMP)"; \
-		$(MPIF90) $(FLAGS_OPTIMIZATION) $(F90_COMPILE_FLAGS) -c $(FILES_F90_COMP); \
+		echo "$(MPIF90) $(FLAGS_OPTIMIZATION) $(CH_F90_COMPILE_FLAGS) -c $(FILES_F90_COMP)"; \
+		$(MPIF90) $(FLAGS_OPTIMIZATION) $(CH_F90_COMPILE_FLAGS) -c $(FILES_F90_COMP); \
 	fi
-	$(MPICXX) $(FLAGS_OPTIMIZATION) $(CXX_COMPILE_FLAGS) -c $(FILES_CXX_COMP) 	
-	$(MPICXX) $(CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(LINKER_FLAGS)
+	$(MPICXX) $(FLAGS_OPTIMIZATION) $(CH_CXX_COMPILE_FLAGS) -c $(FILES_CXX_COMP) 	
+	$(MPICXX) $(CH_CXX_COMPILE_FLAGS) -o libchameleon.so *.o $(CH_LINKER_FLAGS)
 
 	cp $(FILES_COPY_INCLUDE) $(INSTALL_DIR)/include/
 	cp $(FILES_COPY_INCLUDE_FORTRAN) $(INSTALL_DIR)/include/ &> /dev/null | true

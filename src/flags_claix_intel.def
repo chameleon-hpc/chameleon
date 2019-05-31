@@ -1,6 +1,0 @@
-MPICXX              =I_MPI_CXX=icpc mpiicpc -mt_mpi
-MPIF90              =I_MPI_F90=ifort mpiifort -mt_mpi
-
-CXX_COMPILE_FLAGS   =-std=c++11 -fpic -qopenmp -qno-openmp-offload -Wno-unknown-pragmas -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT 
-F90_COMPILE_FLAGS   =-fpic -qopenmp -qno-openmp-offload
-LINKER_FLAGS        =-shared -lffi -lpthread -lhwloc -ldl -lifcore

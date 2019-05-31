@@ -220,7 +220,7 @@ int32_t chameleon_wake_up_comm_threads() {
     _comm_thread_service_stopped        = 0;
     _flag_comm_threads_sleeping         = 0;
 
-    #if defined(TRACE) || ENABLE_TRACING_FOR_SYNC_CYCLES
+    #if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
     _num_sync_cycle++;
     if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
         _tracing_enabled = 1;

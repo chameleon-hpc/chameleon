@@ -1,7 +1,7 @@
 #include "commthread.h"
 #include "chameleon_common.h"
-#include "cham_statistics.h"
-#include "cham_strategies.h"
+#include "chameleon_statistics.h"
+#include "chameleon_strategies.h"
 #include "request_manager.h"
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
@@ -82,11 +82,6 @@ std::atomic<int> _num_offloaded_tasks_outstanding(0);
 std::vector<int32_t> _load_info_ranks;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
-
-#if OFFLOAD_BLOCKING
-// only enable offloading when a task has finished on local rank (change has been made)
-std::atomic<int32_t> _offload_blocked(0);
-#endif
 
 // === Constants
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
@@ -1270,10 +1265,6 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && *offload_triggered == 0) {
     #endif
 
-        #if OFFLOAD_BLOCKING
-        if(!_offload_blocked) {
-        #endif
-
         // Strategies for speculative load exchange
         // - If we find a rank with load = 0 ==> offload directly
         // - Should we look for the minimum? Might be a critical part of the program because several ranks might offload to that rank
@@ -1365,10 +1356,6 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                             }
 
                             offload_done = true;
-
-                            #if OFFLOAD_BLOCKING
-                            _offload_blocked = 1;
-                            #endif
                         }
                     }
 
@@ -1431,9 +1418,6 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                             #endif
 
                             offload_done = true;
-                            #if OFFLOAD_BLOCKING
-                            _offload_blocked = 1;
-                            #endif
                         }
                     }
                 }
@@ -1444,9 +1428,6 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                 _num_migration_done++;
                 #endif /* CHAM_STATS_RECORD */    
             }
-        #if OFFLOAD_BLOCKING
-        }
-        #endif
     }
 }
 

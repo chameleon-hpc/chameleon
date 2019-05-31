@@ -48,11 +48,6 @@
 #define OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED 1
 #endif
 
-// Just allow a single offload and block offload until a local or remote task has been executed and the local load has changed again
-#ifndef OFFLOAD_BLOCKING
-#define OFFLOAD_BLOCKING 0
-#endif
-
 // determines how data (arguments) is packed and send during offloading
 #ifndef OFFLOAD_DATA_PACKING_TYPE
 // #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)

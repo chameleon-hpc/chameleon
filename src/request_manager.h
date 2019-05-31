@@ -1,7 +1,7 @@
 #ifndef _REQUESTMANAGER_H_
 #define _REQUESTMANAGER_H_
 
-#include "cham_statistics.h"
+#include "chameleon_statistics.h"
 
 #include <mpi.h>
 #include <vector>

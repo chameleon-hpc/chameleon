@@ -59,11 +59,6 @@ extern std::atomic<int32_t> _outstanding_jobs_sum;
 // ====== Info about real load that is open or is beeing processed ======
 extern std::vector<int32_t> _load_info_ranks;
 
-#if OFFLOAD_BLOCKING
-// only allow offloading when a task has finished on local rank
-extern std::atomic<int32_t> _offload_blocked;
-#endif
-
 // list that holds task ids (created at the current rank) that are not finsihed yet
 extern thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 

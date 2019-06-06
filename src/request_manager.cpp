@@ -115,11 +115,11 @@ void RequestManager::progressRequests() {
   std::vector<int> arr_of_indices(n_requests);
   std::vector<MPI_Status> arr_of_statuses(n_requests);
 
-//#if CHAM_STATS_RECORD
+//#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
 //    double cur_time = omp_get_wtime();
 //#endif
   MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
-//#if CHAM_STATS_RECORD
+//#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
 //    cur_time = omp_get_wtime()-cur_time;
 //    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
 //      _num_slow_communication_operations++; 

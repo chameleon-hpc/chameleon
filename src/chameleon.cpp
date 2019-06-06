@@ -551,7 +551,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
     int num_threads_in_tw = _num_threads_involved_in_taskwait.load();
     
-    #if SHOW_DEADLOCK_WARNING
+    #if SHOW_WARNING_DEADLOCK
     double last_time_doing_sth_useful = omp_get_wtime();
     #endif
  
@@ -559,7 +559,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     while(true) {
         int32_t res = CHAM_SUCCESS;
 
-        #if SHOW_DEADLOCK_WARNING
+        #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
            fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
@@ -575,7 +575,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
      
-            #if SHOW_DEADLOCK_WARNING
+            #if SHOW_WARNING_DEADLOCK
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
 
@@ -601,7 +601,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 2: work on local tasks
         if(!_local_tasks.empty()) {
    
-            #if SHOW_DEADLOCK_WARNING
+            #if SHOW_WARNING_DEADLOCK
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
             
@@ -628,7 +628,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // ========== Prio 3: work on replicated tasks
         if(!_replicated_tasks.empty()) {
             
-            #if SHOW_DEADLOCK_WARNING
+            #if SHOW_WARNING_DEADLOCK
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
             

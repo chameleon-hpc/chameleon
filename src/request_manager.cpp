@@ -23,7 +23,11 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
                                 void* buffer,
                                 cham_migratable_task_t** tasks,
                                 int num_tasks) {
-    
+    double startStamp = 0;
+    #if CHAM_STATS_RECORD
+    startStamp = omp_get_wtime();
+    #endif
+
     #if CHAM_DEBUG
     std::string str_task_ids = "";
     if(tasks != NULL) {
@@ -37,6 +41,21 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
   
     _num_posted_requests[type]+= n_requests; 
     _num_posted_request_groups[type]+=1;
+
+    int canFinish = 0;
+    MPI_Testall(n_requests, &requests[0], &canFinish, MPI_STATUSES_IGNORE);
+    
+    if(canFinish) {
+#if CHAM_STATS_RECORD   
+      double elapsed = omp_get_wtime()-startStamp;
+      addTimingToStatistics(elapsed, type);
+#endif 
+      _num_completed_requests[type]+= n_requests;
+      _num_completed_request_groups[type]+=1;
+      handler(buffer, tag, rank, tasks, num_tasks);
+      return;
+    }
+
   if(block) {
 #if CHAM_STATS_RECORD
      double time = -omp_get_wtime();
@@ -65,10 +84,6 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
   }
  
   int gid=_groupId++;
-  double startStamp = 0;
-#if CHAM_STATS_RECORD
-  startStamp = omp_get_wtime();
-#endif
   RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp, tasks, num_tasks};
   _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
   _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));

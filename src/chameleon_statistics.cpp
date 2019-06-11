@@ -144,6 +144,7 @@ void cham_stats_print_stats() {
     fprintf(stderr, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());
     fprintf(stderr, "Stats R#%d:\t_num_bytes_sent\t%d\n", chameleon_comm_rank, _num_bytes_sent.load());
     fprintf(stderr, "Stats R#%d:\t_num_bytes_received\t%d\n", chameleon_comm_rank, _num_bytes_received.load());
+    fprintf(stderr, "Stats R#%d:\t_num_slow_communication_operations\t%d\n", chameleon_comm_rank, _num_slow_communication_operations.load());
 
     cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);

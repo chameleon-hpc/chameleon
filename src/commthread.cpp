@@ -1430,14 +1430,16 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         }
 
                         if(num_tasks > 0) {
+                            // double victim_load  = (double) _load_info_ranks[r];
+                            // double cur_diff     = (my_current_load-victim_load);
+                            // double cur_ratio    = cur_diff / victim_load;
+
                             #if OFFLOAD_SEND_TASKS_SEPARATELY
+                            // RELP("Migrating\t%d\ttasks (separately one by one) to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
                             for(int i_task = 0; i_task < num_tasks; i_task++) {
                                 offload_tasks_to_rank(&cur_tasks[i_task], 1, r);
                             }
                             #else
-                            // double victim_load  = (double) _load_info_ranks[r];
-                            // double cur_diff     = (my_current_load-victim_load);
-                            // double cur_ratio    = cur_diff / victim_load;
                             // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
                             offload_tasks_to_rank(&cur_tasks[0], num_tasks, r);
                             #endif

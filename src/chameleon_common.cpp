@@ -27,6 +27,7 @@ std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE(1);
 std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION(2);
 std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION(0.05);
 std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(1);
+std::atomic<int> OMP_NUM_THREADS_VAR(1);
 
 // settings to enable / disable tracing only for specific range of synchronization cycles
 std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE(-1);

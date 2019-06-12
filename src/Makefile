@@ -19,6 +19,7 @@ include ../flags_replace.def
 
 # custom compile flags that can be added via e.g. commandline or scripts
 CUSTOM_COMPILE_FLAGS ?=
+CUSTOM_COMPILE_FLAGS := $(subst $\',,$(CUSTOM_COMPILE_FLAGS))
 CH_CXX_COMPILE_FLAGS += $(CUSTOM_COMPILE_FLAGS)
 CH_F90_COMPILE_FLAGS += $(CUSTOM_COMPILE_FLAGS)
 

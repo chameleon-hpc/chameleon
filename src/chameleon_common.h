@@ -643,6 +643,7 @@ extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
 extern std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION;
 extern std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION;
 extern std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE;
+extern std::atomic<int> OMP_NUM_THREADS_VAR;
 
 // settings to enable / disable tracing only for specific range of synchronization cycles
 extern std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE;
@@ -729,6 +730,13 @@ static void split_string(const std::string& str, Container& cont, char delim = '
 
 static void load_config_values() {
     char *tmp = nullptr;
+    tmp = nullptr;
+    tmp = std::getenv("OMP_NUM_THREADS");
+    if(tmp) {
+        OMP_NUM_THREADS_VAR = std::atof(tmp);
+    }
+
+    tmp = nullptr;
     tmp = std::getenv("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION");
     if(tmp) {
         MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION = std::atof(tmp);
@@ -772,6 +780,7 @@ static void load_config_values() {
 }
 
 static void print_config_values() {
+    RELP("OMP_NUM_THREADS=%d\n", OMP_NUM_THREADS_VAR.load());
     RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
     RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
     RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());

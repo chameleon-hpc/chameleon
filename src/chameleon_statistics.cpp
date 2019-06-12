@@ -53,6 +53,9 @@ std::atomic<int64_t> _time_between_allgather_and_exchange_count(0);
 std::atomic<double>  _time_taskwait_sum(0.0);
 std::atomic<int>     _time_taskwait_count(0);
 
+std::atomic<double>  _time_commthread_active_sum(0.0);
+std::atomic<int>     _time_commthread_active_count(0.0);
+
 #if CHAMELEON_TOOL_SUPPORT
 std::atomic<double>  _time_tool_get_thread_data_sum(0.0);
 std::atomic<int>     _time_tool_get_thread_data_count(0);
@@ -110,6 +113,9 @@ void cham_stats_reset_for_sync_cycle() {
 
     _time_taskwait_sum = 0.0;
     _time_taskwait_count = 0;
+
+    _time_commthread_active_sum = 0.0;
+    _time_commthread_active_count = 0;
 }
 
 void cham_stats_print_stats_w_mean(std::string name, double sum, int count, bool cummulative = false) {
@@ -159,14 +165,14 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean("_time_between_allgather_and_exchange_sum", _time_between_allgather_and_exchange_sum, _time_between_allgather_and_exchange_count);
     cham_stats_print_stats_w_mean("_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
     cham_stats_print_stats_w_mean("_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
-    cham_stats_print_stats_w_mean("_time_taskwait_idling_without_migration_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum), _time_taskwait_count);
+    cham_stats_print_stats_w_mean("_time_commthread_active_sum", _time_commthread_active_sum, _time_commthread_active_count);
     cham_stats_print_stats_w_mean("_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count, true);
 #if CHAMELEON_TOOL_SUPPORT
     cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
-    cham_stats_print_communication_stats("sending performance", _time_taskwait_sum/_time_taskwait_count, _num_bytes_sent);
-    cham_stats_print_communication_stats("receiving performance", _time_taskwait_sum/_time_taskwait_count, _num_bytes_received);
-    cham_stats_print_communication_stats("total communication performance", _time_taskwait_sum/_time_taskwait_count, _num_bytes_sent+_num_bytes_received);
+    cham_stats_print_communication_stats("sending performance", _time_commthread_active_sum, _num_bytes_sent);
+    cham_stats_print_communication_stats("receiving performance", _time_commthread_active_sum, _num_bytes_received);
+    cham_stats_print_communication_stats("total communication performance", _time_commthread_active_sum, _num_bytes_sent+_num_bytes_received);
     _mtx_relp.unlock();
 }
 

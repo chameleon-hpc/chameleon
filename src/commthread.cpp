@@ -185,7 +185,7 @@ int32_t start_communication_threads() {
 }
 
 int32_t chameleon_wake_up_comm_threads() {
-    // check wether communication threads have already been started. Otherwise do so.
+    // check wether communication thread has already been started. Otherwise do so.
     // Usually that should not be necessary if done in init
     // start_communication_threads();
 
@@ -1989,6 +1989,10 @@ void* comm_thread_action(void* arg) {
 
     DBP("comm_thread_action (enter)\n");
 
+    #if CHAM_STATS_RECORD
+    double time_start_comm = omp_get_wtime(); 
+    #endif
+
     while(true) {
         // request_manager_cancel.progressRequests();
         #ifdef TRACE
@@ -2008,6 +2012,12 @@ void* comm_thread_action(void* arg) {
         while (_flag_comm_threads_sleeping) {
             if(!flag_set) {
                 flag_set = 1;
+                #if CHAM_STATS_RECORD
+                double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
+                atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
+                _time_commthread_active_count++;
+                #endif /* CHAM_STATS_RECORD */
+
                 DBP("comm_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped.load());
             }
             // dont do anything if the thread is sleeping
@@ -2021,6 +2031,9 @@ void* comm_thread_action(void* arg) {
         }
         if(flag_set) {
             DBP("comm_thread_action - woke up again\n");
+            #if CHAM_STATS_RECORD
+            time_start_comm = omp_get_wtime();
+            #endif
             flag_set = 0;
             tag_counter_send_tasks = 0;
             // reset last received ids
@@ -2083,6 +2096,11 @@ void* comm_thread_action(void* arg) {
                 _flag_comm_threads_sleeping     = 1;
                 _comm_thread_service_stopped    = 1;
                 flag_set                        = 1;
+                #if CHAM_STATS_RECORD
+                double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
+                atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
+                _time_commthread_active_count++;
+                #endif /* CHAM_STATS_RECORD */
                 DBP("comm_thread_action - thread went to sleep again due to exit condition\n");
                 continue;
             }

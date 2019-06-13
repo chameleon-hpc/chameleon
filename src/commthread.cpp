@@ -107,6 +107,10 @@ std::atomic<int> _num_threads_involved_in_taskwait(INT_MAX);
 std::atomic<int32_t> _num_threads_idle(0);
 std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
+// number of active migrations per target rank
+// desired: should block new migration to target as long as there are still active migrations ongoing
+std::vector<int> _active_migrations_per_target_rank;
+
 pthread_t           _th_service_actions;
 std::atomic<int>    _th_service_actions_created(0);
 pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
@@ -423,6 +427,7 @@ static void handler_noop(void* buffer, int tag, int source, cham_migratable_task
 
 static void send_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
     free(buffer);
+    _active_migrations_per_target_rank[source]--;
 };
 
 static void receive_handler_data(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -805,6 +810,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     atomic_add_dbl(_time_comm_send_task_sum, cur_time);
     _time_comm_send_task_count++;
 #endif
+    _active_migrations_per_target_rank[target_rank]++;
     request_manager_send.submitRequests(tmp_tag, target_rank, n_requests, 
                                 requests,
                                 MPI_BLOCKING,
@@ -1410,41 +1416,44 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             } else {
                 for(int r=0; r<tasksToOffload.size(); r++) {
                     if(r != chameleon_comm_rank) {
-                        int num_tasks_to_migrate = tasksToOffload[r];
-                        
-                        int num_tasks = 0;
-                        std::vector<cham_migratable_task_t*> cur_tasks(num_tasks_to_migrate);
+                        // block until no active offload for rank any more
+                        if(_active_migrations_per_target_rank[r] == 0) {
+                            int num_tasks_to_migrate = tasksToOffload[r];
+                            
+                            int num_tasks = 0;
+                            std::vector<cham_migratable_task_t*> cur_tasks(num_tasks_to_migrate);
 
-                        for(int t=0; t < num_tasks_to_migrate; t++) {
-                            cham_migratable_task_t *task = _local_tasks.pop_front();
-                            if(task) {
-                                cur_tasks[num_tasks] = task;
-                                num_tasks++;
+                            for(int t=0; t < num_tasks_to_migrate; t++) {
+                                cham_migratable_task_t *task = _local_tasks.pop_front();
+                                if(task) {
+                                    cur_tasks[num_tasks] = task;
+                                    num_tasks++;
 
-                                // stop when limit reached
-                                if(num_tasks >= MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE) {
-                                    // RELP("num_tasks:%d, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE:%f\n", num_tasks, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load())
-                                    break;
+                                    // stop when limit reached
+                                    if(num_tasks >= MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE) {
+                                        // RELP("num_tasks:%d, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE:%f\n", num_tasks, MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load())
+                                        break;
+                                    }
                                 }
                             }
-                        }
 
-                        if(num_tasks > 0) {
-                            // double victim_load  = (double) _load_info_ranks[r];
-                            // double cur_diff     = (my_current_load-victim_load);
-                            // double cur_ratio    = cur_diff / victim_load;
+                            if(num_tasks > 0) {
+                                // double victim_load  = (double) _load_info_ranks[r];
+                                // double cur_diff     = (my_current_load-victim_load);
+                                // double cur_ratio    = cur_diff / victim_load;
 
-                            #if OFFLOAD_SEND_TASKS_SEPARATELY
-                            // RELP("Migrating\t%d\ttasks (separately one by one) to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
-                            for(int i_task = 0; i_task < num_tasks; i_task++) {
-                                offload_tasks_to_rank(&cur_tasks[i_task], 1, r);
+                                #if OFFLOAD_SEND_TASKS_SEPARATELY
+                                // RELP("Migrating\t%d\ttasks (separately one by one) to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
+                                for(int i_task = 0; i_task < num_tasks; i_task++) {
+                                    offload_tasks_to_rank(&cur_tasks[i_task], 1, r);
+                                }
+                                #else
+                                // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
+                                offload_tasks_to_rank(&cur_tasks[0], num_tasks, r);
+                                #endif
+
+                                offload_done = true;
                             }
-                            #else
-                            // RELP("Migrating\t%d\ttasks to rank:\t%d\tload:\t%f\tload_victim:\t%f\tratio:\t%f\tdiff:\t%f\n", num_tasks, r, my_current_load, victim_load, cur_ratio, cur_diff);
-                            offload_tasks_to_rank(&cur_tasks[0], num_tasks, r);
-                            #endif
-
-                            offload_done = true;
                         }
                     }
                 }

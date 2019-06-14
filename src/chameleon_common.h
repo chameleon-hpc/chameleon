@@ -65,7 +65,7 @@
 
 //Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
 #ifndef MPI_BLOCKING
-#define MPI_BLOCKING 0
+#define MPI_BLOCKING 1
 #endif
 
 #ifndef CHAM_REPLICATION_MODE

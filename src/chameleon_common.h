@@ -65,7 +65,7 @@
 
 //Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
 #ifndef MPI_BLOCKING
-#define MPI_BLOCKING 1
+#define MPI_BLOCKING 0
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
@@ -80,7 +80,7 @@
 #endif
 
 #ifndef CHAMELEON_TOOL_SUPPORT
-#define CHAMELEON_TOOL_SUPPORT 1
+#define CHAMELEON_TOOL_SUPPORT 0
 #endif
 
 #ifndef CHAMELEON_TOOL_USE_MAP
@@ -92,7 +92,7 @@
 #endif
 
 #ifndef SHOW_WARNING_SLOW_COMMUNICATION
-#define SHOW_WARNING_SLOW_COMMUNICATION 1
+#define SHOW_WARNING_SLOW_COMMUNICATION 0
 #endif
 
 #ifndef PRINT_CONFIG_VALUES

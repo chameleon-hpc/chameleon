@@ -2047,6 +2047,7 @@ void* comm_thread_action(void* arg) {
 
     static int event_receive_tasks          = -1;
     static int event_recv_back              = -1;
+    static int event_create_gather_request  = -1;
     static int event_exchange_outstanding   = -1;
     static int event_offload_decision       = -1;
     static int event_send_back              = -1;
@@ -2062,6 +2063,10 @@ void* comm_thread_action(void* arg) {
     if(event_recv_back == -1) 
         int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
     
+    std::string create_gather_request_name = "create_gather_request";
+    if(event_create_gather_request == -1)
+        int ierr = VT_funcdef(create_gather_request_name.c_str(), VT_NOCLASS, &event_create_gather_request);
+
     std::string exchange_outstanding_name = "exchange_outstanding";
     if(event_exchange_outstanding == -1)
         int ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);    
@@ -2171,7 +2176,13 @@ void* comm_thread_action(void* arg) {
 
         // avoid overwriting request and keep it up to date
         if(!request_gather_created) {
+            #ifdef TRACE
+            VT_BEGIN_CONSTRAINED(event_create_gather_request);
+            #endif
             action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
+            #ifdef TRACE
+            VT_END_W_CONSTRAINED(event_create_gather_request);
+            #endif
             request_gather_created = 1;
             #if CHAM_STATS_RECORD
             time_gather_posted = omp_get_wtime();

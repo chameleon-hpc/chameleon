@@ -69,8 +69,8 @@
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
-#define CHAM_REPLICATION_MODE 0 //no replication
-//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+//#define CHAM_REPLICATION_MODE 0 //no replication
+#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
 //#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 #endif
 
@@ -282,8 +282,8 @@ typedef struct cham_migratable_task_t {
     std::vector<ptrdiff_t> arg_tgt_offsets;
 
     int32_t is_remote_task      = 0;
-    int32_t is_replicated_task  = 0;
     int32_t is_manual_task      = 0;
+    int32_t is_replicated_task  = 1;
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
@@ -291,7 +291,10 @@ typedef struct cham_migratable_task_t {
     int32_t target_mpi_rank     = -1;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
-    std::atomic<bool> sync_commthread_lock;
+    std::atomic<bool> result_in_progress;
+
+    // Vector of replicating ranks
+    std::vector<int> replicating_ranks;
 
     chameleon_annotations_t task_annotations;
 
@@ -310,6 +313,17 @@ typedef struct cham_migratable_task_t {
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
         int32_t p_arg_num); 
+
+    // Constructor 3: Called from API version when replicated task is created
+    cham_migratable_task_t(
+        void *p_tgt_entry_ptr,
+        void **p_tgt_args,
+        ptrdiff_t *p_tgt_offsets,
+        int64_t *p_tgt_arg_types,
+        int32_t p_arg_num,
+        int num_replicating_ranks,
+        int *replicating_ranks);
+
 
     void ReSizeArrays(int32_t num_args);
     

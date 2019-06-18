@@ -89,7 +89,8 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
 int32_t process_local_task();
 int32_t process_remote_task();
-int32_t process_replicated_task();
+int32_t process_replicated_local_task();
+int32_t process_replicated_remote_task();
 #pragma endregion Forward Declarations
 
 #pragma region Annotations
@@ -231,13 +232,31 @@ cham_migratable_task_t* create_migratable_task(
         int32_t p_arg_num) {
 
     cham_migratable_task_t *tmp_task = new cham_migratable_task_t(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
-    assert(tmp_task->sync_commthread_lock.load()==false);
+    assert(tmp_task->result_in_progress.load()==false);
+    
+    return tmp_task;
+}
+
+cham_migratable_task_t* create_migratable_task_replicated(
+        void *p_tgt_entry_ptr, 
+        void **p_tgt_args, 
+        ptrdiff_t *p_tgt_offsets, 
+        int64_t *p_tgt_arg_types, 
+        int32_t p_arg_num,
+        int num_replicating,
+        int *replicating_ranks) {
+
+    cham_migratable_task_t *tmp_task = new cham_migratable_task_t(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets,
+                                                                  p_tgt_arg_types, p_arg_num,
+                                                                  num_replicating, replicating_ranks);
+
+    assert(tmp_task->result_in_progress.load()==false);
     
     return tmp_task;
 }
 
 void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset) {
-    assert(task->sync_commthread_lock.load()==false);
+    assert(task->result_in_progress.load()==false);
     task->idx_image = img_idx;
     task->entry_image_offset = entry_image_offset;
 }
@@ -564,7 +583,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
            fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
-                                                                  _num_stolen_tasks_outstanding.load());
+                                                                  _num_remote_tasks_outstanding.load());
            request_manager_receive.printRequestInformation();
            request_manager_send.printRequestInformation();
            last_time_doing_sth_useful = omp_get_wtime(); 
@@ -625,8 +644,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #endif
 
 #if OFFLOAD_ENABLED && CHAM_REPLICATION_MODE>0
-        // ========== Prio 3: work on replicated tasks
-        if(!_replicated_tasks.empty()) {
+        // ========== Prio 3: work on replicated local tasks
+        if(!_replicated_local_tasks.empty()) {
             
             #if SHOW_WARNING_DEADLOCK
             last_time_doing_sth_useful = omp_get_wtime();
@@ -643,7 +662,31 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             #endif
 
             // try to execute a local task
-            res = process_replicated_task();
+            res = process_replicated_local_task();
+
+            if(res != CHAM_REPLICATED_TASK_NONE)
+                continue;
+        }
+
+        // ========== Prio 4: work on replicated remote tasks
+        if(!_replicated_remote_tasks.empty()) {
+
+            #if SHOW_WARNING_DEADLOCK
+            last_time_doing_sth_useful = omp_get_wtime();
+            #endif
+
+            #if THREAD_ACTIVATION
+            if(this_thread_idle) {
+                // decrement counter again
+                my_idle_order = --_num_threads_idle;
+                DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+                this_thread_idle = false;
+            }
+            // this_thread_num_attemps_standard_task = 0;
+            #endif
+
+            // try to execute a local task
+            res = process_replicated_remote_task();
 
             if(res != CHAM_REPLICATED_TASK_NONE)
                 continue;
@@ -781,7 +824,7 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 }
 
-int32_t chameleon_add_task(cham_migratable_task_t *task) {
+int32_t chameleon_add_task(cham_migratable_task_t *task, bool replicated) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
 #ifdef TRACE
@@ -805,7 +848,12 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
 #endif
 
     // add to queue
-    _local_tasks.push_back(task);
+    if(!replicated) 
+      _local_tasks.push_back(task);
+    else {
+      _replicated_local_tasks.push_back(task);
+      _replicated_tasks_to_transfer.push_back(task);
+    }
     // set id of last task added
     __last_task_id_added = task->task_id;
 
@@ -890,8 +938,58 @@ int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args
     if(ann) {
         tmp_task->task_annotations = *ann;
     }
-    return chameleon_add_task(tmp_task);
+    return chameleon_add_task(tmp_task, false);
 }
+
+int32_t chameleon_add_replicated_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args, int num_replicating_ranks, int *replicating_ranks) {
+    return chameleon_add_replicated_task_manual_w_annotations(entry_point, num_args, args, nullptr, num_replicating_ranks, replicating_ranks);
+}
+
+int32_t chameleon_add_replicated_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t *args, chameleon_annotations_t* ann, int num_replicating_ranks, int *replicating_ranks) {
+
+    // todo: avoid code duplication
+    // Format of variable input args should always be:
+    // 1. void* to data entry
+    // 2. size_t size of data
+    // 3. agument type specifier (also includes information whether it is literal or not)
+    std::vector<void *>     arg_hst_pointers(num_args);
+    std::vector<int64_t>    arg_sizes(num_args);
+    std::vector<int64_t>    arg_types(num_args);
+    std::vector<void *>     arg_tgt_pointers(num_args);
+    std::vector<ptrdiff_t>  arg_tgt_offsets(num_args);
+
+    for(int i = 0; i < num_args; i++) {
+        void * cur_arg          = args[i].valptr;
+        int64_t cur_size        = args[i].size;
+        int64_t cur_type        = args[i].type;
+
+        arg_hst_pointers[i]     = cur_arg;
+        arg_sizes[i]            = cur_size;
+        arg_types[i]            = cur_type;
+        arg_tgt_pointers[i]     = nullptr;
+        arg_tgt_offsets[i]      = 0;
+    }
+
+    cham_migratable_task_t *tmp_task = create_migratable_task_replicated(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0],
+                                                                           &arg_types[0], num_args,
+                                                                           num_replicating_ranks,
+                                                                           replicating_ranks);
+
+    // calculate offset to base address
+    intptr_t base_address   = _image_base_addresses[99];
+    ptrdiff_t diff          = (intptr_t) entry_point - base_address;
+    chameleon_set_img_idx_offset(tmp_task, 99, diff);
+
+    tmp_task->is_manual_task    = 1;
+    tmp_task->arg_hst_pointers  = arg_hst_pointers;
+    tmp_task->arg_sizes         = arg_sizes;
+    if(ann) {
+        tmp_task->task_annotations = *ann;
+    }
+
+    return chameleon_add_task(tmp_task, true);
+}
+
 #pragma endregion Fcns for Data and Tasks
 
 #pragma region Fcns for Lookups and Execution
@@ -1076,31 +1174,100 @@ int32_t execute_target_task(cham_migratable_task_t *task) {
     return CHAM_SUCCESS;
 }
 
-inline int32_t process_replicated_task() {
-    DBP("process_replicated_task (enter)\n");
+inline int32_t process_replicated_local_task() {
+    DBP("process_replicated_local_task (enter)\n");
     cham_migratable_task_t *replicated_task = nullptr;
-   
-    if(_replicated_tasks.empty())
+
+    if(_replicated_local_tasks.empty())
         return CHAM_REPLICATED_TASK_NONE;
-        
-    replicated_task = _replicated_tasks.pop_back();
-    
+
+    replicated_task = _replicated_local_tasks.pop_back();
+
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
     bool expected = false;
     bool desired = true;
- 
-    //atomic CAS   
-    if(replicated_task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
+
+    //atomic CAS
+    if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
 
 #ifdef TRACE
-        static int event_process_replicated = -1;
-        static const std::string event_process_replicated_name = "process_replicated";
-        if( event_process_replicated == -1) 
-            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated);
-        VT_BEGIN_CONSTRAINED(event_process_replicated);
+        static int event_process_replicated_local = -1;
+        static const std::string event_process_replicated_name = "process_replicated_local";
+        if( event_process_replicated_local == -1)
+            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_local);
+        VT_BEGIN_CONSTRAINED(event_process_replicated_local);
+#endif
+
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif
+
+#if CHAM_REPLICATION_MODE==2
+        //cancel task on remote ranks
+        cancel_offloaded_task(replicated_task);
+#endif
+
+        int32_t res = execute_target_task(replicated_task);
+        if(res != CHAM_SUCCESS)
+            handle_error_en(1, "execute_target_task - remote");
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+        _time_task_execution_replicated_count++;
+#endif
+
+        _num_replicated_local_tasks_outstanding--;
+#if CHAM_STATS_RECORD
+        _num_executed_tasks_replicated++;
+#endif
+
+        // mark locally created task finished
+        _unfinished_locally_created_tasks.remove(replicated_task->task_id);
+        _map_overall_tasks.erase(replicated_task->task_id);
+
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        DBP("process_replicated_task - decrement local outstanding count for task %ld\n", replicated_task->task_id);
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
+#ifdef TRACE
+        VT_END_W_CONSTRAINED(event_process_replicated_local);
+#endif
+        //Do not free replicated task here, as the communication thread may later receive back
+        //this task and needs to access the task (check flag + post receive requests to trash buffer)
+        //The replicated task should be deallocated in recv back handlers
+    }
+    else {
+        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
+    }
+
+    return CHAM_REPLICATED_TASK_SUCCESS;
+
+    DBP("process_replicated_local_task (exit)\n");
+}
+
+inline int32_t process_replicated_remote_task() {
+    DBP("process_replicated_remote_task (enter)\n");
+    cham_migratable_task_t *replicated_task = nullptr;
+   
+    if(_replicated_remote_tasks.empty())
+        return CHAM_REPLICATED_TASK_NONE;
+        
+    replicated_task = _replicated_remote_tasks.pop_front();
+    
+    if(replicated_task==nullptr)
+        return CHAM_REPLICATED_TASK_NONE;
+
+
+#ifdef TRACE
+        static int event_process_replicated_remote = -1;
+        static const std::string event_process_replicated_name = "process_replicated_remote";
+        if( event_process_replicated_remote == -1)
+            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_remote);
+        VT_BEGIN_CONSTRAINED(event_process_replicated_remote);
 #endif  
         
 #if CHAM_STATS_RECORD
@@ -1121,34 +1288,31 @@ inline int32_t process_replicated_task() {
         _time_task_execution_replicated_count++;
 #endif
 
-        _num_replicated_tasks_outstanding--;
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated++;
 #endif
-      
-        // mark locally created task finished
-        _unfinished_locally_created_tasks.remove(replicated_task->task_id);
+
+        _map_tag_to_remote_task.erase(replicated_task->task_id);
         _map_overall_tasks.erase(replicated_task->task_id);
- 
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        DBP("process_replicated_task - decrement local outstanding count for task %ld\n", replicated_task->task_id);
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
+
+        if(replicated_task->HasAtLeastOneOutput()) {
+            // just schedule it for sending back results if there is at least 1 output
+            _remote_tasks_send_back.push_back(replicated_task);
+        }
+        else {
+            _mtx_load_exchange.lock();
+            _num_remote_tasks_outstanding--;
+            DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
+            trigger_update_outstanding();
+            _mtx_load_exchange.unlock();
+        }
 #ifdef TRACE
-        VT_END_W_CONSTRAINED(event_process_replicated);
+        VT_END_W_CONSTRAINED(event_process_replicated_remote);
 #endif
-        //Do not free replicated task here, as the communication thread may later receive back 
-        //this task and needs to access the task (check flag + post receive requests to trash buffer)
-        //The replicated task should be deallocated in recv back handlers
-    }
-    else {
-        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
-    }
 
     return CHAM_REPLICATED_TASK_SUCCESS;
   
-    DBP("process_replicated_tasks (exit)\n");
+    DBP("process_replicated_remote_task (exit)\n");
 }
 
 inline int32_t process_remote_task() {
@@ -1185,16 +1349,16 @@ inline int32_t process_remote_task() {
     _time_task_execution_stolen_count++;
 #endif
  
-    _map_tag_to_stolen_task.erase(task->task_id);
+    _map_tag_to_remote_task.erase(task->task_id);
     _map_overall_tasks.erase(task->task_id);
 
     if(task->HasAtLeastOneOutput()) {
         // just schedule it for sending back results if there is at least 1 output
-        _stolen_remote_tasks_send_back.push_back(task);
+        _remote_tasks_send_back.push_back(task);
     } else {
         // we can now decrement outstanding counter because there is nothing to send back
         _mtx_load_exchange.lock();
-        _num_stolen_tasks_outstanding--;
+        _num_remote_tasks_outstanding--;
         DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();

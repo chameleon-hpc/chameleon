@@ -53,7 +53,8 @@ cham_migratable_task_t::cham_migratable_task_t(
     void **p_tgt_args, 
     ptrdiff_t *p_tgt_offsets, 
     int64_t *p_tgt_arg_types, 
-    int32_t p_arg_num) : sync_commthread_lock(false) {
+    int32_t p_arg_num) 
+  : result_in_progress(false), is_replicated_task(0) {
         
     // generate a unique task id
     TYPE_TASK_ID tmp_counter = ++_task_id_counter;
@@ -76,6 +77,49 @@ cham_migratable_task_t::cham_migratable_task_t(
         arg_tgt_pointers[i] = p_tgt_args[i];
         arg_tgt_offsets[i] = p_tgt_offsets[i];
         arg_types[i] = p_tgt_arg_types[i];
+    }
+}
+
+cham_migratable_task_t::cham_migratable_task_t(
+    void *p_tgt_entry_ptr,
+    void **p_tgt_args,
+    ptrdiff_t *p_tgt_offsets,
+    int64_t *p_tgt_arg_types,
+    int32_t p_arg_num,
+    int num_replicating_ranks,
+    int *rep_ranks) 
+  : result_in_progress(false), is_replicated_task(0) {
+ 
+    //Todo: avoid code duplication and extract init() function
+
+    // generate a unique task id
+    TYPE_TASK_ID tmp_counter = ++_task_id_counter;
+    // int tmp_rank = chameleon_comm_rank;
+    task_id = (chameleon_comm_rank << 24) | (tmp_counter);
+    // DBP("cham_migratable_task_t - Created task with (task_id=%ld)\n", task_id);
+
+    tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;
+    arg_num = p_arg_num;
+
+    // resize vectors
+    arg_hst_pointers.resize(arg_num);
+    arg_sizes.resize(arg_num);
+
+    arg_types.resize(arg_num);
+    arg_tgt_pointers.resize(arg_num);
+    arg_tgt_offsets.resize(arg_num);
+
+    for(int i = 0; i < arg_num; i++) {
+        arg_tgt_pointers[i] = p_tgt_args[i];
+        arg_tgt_offsets[i] = p_tgt_offsets[i];
+        arg_types[i] = p_tgt_arg_types[i];
+    }
+
+    if(num_replicating_ranks)
+      is_replicated_task = 1;
+
+    for(int i = 0; i < num_replicating_ranks; i++) {
+        replicating_ranks.push_back( rep_ranks[i] );    
     }
 }
 

@@ -53,20 +53,25 @@ std::atomic<int32_t> _num_local_tasks_outstanding(0);
 
 // list with stolen task entries that should be executed but may be cancelled if task is executed on origin rank
 thread_safe_task_list_t _stolen_remote_tasks;
-std::atomic<int32_t> _num_stolen_tasks_outstanding(0);
+std::atomic<int32_t> _num_remote_tasks_outstanding(0);
 
-// list with replicated (i.e. offloaded) task entries
+// list with local replicated (i.e. offloaded) task entries
 // these can either be executed remotely or locally
-thread_safe_task_list_t _replicated_tasks;
-std::atomic<int32_t> _num_replicated_tasks_outstanding(0);
+thread_safe_task_list_t _replicated_local_tasks;
+std::atomic<int32_t> _num_replicated_local_tasks_outstanding(0);
+
+// list with remote replicated tasks
+thread_safe_task_list_t _replicated_remote_tasks;
 
 // list with stolen task entries that need output data transfer
-thread_safe_task_list_t _stolen_remote_tasks_send_back;
+thread_safe_task_list_t _remote_tasks_send_back;
+// list with local replicated task entries that need initial transfer
+thread_safe_task_list_t _replicated_tasks_to_transfer;
 
 // map that maps tag ids back to local tasks that have been offloaded and expect result data
 thread_safe_task_map_t _map_offloaded_tasks_with_outputs;
 // map that maps tag ids back to stolen tasks
-thread_safe_task_map_t _map_tag_to_stolen_task;
+thread_safe_task_map_t _map_tag_to_remote_task;
 // mapping of all active task ids and task
 thread_safe_task_map_t _map_overall_tasks;
 
@@ -428,9 +433,12 @@ static void send_handler(void* buffer, int tag, int source, cham_migratable_task
 static void receive_handler_data(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
     // add tasks to stolen list
     for (int i_task = 0; i_task < num_tasks; i_task++) {
-        cham_migratable_task_t *task = tasks[i_task];        
-        _stolen_remote_tasks.push_back(task);
-        _map_tag_to_stolen_task.insert(task->task_id, task);
+        cham_migratable_task_t *task = tasks[i_task];
+        if(task->is_replicated_task)
+           _replicated_remote_tasks.push_back(task);
+        else
+           _stolen_remote_tasks.push_back(task);
+        _map_tag_to_remote_task.insert(task->task_id, task);
         _map_overall_tasks.insert(task->task_id, task);
     }
 }
@@ -454,8 +462,8 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 
     // add stolen load as soon as possible to avoid wrong decision making
     _mtx_load_exchange.lock();
-    _num_stolen_tasks_outstanding += n_tasks;
-    DBP("receive_handler - increment stolen outstanding count for tag %d by %d\n", tag, num_tasks);
+    _num_remote_tasks_outstanding += n_tasks;
+    DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
@@ -608,7 +616,7 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         // decrement counter if offloading + receiving results finished
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
-        DBP("receive_back_handler - decrement local outstanding count for task %ld\n", task_entry->task_id);
+        DBP("receive_back_handler - decrement local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 
@@ -648,21 +656,23 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     VT_BEGIN_CONSTRAINED(event_offload);
     #endif /* TRACE */
 
-    assert(tasks[0]->sync_commthread_lock.load()==false);
+    //assert(tasks[0]->result_in_progress.load()==false);
 
     #if CHAM_DEBUG
     std::string str_task_ids = std::to_string(tasks[0]->task_id);
     for(int i_task = 1; i_task < num_tasks; i_task++) {
-        assert(tasks[i_task]->sync_commthread_lock.load()==false);
+        //assert(tasks[i_task]->result_in_progress.load()==false);
         str_task_ids.append("," + std::to_string(tasks[i_task]->task_id));
     }
     DBP("offload_tasks_to_rank (enter) - num_tasks: %d, target_rank: %d, task_ids: %s\n", num_tasks, target_rank, str_task_ids.c_str());
     #endif
     
     #if CHAM_REPLICATION_MODE > 0
-    _num_replicated_tasks_outstanding += num_tasks;
-    for(int i = 0; i < num_tasks; i++)
-        _replicated_tasks.push_back(tasks[i]);
+    _num_replicated_local_tasks_outstanding += num_tasks;
+    for(int i = 0; i < num_tasks; i++) {
+        if(!tasks[i]->is_replicated_task)   
+          _replicated_local_tasks.push_back(tasks[i]);
+    }
     #endif /* CHAM_REPLICATION_MODE */
     
     offload_action(tasks, num_tasks, target_rank);
@@ -853,6 +863,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
             + sizeof(ptrdiff_t)                     // 3. offset inside image
             + sizeof(TYPE_TASK_ID)                  // 4. task id
             + sizeof(int32_t)                       // 5. number of arguments
+            + sizeof(int32_t)                       // is_replicated
             + tasks[i]->arg_num * sizeof(int64_t)    // 6. argument sizes
             + tasks[i]->arg_num * sizeof(ptrdiff_t)  // 7. offsets
             + tasks[i]->arg_num * sizeof(int64_t);   // 8. argument types
@@ -925,6 +936,9 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
 
         // 5. number of arguments
         ((int32_t *) cur_ptr)[0] = tasks[i]->arg_num;
+        cur_ptr += sizeof(int32_t);
+
+        ((int32_t *) cur_ptr)[0] = tasks[i]->is_replicated_task;
         cur_ptr += sizeof(int32_t);
 
         // 6. argument sizes
@@ -1044,6 +1058,9 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         task->arg_num = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
 
+        task->is_replicated_task = ((int32_t *) cur_ptr)[0];
+        cur_ptr += sizeof(int32_t);
+
         DBP("decode_send_buffer - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
 
         // we need a mapping to process local task entry points
@@ -1159,7 +1176,7 @@ int exit_condition_met(int from_taskwait, int print) {
 }
 
 void trigger_update_outstanding() {
-    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_stolen_tasks_outstanding.load();
+    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load();
 }
 
 void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx) {
@@ -1584,8 +1601,8 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     #endif
 
     _mtx_load_exchange.lock();
-    _num_stolen_tasks_outstanding--;
-    DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld\n", cur_task->task_id);
+    _num_remote_tasks_outstanding--;
+    DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 
@@ -1599,20 +1616,20 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
     MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel->MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
     DBP("action_handle_cancel_request - received cancel request for task_id %ld\n", task_id);
 
-    cham_migratable_task_t *task = _map_tag_to_stolen_task.find(task_id);            
+    cham_migratable_task_t *task = _map_tag_to_remote_task.find(task_id);
     if(task) {
         bool expected = false;
         bool desired = true;
 
-        if(task->sync_commthread_lock.compare_exchange_strong(expected, desired)) {
+        if(task->result_in_progress.compare_exchange_strong(expected, desired)) {
             DBP("receive_remote_tasks - cancelling task with task_id %ld\n", task_id);
             _stolen_remote_tasks.remove(task);
-            _map_tag_to_stolen_task.erase(task->task_id);
+            _map_tag_to_remote_task.erase(task->task_id);
             _map_overall_tasks.erase(task->task_id);
 
             // decrement load counter and ignore send back
             _mtx_load_exchange.lock();
-            _num_stolen_tasks_outstanding--;
+            _num_remote_tasks_outstanding--;
             DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld\n", task->task_id);
             trigger_update_outstanding();
             _mtx_load_exchange.unlock();
@@ -1638,14 +1655,14 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         bool desired = true;
         // DBP("action_handle_recvback_request - performing CAS for task with id %ld, flag %d\n", task_entry->task_id, task_entry->sync_commthread_lock.load());
         //assert(task_entry->sync_commthread_lock.load()==false);
-        bool exchanged = task_entry->sync_commthread_lock.compare_exchange_strong(expected, desired);
+        bool exchanged = task_entry->result_in_progress.compare_exchange_strong(expected, desired);
         //assert(exchanged);
         // DBP("action_handle_recvback_request - CAS: expected = %d, desired = %d, exchanged = %d\n", expected, desired, exchanged);
         //atomic CAS   
         if(exchanged) {
             DBP("action_handle_recvback_request - posting receive requests for task with id %ld\n", task_entry->task_id);
             //remove from replicated task queue -> corresponds to local task cancellation                   
-            _replicated_tasks.remove(task_entry);
+            _replicated_local_tasks.remove(task_entry);
 
             //we can safely receive back as usual
             
@@ -1919,6 +1936,19 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
     #endif
 }
 
+inline void action_task_replication() {
+	cham_migratable_task_t *cur_task = _replicated_tasks_to_transfer.pop_front();
+
+	if(cur_task) {
+      //if somebody is already computing, we don't need to replicate task
+      if(!cur_task->result_in_progress) {
+		for( auto rank : cur_task->replicating_ranks) {
+			offload_tasks_to_rank(&cur_task, 1, rank);
+		}
+      }
+	}
+}
+
 void* comm_thread_action(void* arg) {
     pin_thread_to_last_core(1);
     // trigger signal to tell that thread is running now
@@ -2049,6 +2079,9 @@ void* comm_thread_action(void* arg) {
         // ========== SEND / EXCHANGE
         // ==============================
 
+        // replicate tasks
+        action_task_replication();
+
         // avoid overwriting request and keep it up to date
         if(!request_gather_created) {
             action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
@@ -2126,7 +2159,7 @@ void* comm_thread_action(void* arg) {
         #endif /* OFFLOAD_ENABLED */
 
         // transfer back data of stolen tasks
-        cham_migratable_task_t* cur_task = _stolen_remote_tasks_send_back.pop_front();
+        cham_migratable_task_t* cur_task = _remote_tasks_send_back.pop_front();
         if(cur_task) {
             action_send_back_stolen_tasks(&event_send_back, cur_task, &request_manager_send);
         }

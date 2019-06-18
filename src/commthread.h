@@ -33,20 +33,24 @@ extern std::atomic<int32_t> _num_local_tasks_outstanding;
 
 // list with stolen task entries that should be executed
 extern thread_safe_task_list_t _stolen_remote_tasks;
-extern std::atomic<int32_t> _num_stolen_tasks_outstanding;
+extern std::atomic<int32_t> _num_remote_tasks_outstanding;
 
 // list of replicated (i.e. offloaded) tasks
 // they can be executed either on the remote rank or on the local rank
-extern thread_safe_task_list_t _replicated_tasks;
-extern std::atomic<int32_t> _num_replicated_tasks_outstanding;
+extern thread_safe_task_list_t _replicated_local_tasks;
+extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding;
+
+extern thread_safe_task_list_t _replicated_remote_tasks;
 
 // list with stolen task entries that need output data transfer
-extern thread_safe_task_list_t _stolen_remote_tasks_send_back;
+extern thread_safe_task_list_t _remote_tasks_send_back;
+// list with replicated task entries that need initial transfer
+extern thread_safe_task_list_t _replicated_tasks_to_transfer;
 
 // map that maps tag ids back to local tasks that have been offloaded and expect result data
 extern thread_safe_task_map_t _map_offloaded_tasks_with_outputs;
 // map that maps tag ids back to stolen tasks
-extern thread_safe_task_map_t _map_tag_to_stolen_task;
+extern thread_safe_task_map_t _map_tag_to_remote_task;
 // mapping of all active task ids and task
 extern thread_safe_task_map_t _map_overall_tasks;
 

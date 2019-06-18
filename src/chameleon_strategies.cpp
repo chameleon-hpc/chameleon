@@ -127,7 +127,7 @@ int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t n
     // simply return number of tasks in queue
     // int32_t num_ids = num_tasks_local + num_tasks_stolen;
     int32_t num_ids;
-    int tmp_num_stolen = _num_stolen_tasks_outstanding.load();
+    int tmp_num_stolen = _num_remote_tasks_outstanding.load();
     if (tmp_num_stolen > num_tasks_stolen)
         num_ids = num_tasks_local + tmp_num_stolen;
     else

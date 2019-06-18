@@ -587,9 +587,11 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
 
 static void receive_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
     DBP("receive_back_handler - receiving output data from rank %d for tag: %d\n", source, tag); 
-    cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find_and_erase(tag);
+    cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(tag);
     if(task_entry) {
-        //only if data is packed, we need to copy it out
+        if(task_entry->num_outstanding_recvbacks==0)
+        	_map_offloaded_tasks_with_outputs.erase(tag);
+    	//only if data is packed, we need to copy it out
         #if OFFLOAD_DATA_PACKING_TYPE == 0
         // copy results back to source pointers with memcpy
         char * cur_ptr = (char*) buffer;
@@ -808,6 +810,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
         cham_migratable_task_t *task = tasks[i_task];
         if(task->HasAtLeastOneOutput()) {
             _map_offloaded_tasks_with_outputs.insert(task->task_id, task);
+            task->num_outstanding_recvbacks++;
         }
     }
 #if CHAM_STATS_RECORD
@@ -1642,7 +1645,8 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
 }
 
 inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, RequestManager *request_manager_receive, int *event_recv_back) {
-    cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack->MPI_TAG);
+	DBP("action_handle_recvback_request - looking for task for tag %ld\n", cur_status_receiveBack->MPI_TAG);
+	cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack->MPI_TAG);
     if(task_entry) {
         #if CHAM_STATS_RECORD
         double cur_time;
@@ -1650,6 +1654,8 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         #endif
 
         DBP("action_handle_recvback_request - receiving back task with id %ld\n", task_entry->task_id);
+        task_entry->num_outstanding_recvbacks--;
+
         // check if we still need to receive the task data back or replicated task is executed locally already
         bool expected = false;
         bool desired = true;

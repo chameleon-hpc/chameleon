@@ -4,6 +4,7 @@
 #include "chameleon_common.h"
 #include <stdint.h>
 #include <limits.h>
+#include <assert.h>
 
 #pragma region Variables
 // atomic counter for task ids
@@ -54,7 +55,7 @@ cham_migratable_task_t::cham_migratable_task_t(
     ptrdiff_t *p_tgt_offsets, 
     int64_t *p_tgt_arg_types, 
     int32_t p_arg_num) 
-  : result_in_progress(false), is_replicated_task(0) {
+  : result_in_progress(false), is_replicated_task(0), num_outstanding_recvbacks(0) {
         
     // generate a unique task id
     TYPE_TASK_ID tmp_counter = ++_task_id_counter;
@@ -88,7 +89,7 @@ cham_migratable_task_t::cham_migratable_task_t(
     int32_t p_arg_num,
     int num_replicating_ranks,
     int *rep_ranks) 
-  : result_in_progress(false), is_replicated_task(0) {
+  : result_in_progress(false), is_replicated_task(0), num_outstanding_recvbacks(0) {
  
     //Todo: avoid code duplication and extract init() function
 
@@ -115,10 +116,13 @@ cham_migratable_task_t::cham_migratable_task_t(
         arg_types[i] = p_tgt_arg_types[i];
     }
 
-    if(num_replicating_ranks)
+    if(num_replicating_ranks) {
       is_replicated_task = 1;
+    }
 
     for(int i = 0; i < num_replicating_ranks; i++) {
+    	assert(rep_ranks>=0);
+    	assert(rep_ranks[i]<chameleon_comm_size);
         replicating_ranks.push_back( rep_ranks[i] );    
     }
 }

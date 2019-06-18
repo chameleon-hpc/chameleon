@@ -285,6 +285,8 @@ typedef struct cham_migratable_task_t {
     int32_t is_manual_task      = 0;
     int32_t is_replicated_task  = 1;
 
+    int32_t num_outstanding_recvbacks = 0;
+
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
     //int32_t source_mpi_tag      = 0;

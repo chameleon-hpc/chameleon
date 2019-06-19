@@ -34,7 +34,7 @@ debug: generic
 release: FLAGS_OPTIMIZATION=-g -O3
 release: generic
 
-trace: FLAGS_OPTIMIZATION=-g -O3 -DTRACE -I$(VT_ROOT)/include -trace
+trace: FLAGS_OPTIMIZATION=-g -O3 -DCHAM_DEBUG -DTRACE -I$(VT_ROOT)/include -trace
 trace: generic
 
 generic:

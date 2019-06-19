@@ -75,6 +75,8 @@ thread_safe_task_map_t _map_tag_to_remote_task;
 // mapping of all active task ids and task
 thread_safe_task_map_t _map_overall_tasks;
 
+std::unordered_set<TYPE_TASK_ID> _cancelled_task_ids;
+
 // ====== Info about outstanding jobs (local & stolen) ======
 // extern std::mutex _mtx_outstanding_jobs;
 std::vector<int32_t> _outstanding_jobs_ranks;
@@ -434,6 +436,22 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
     // add tasks to stolen list
     for (int i_task = 0; i_task < num_tasks; i_task++) {
         cham_migratable_task_t *task = tasks[i_task];
+        if(_cancelled_task_ids.find(task->task_id)!=_cancelled_task_ids.end()) {
+        	_cancelled_task_ids.erase(task->task_id);
+        	free_migratable_task(task, 1);
+            _mtx_load_exchange.lock();
+            _num_remote_tasks_outstanding --;
+            trigger_update_outstanding();
+            _mtx_load_exchange.unlock();
+
+            DBP("receive_handler_data - conducted late cancel for task id: %d\n", task->task_id);
+
+            #if CHAM_STATS_RECORD
+            _num_tasks_canceled++;
+            #endif
+        	continue;
+        }
+
         if(task->is_replicated_task)
            _replicated_remote_tasks.push_back(task);
         else
@@ -591,6 +609,16 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
     if(task_entry) {
         if(task_entry->num_outstanding_recvbacks==0)
         	_map_offloaded_tasks_with_outputs.erase(tag);
+
+        #if CHAM_REPLICATION_MODE==2
+        if(task_entry->is_replicated_task) {
+        	for(auto rank : task_entry->replicating_ranks) {
+        		if(rank!=source)
+        			cancel_offloaded_task_on_rank(task_entry, rank);
+        	}
+        }
+        #endif
+
     	//only if data is packed, we need to copy it out
         #if OFFLOAD_DATA_PACKING_TYPE == 0
         // copy results back to source pointers with memcpy
@@ -622,7 +650,8 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 
-        free_migratable_task(task_entry, false);
+        if(task_entry->num_outstanding_recvbacks==0)
+          free_migratable_task(task_entry, false);
     }
 }
 
@@ -637,16 +666,36 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
 
 #pragma region Offloading / Packing
 void cancel_offloaded_task(cham_migratable_task_t *task) {
-    DBP("cancel_offloaded_task - canceling offloaded task, task_id: %ld, target_rank: %d\n", task->task_id, task->target_mpi_rank);
-    MPI_Request request;
+    DBP("cancel_offloaded_task - canceling offloaded task, task_id: %ld on remote ranks\n", task->task_id);
+
+    // we have sent the task already
+    if(task->num_outstanding_recvbacks) {
+      if(task->target_mpi_rank>=0) {
+        cancel_offloaded_task_on_rank(task, task->target_mpi_rank);
+      }
+      for( auto rank : task->replicating_ranks ) {
+        cancel_offloaded_task_on_rank(task, rank);
+      }
+    }
+
+}
+
+void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
+    assert(rank>=0);
+    assert(rank<chameleon_comm_size);
+    
+    DBP("cancel_offloaded_task - canceling offloaded task, task_id: %ld on remote rank: %d\n", task->task_id, rank);
+
+    MPI_Request request; 
     // TODO: depends on int32 or int64
-    MPI_Isend(&task->task_id, 1, MPI_INTEGER, task->target_mpi_rank, 0, chameleon_comm_cancel, &request);
-    request_manager_cancel.submitRequests( 0, task->target_mpi_rank, 1, 
+    MPI_Isend(&task->task_id, 1, MPI_INTEGER, rank, 0, chameleon_comm_cancel, &request);
+    request_manager_cancel.submitRequests( 0, rank, 1,
                                            &request,
                                            MPI_BLOCKING, 
                                            handler_noop,
                                            send,   // TODO: special request
                                            nullptr);
+
 }
 
 int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank) {
@@ -699,6 +748,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
 
     // store target rank in task
     for(int i = 0; i < num_tasks; i++) {
+      if(!tasks[i]->is_replicated_task)
         tasks[i]->target_mpi_rank = target_rank;
     }
 
@@ -1615,18 +1665,22 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
 }
 
 inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
+    DBP("action_handle_cancel_request - received cancel request\n");
+
     TYPE_TASK_ID task_id = -1;
     MPI_Recv(&task_id, 1, MPI_INTEGER, cur_status_cancel->MPI_SOURCE, 0, chameleon_comm_cancel, MPI_STATUS_IGNORE);
-    DBP("action_handle_cancel_request - received cancel request for task_id %ld\n", task_id);
 
-    cham_migratable_task_t *task = _map_tag_to_remote_task.find(task_id);
+    cham_migratable_task_t *task = _map_tag_to_remote_task.find_and_erase(task_id);
     if(task) {
-        bool expected = false;
-        bool desired = true;
+       // bool expected = false;
+       // bool desired = true;
 
-        if(task->result_in_progress.compare_exchange_strong(expected, desired)) {
-            DBP("receive_remote_tasks - cancelling task with task_id %ld\n", task_id);
-            _stolen_remote_tasks.remove(task);
+       // if(task->result_in_progress.compare_exchange_strong(expected, desired)) {
+            DBP("action_handle_cancel_request - cancelling task with task_id %ld\n", task_id);
+            if(task->is_replicated_task)
+               _replicated_remote_tasks.remove(task);
+            if(task->target_mpi_rank>=0)
+              _stolen_remote_tasks.remove(task); //this is an offloaded task which is offloaded by migration decisions based on the load information
             _map_tag_to_remote_task.erase(task->task_id);
             _map_overall_tasks.erase(task->task_id);
 
@@ -1640,7 +1694,11 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
             #if CHAM_STATS_RECORD
             _num_tasks_canceled++;
             #endif       
-        } else {}//do nothing -> task either has been executed or is currently executed, process_remote_task will take care of cleaning up
+        //} else {}//do nothing -> task either has been executed or is currently executed, process_remote_task/process_replicated_remote_task will take care of cleaning up
+    }
+    else {
+        DBP("action_handle_cancel_request - received cancel request for task_id %ld but could not find task\n", task_id);
+        _cancelled_task_ids.insert(task_id);
     }
 }
 
@@ -1943,7 +2001,9 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
 }
 
 inline void action_task_replication() {
-	cham_migratable_task_t *cur_task = _replicated_tasks_to_transfer.pop_front();
+      //DBP("action_task_replication - trying to transfer replicated task, size: %d\n", _replicated_tasks_to_transfer.size());
+      
+      cham_migratable_task_t *cur_task = _replicated_tasks_to_transfer.pop_front();
 
 	if(cur_task) {
       //if somebody is already computing, we don't need to replicate task
@@ -2202,11 +2262,13 @@ void* comm_thread_action(void* arg) {
         if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
           _num_slow_communication_operations++;
         #endif
-        // MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
-
-        // if( flag_open_request_cancel ) {
-        //     action_handle_cancel_request(&cur_status_cancel);
-        // }
+        
+        #if CHAM_REPLICATION_MODE==2
+        MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
+        if( flag_open_request_cancel ) {
+          action_handle_cancel_request(&cur_status_cancel);
+        }
+        #endif
 
         if ( flag_open_request_receive ) {
 

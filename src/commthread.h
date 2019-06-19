@@ -3,6 +3,7 @@
 #define _COMMTHREAD_H_
 
 #include <mpi.h>
+#include <unordered_set>
 
 #include "chameleon.h"
 #include "chameleon_common.h"
@@ -54,6 +55,8 @@ extern thread_safe_task_map_t _map_tag_to_remote_task;
 // mapping of all active task ids and task
 extern thread_safe_task_map_t _map_overall_tasks;
 
+extern std::unordered_set<TYPE_TASK_ID> _cancelled_task_ids;
+
 // for now use a single mutex for box info
 extern std::mutex _mtx_load_exchange;
 // ====== Info about outstanding jobs (local & stolen & offloaded (communication)) ======
@@ -84,6 +87,8 @@ void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx);
 void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int idx);
 
 void cancel_offloaded_task(cham_migratable_task_t *task);
+
+void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank);
 
 void* comm_thread_action(void *arg);
 

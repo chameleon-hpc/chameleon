@@ -306,7 +306,7 @@ typedef struct cham_migratable_task_t {
 
     // Constructor 1: Called when creating new task during decoding
     // here we dont need to give a task id in that case because it should be transfered from source
-    cham_migratable_task_t() { }
+    cham_migratable_task_t() : result_in_progress(false) { }
 
     // Constructor 2: Called from libomptarget plugin to create a new task
     cham_migratable_task_t(

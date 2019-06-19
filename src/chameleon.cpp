@@ -1261,6 +1261,12 @@ inline int32_t process_replicated_remote_task() {
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
+    //synchronization with commthread which may concurrently want to cancel task
+    replicated_task = _map_tag_to_remote_task.find_and_erase(replicated_task->task_id);
+
+    //was already canceled
+    if(!replicated_task)
+      return CHAM_REPLICATED_TASK_SUCCESS;
 
 #ifdef TRACE
         static int event_process_replicated_remote = -1;
@@ -1274,10 +1280,10 @@ inline int32_t process_replicated_remote_task() {
         double cur_time = omp_get_wtime();
 #endif 
 
-#if CHAM_REPLICATION_MODE==2
+/*#if CHAM_REPLICATION_MODE==2
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
-#endif
+#endif*/
 
         int32_t res = execute_target_task(replicated_task);
         if(res != CHAM_SUCCESS)
@@ -1292,7 +1298,7 @@ inline int32_t process_replicated_remote_task() {
         _num_executed_tasks_replicated++;
 #endif
 
-        _map_tag_to_remote_task.erase(replicated_task->task_id);
+        //_map_tag_to_remote_task.erase(replicated_task->task_id);
         _map_overall_tasks.erase(replicated_task->task_id);
 
         if(replicated_task->HasAtLeastOneOutput()) {

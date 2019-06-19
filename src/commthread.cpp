@@ -438,6 +438,8 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         _map_tag_to_stolen_task.insert(task->task_id, task);
         _map_overall_tasks.insert(task->task_id, task);
     }
+    // free memory again here
+    free(tasks);
 }
 
 static void receive_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -641,6 +643,9 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
 
         free_migratable_task(task_entry, false);
     }
+
+    if(tasks)
+        free(tasks);
 }
 
 static void receive_back_trash_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -1584,7 +1589,18 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
-    request_manager_send->submitRequests( cur_task->task_id, cur_task->source_mpi_rank, 1, &request, tmp_size_buff, 0, send_back_handler, sendBack, buff, tasks, 1);
+    request_manager_send->submitRequests( 
+        cur_task->task_id, 
+        cur_task->source_mpi_rank, 
+        1, 
+        &request, 
+        tmp_size_buff, 
+        0, 
+        send_back_handler, 
+        sendBack, 
+        buff, 
+        tasks, 
+        1);
     
     #elif OFFLOAD_DATA_PACKING_TYPE > 0
     #if CHAM_STATS_RECORD
@@ -1657,7 +1673,18 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
-    request_manager_send->submitRequests( cur_task->task_id, cur_task->source_mpi_rank, num_requests, &requests[0], num_bytes_sent, 0, send_back_handler, sendBack, nullptr, tasks, 1);
+    request_manager_send->submitRequests( 
+        cur_task->task_id, 
+        cur_task->source_mpi_rank, 
+        num_requests, 
+        &requests[0], 
+        num_bytes_sent, 
+        0, 
+        send_back_handler, 
+        sendBack, 
+        nullptr, 
+        tasks, 
+        1);
     delete[] requests;
     #endif /* OFFLOAD_DATA_PACKING_TYPE */
 
@@ -1767,13 +1794,17 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #if MPI_BLOCKING
             receive_back_handler(buffer, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
             #else
+            cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
+            p_tasks[0] = task_entry;
             request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                     &request,
                                                     recv_buff_size,
                                                     0,
                                                     receive_back_handler,
                                                     recvBack,
-                                                    buffer);
+                                                    buffer,
+                                                    p_tasks,
+                                                    1);
             #endif
 
             #ifdef TRACE
@@ -1819,13 +1850,17 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #if MPI_BLOCKING
             receive_back_handler(nullptr, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
             #else
+            cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
+            p_tasks[0] = task_entry;
             request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, j, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
                                                 receive_back_handler,
                                                 recvBack,
-                                                nullptr);
+                                                nullptr,
+                                                p_tasks,
+                                                1);
             #endif
             delete[] requests;
             
@@ -1904,14 +1939,18 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #if MPI_BLOCKING
             receive_back_handler(nullptr, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
             #else
+            cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
+            p_tasks[0] = task_entry;
             request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
                                                 receive_back_handler,
                                                 recvBack,
-                                                nullptr);
-            #endif    
+                                                nullptr,
+                                                p_tasks,
+                                                1);
+            #endif
             delete[] requests;
 
             #ifdef TRACE 

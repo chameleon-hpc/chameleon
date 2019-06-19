@@ -31,6 +31,7 @@ class RequestManager {
     RequestManager();
     void submitRequests( int tag, int rank, int n_requests, 
                          MPI_Request *requests,
+                         int sum_bytes,
                          bool block,
                          std::function<void(void*, int, int, cham_migratable_task_t**, int)> handler,
                          RequestType type,
@@ -49,6 +50,7 @@ class RequestManager {
         int tag;
         RequestType type;
         double start_time;
+        int sum_bytes;
         cham_migratable_task_t **tasks;
         int num_tasks;
     };

@@ -15,9 +15,11 @@ RequestManager::RequestManager()
   std::fill(&_num_completed_request_groups[0], &_num_completed_request_groups[5], 0);
 }
 
-void RequestManager::submitRequests( int tag, int rank, int n_requests, 
+void RequestManager::submitRequests( int tag, int rank, 
+                                int n_requests, 
                                 MPI_Request *requests,
-                                bool block, 
+                                int sum_bytes,
+                                bool block,
                                 std::function<void(void*, int, int, cham_migratable_task_t**, int)> handler,
                                 RequestType type,
                                 void* buffer,
@@ -49,42 +51,48 @@ void RequestManager::submitRequests( int tag, int rank, int n_requests,
 #if CHAM_STATS_RECORD   
       double elapsed = omp_get_wtime()-startStamp;
       addTimingToStatistics(elapsed, type);
+      if(type == send || type == sendBack) {
+          add_throughput_send(elapsed, sum_bytes);
+      } else {
+          add_throughput_recv(elapsed, sum_bytes);
+      }
 #endif 
       _num_completed_requests[type]+= n_requests;
       _num_completed_request_groups[type]+=1;
+      
       handler(buffer, tag, rank, tasks, num_tasks);
       return;
     }
 
-  if(block) {
-#if CHAM_STATS_RECORD
-     double time = -omp_get_wtime();
-#endif
-     MPI_Status sta[n_requests];
-     int ierr= MPI_Waitall(n_requests, &requests[0], sta);
-     _num_completed_requests[type]+= n_requests;
-     _num_completed_request_groups[type]+=1; 
-     if(ierr!=MPI_SUCCESS) {
-        printf("MPI error: %d\n", ierr);
-        for(int i = 0; i < n_requests; i++) {
-            char err_msg[MPI_MAX_ERROR_STRING];
-            int err_len;
-            MPI_Error_string(sta[i].MPI_ERROR, err_msg, &err_len);
-            fprintf(stderr, "Arg[%d] Err[%d]: %s\n", i, sta[i].MPI_ERROR, err_msg);
-        }
-     }
-     assert(ierr==MPI_SUCCESS);
-#if CHAM_STATS_RECORD
-     time += omp_get_wtime();
-     addTimingToStatistics(time, type); 
-#endif
-     handler(buffer, tag, rank, tasks, num_tasks);
-     //for(int i=0; i<buffers_to_delete.size(); i++) delete[] buffers_to_delete[i];
-     return;
-  }
+//   if(block) {
+// #if CHAM_STATS_RECORD
+//      double time = -omp_get_wtime();
+// #endif
+//      MPI_Status sta[n_requests];
+//      int ierr= MPI_Waitall(n_requests, &requests[0], sta);
+//      _num_completed_requests[type]+= n_requests;
+//      _num_completed_request_groups[type]+=1; 
+//      if(ierr!=MPI_SUCCESS) {
+//         printf("MPI error: %d\n", ierr);
+//         for(int i = 0; i < n_requests; i++) {
+//             char err_msg[MPI_MAX_ERROR_STRING];
+//             int err_len;
+//             MPI_Error_string(sta[i].MPI_ERROR, err_msg, &err_len);
+//             fprintf(stderr, "Arg[%d] Err[%d]: %s\n", i, sta[i].MPI_ERROR, err_msg);
+//         }
+//      }
+//      assert(ierr==MPI_SUCCESS);
+// #if CHAM_STATS_RECORD
+//      time += omp_get_wtime();
+//      addTimingToStatistics(time, type); 
+// #endif
+//      handler(buffer, tag, rank, tasks, num_tasks);
+//      //for(int i=0; i<buffers_to_delete.size(); i++) delete[] buffers_to_delete[i];
+//      return;
+//   }
  
   int gid=_groupId++;
-  RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp, tasks, num_tasks};
+  RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp, sum_bytes, tasks, num_tasks};
   _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
   _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));
 
@@ -172,6 +180,11 @@ void RequestManager::progressRequests() {
 #if CHAM_STATS_RECORD
        double startStamp = request_group_data.start_time;
        addTimingToStatistics(finishedStamp-startStamp, type);
+       if(type == send || type == sendBack) {
+            add_throughput_send(finishedStamp-startStamp, request_group_data.sum_bytes);
+       } else {
+           add_throughput_recv(finishedStamp-startStamp, request_group_data.sum_bytes);
+       }
 #endif               
        handler(buffer, tag, rank, tasks, num_tasks);
        _map_id_to_request_group_data.erase(gid);

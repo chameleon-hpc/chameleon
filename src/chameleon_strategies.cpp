@@ -22,7 +22,7 @@ std::vector<size_t> sort_indexes(const std::vector<T> &v) {
 #pragma endregion Local Helpers
 
 #pragma region Strategies
-void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t num_tasks_stolen) {
+void compute_num_tasks_to_offload( std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t num_tasks_stolen) {
 #if OFFLOADING_STRATEGY_AGGRESSIVE
     int input_r = 0, input_l = 0;
     int output_r = 0, output_l = 0;
@@ -121,6 +121,28 @@ void computeNumTasksToOffload( std::vector<int32_t>& tasksToOffloadPerRank, std:
 #endif
     }
 #endif
+}
+
+// implements default replication strategy where neighbouring ranks logically have some "overlapping tasks"
+void compute_num_tasks_to_replicate( std::vector<cham_replication_info_t>& replication_infos, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local) {
+    double alpha = 0.1;
+	int myLeft = chameleon_comm_rank-1;
+	int myRight = chameleon_comm_rank+1;
+
+	if(myLeft>0) {
+	    int num_tasks = num_tasks_local*alpha;
+	    int *replicating_ranks = (int*) malloc(sizeof(int)*1);
+	    replicating_ranks[0] = myLeft;
+		cham_replication_info_t info = cham_replication_info_create(num_tasks, 1, replicating_ranks);
+		replication_infos.push_back(info);
+	}
+	if(myRight<chameleon_comm_size) {
+		int num_tasks = num_tasks_local*alpha;
+		int *replicating_ranks = (int*) malloc(sizeof(int)*1);
+		replicating_ranks[0] = myRight;
+		cham_replication_info_t info = cham_replication_info_create(num_tasks, 1, replicating_ranks);
+		replication_infos.push_back(info);
+	}
 }
 
 int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen) {

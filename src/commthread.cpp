@@ -1397,12 +1397,12 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             } else {
                 strategy_type = 0;
                 num_tasks_local     = _local_tasks.dup_size();
-                computeNumTasksToOffload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
+                compute_num_tasks_to_offload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             }
             #else
             strategy_type = 0;
             num_tasks_local     = _local_tasks.dup_size();
-            computeNumTasksToOffload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
+            compute_num_tasks_to_offload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             #endif
 
             #if CHAM_STATS_RECORD
@@ -2001,6 +2001,31 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
 }
 
 inline void action_task_replication() {
+	DBP("action_task_replication - selecting tasks to replicate\n");
+
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION ) {
+
+    	int num_tasks_local = _local_tasks.dup_size();
+        std::vector<cham_replication_info_t> replication_infos;
+        compute_num_tasks_to_replicate(replication_infos, _load_info_ranks, num_tasks_local);
+
+        for( auto& info : replication_infos ) {
+           for(int i=0; i<info.num_tasks; i++) {
+        	   cham_migratable_task_t *task = _local_tasks.pop_front();
+        	   if(task) {
+        		   task->is_replicated_task = 1;
+        		   task->replicating_ranks = std::vector<int>(&info.replicating_ranks[0], &info.replicating_ranks[info.num_replicating_ranks]);
+        		   _replicated_local_tasks.push_back(task);
+        		   _replicated_tasks_to_transfer.push_back(task);
+        	   }
+           }
+           free_replication_info(&info);
+        }
+
+    }
+}
+
+inline void action_task_replication_send() {
       //DBP("action_task_replication - trying to transfer replicated task, size: %d\n", _replicated_tasks_to_transfer.size());
       
       cham_migratable_task_t *cur_task = _replicated_tasks_to_transfer.pop_front();
@@ -2065,6 +2090,7 @@ void* comm_thread_action(void* arg) {
     int err;
     int flag_set                    = 0;
     int num_threads_in_tw           = _num_threads_involved_in_taskwait.load();
+    bool is_first_load_exchange     = true;
     double cur_time;
     double time_last_load_exchange  = 0;
     double time_gather_posted       = 0;
@@ -2134,6 +2160,7 @@ void* comm_thread_action(void* arg) {
             #endif
             flag_set = 0;
             tag_counter_send_tasks = 0;
+            is_first_load_exchange = true;
             // reset last received ids
             for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
                 _tracked_last_req_recv[tmp_i] = -1;
@@ -2145,8 +2172,10 @@ void* comm_thread_action(void* arg) {
         // ========== SEND / EXCHANGE
         // ==============================
 
+        #if CHAM_REPLICATION_MODE>0
         // replicate tasks
-        action_task_replication();
+        action_task_replication_send();
+        #endif
 
         // avoid overwriting request and keep it up to date
         if(!request_gather_created) {
@@ -2220,9 +2249,19 @@ void* comm_thread_action(void* arg) {
             #endif /* CHAM_STATS_RECORD */
         }
 
-        #if OFFLOAD_ENABLED
-        action_task_migration(&event_offload_decision, &offload_triggered, &num_threads_in_tw, tasksToOffload);
-        #endif /* OFFLOAD_ENABLED */
+        #if CHAM_REPLICATION_MODE>0
+        if(is_first_load_exchange) {
+            action_task_replication();
+            is_first_load_exchange = false;
+        }
+        else{
+        #endif
+            #if OFFLOAD_ENABLED
+            action_task_migration(&event_offload_decision, &offload_triggered, &num_threads_in_tw, tasksToOffload);
+            #endif /* OFFLOAD_ENABLED */
+        #if CHAM_REPLICATION_MODE>0
+        }
+        #endif
 
         // transfer back data of stolen tasks
         cham_migratable_task_t* cur_task = _remote_tasks_send_back.pop_front();

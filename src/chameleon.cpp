@@ -848,12 +848,16 @@ int32_t chameleon_add_task(cham_migratable_task_t *task, bool replicated) {
 #endif
 
     // add to queue
+#if CHAM_REPLICATION_MODE>0
     if(!replicated) 
+#endif
       _local_tasks.push_back(task);
+#if CHAM_REPLICATION_MODE>0
     else {
       _replicated_local_tasks.push_back(task);
       _replicated_tasks_to_transfer.push_back(task);
     }
+#endif
     // set id of last task added
     __last_task_id_added = task->task_id;
 

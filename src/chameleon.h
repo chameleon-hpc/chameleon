@@ -98,6 +98,24 @@ static chameleon_map_data_entry_t chameleon_map_data_entry_create(void* arg_ptr,
     return entry;
 }
 
+typedef struct cham_replication_info_t {
+	int num_tasks, num_replicating_ranks;
+	int *replicating_ranks;
+} cham_replication_info_t;
+
+static cham_replication_info_t cham_replication_info_create(int num_tasks, int num_replicating_ranks, int *replicating_ranks) {
+	cham_replication_info_t info;
+	info.num_tasks = num_tasks;
+	info.num_replicating_ranks = num_replicating_ranks;
+	info.replicating_ranks = replicating_ranks;
+	return info;
+}
+
+static void free_replication_info(cham_replication_info_t *info) {
+	free(info->replicating_ranks);
+	info = nullptr;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -69,9 +69,9 @@
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
-#define CHAM_REPLICATION_MODE 0 //no replication
+//#define CHAM_REPLICATION_MODE 0 //no replication
 //#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
-//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
+#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 #endif
 
 //Specify whether tasks should be offloaded aggressively after one performance update
@@ -283,7 +283,7 @@ typedef struct cham_migratable_task_t {
 
     int32_t is_remote_task      = 0;
     int32_t is_manual_task      = 0;
-    int32_t is_replicated_task  = 1;
+    int32_t is_replicated_task  = 0;
 
     int32_t num_outstanding_recvbacks = 0;
 

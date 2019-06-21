@@ -83,7 +83,7 @@ std::vector<int32_t> _outstanding_jobs_ranks;
 std::atomic<int32_t> _outstanding_jobs_local(0);
 std::atomic<int32_t> _outstanding_jobs_sum(0);
 // counter for current number of offloaded tasks
-std::atomic<int> _num_offloaded_tasks_outstanding(0);
+//std::atomic<int> _num_offloaded_tasks_outstanding(0);
 
 // ====== Info about real load that is open or is beeing processed ======
 std::vector<int32_t> _load_info_ranks;
@@ -637,7 +637,7 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
        }
        free(buffer);   
        #endif
-        _num_offloaded_tasks_outstanding--;
+        //_num_offloaded_tasks_outstanding--;
 
         // mark locally created task finished
         _unfinished_locally_created_tasks.remove(task_entry->task_id);
@@ -1268,6 +1268,10 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 inline void action_create_gather_request(int *num_threads_in_tw, int *transported_load_values, int* buffer_load_values, MPI_Request *request_gather_out) {
     int32_t local_load_representation;
     int32_t num_tasks_local = _local_tasks.dup_size();
+    //int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
+    //int32_t num_tasks_replicated_remote = _replicated_remote_tasks.dup_size();
+    //int32_t num_stolen_tasks_outstanding = _num_
+
     TYPE_TASK_ID* ids_local = nullptr;
     int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
     TYPE_TASK_ID* ids_stolen = nullptr;

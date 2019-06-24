@@ -74,6 +74,16 @@ extern std::atomic<int>     _time_taskwait_count;
 extern std::atomic<double>  _time_commthread_active_sum;
 extern std::atomic<int>     _time_commthread_active_count;
 
+extern std::atomic<double>  _throughput_send_min;
+extern std::atomic<double>  _throughput_send_max;
+extern std::atomic<double>  _throughput_send_avg;
+extern std::atomic<int>     _throughput_send_num;
+
+extern std::atomic<double>  _throughput_recv_min;
+extern std::atomic<double>  _throughput_recv_max;
+extern std::atomic<double>  _throughput_recv_avg;
+extern std::atomic<int>     _throughput_recv_num;
+
 #if CHAMELEON_TOOL_SUPPORT
 extern std::atomic<double>  _time_tool_get_thread_data_sum;
 extern std::atomic<int>     _time_tool_get_thread_data_count;
@@ -86,6 +96,8 @@ extern "C" {
 void cham_stats_reset_for_sync_cycle();
 void cham_stats_print_stats();
 void atomic_add_dbl(std::atomic<double> &f, double d);
+void add_throughput_send(double elapsed_sec, int sum_byes);
+void add_throughput_recv(double elapsed_sec, int sum_byes);
 
 #ifdef __cplusplus
 }

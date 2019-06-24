@@ -751,13 +751,13 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     DBP("offload_tasks_to_rank (enter) - num_tasks: %d, target_rank: %d, task_ids: %s\n", num_tasks, target_rank, str_task_ids.c_str());
     #endif
     
-    #if CHAM_REPLICATION_MODE > 0
+    /*#if CHAM_REPLICATION_MODE > 0
     _num_replicated_local_tasks_outstanding += num_tasks;
     for(int i = 0; i < num_tasks; i++) {
         if(!tasks[i]->is_replicated_task)   
           _replicated_local_tasks.push_back(tasks[i]);
     }
-    #endif /* CHAM_REPLICATION_MODE */
+    #endif */ /* CHAM_REPLICATION_MODE */
     
     offload_action(tasks, num_tasks, target_rank);
     //_num_offloaded_tasks_outstanding += num_tasks;
@@ -1352,28 +1352,42 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
 inline void action_create_gather_request(int *num_threads_in_tw, int *transported_load_values, int* buffer_load_values, MPI_Request *request_gather_out) {
     int32_t local_load_representation;
     int32_t num_tasks_local = _local_tasks.dup_size();
-    //int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
-    //int32_t num_tasks_replicated_remote = _replicated_remote_tasks.dup_size();
-    //int32_t num_stolen_tasks_outstanding = _num_
+    int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
+    int32_t num_tasks_replicated_remote = _replicated_remote_tasks.dup_size();
 
     TYPE_TASK_ID* ids_local = nullptr;
     int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
     TYPE_TASK_ID* ids_stolen = nullptr;
+    TYPE_TASK_ID* ids_local_rep = nullptr;
+    TYPE_TASK_ID* ids_stolen_rep = nullptr;
     
     #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_determine_local_load) {
         // only get task ids when tool is used since default mode does not require that information
         ids_local   = _local_tasks.get_task_ids(&num_tasks_local);
         ids_stolen  = _stolen_remote_tasks.get_task_ids(&num_tasks_stolen);
-        local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
+        ids_local_rep  = _replicated_local_tasks.get_task_ids(&num_tasks_replicated_local);
+        ids_stolen_rep  = _replicated_remote_tasks.get_task_ids(&num_tasks_replicated_remote);
+        local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_tasks_local,
+        		                                                                       ids_local_rep, num_tasks_replicated_local,
+        		                                                                       ids_stolen, num_tasks_stolen,
+																					   ids_stolen_rep, num_tasks_replicated_remote);
         // clean up again
         free(ids_local);
         free(ids_stolen);
+        free(ids_local_rep);
+        free(ids_stolen_rep);
     } else {
-        local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
+        local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local,
+        																  ids_local_rep, num_tasks_replicated_local,
+        																  ids_stolen, num_tasks_stolen,
+																		  ids_stolen_rep, num_tasks_replicated_remote);
     }
     #else 
-    local_load_representation = getDefaultLoadInformationForRank(ids_local, num_tasks_local, ids_stolen, num_tasks_stolen);
+    local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local,
+            																  ids_local_rep, num_tasks_replicated_local,
+            																  ids_stolen, num_tasks_stolen,
+    																		  ids_stolen_rep, num_tasks_replicated_remote);
     #endif
 
     int tmp_val = _num_threads_idle.load() < *num_threads_in_tw ? 1 : 0;
@@ -1838,8 +1852,9 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         //atomic CAS   
         if(exchanged) {
             DBP("action_handle_recvback_request - posting receive requests for task with id %ld\n", task_entry->task_id);
-            //remove from replicated task queue -> corresponds to local task cancellation                   
-            _replicated_local_tasks.remove(task_entry);
+            //remove from replicated task queue -> corresponds to local task cancellation
+            if(task_entry->is_replicated_task)
+              _replicated_local_tasks.remove(task_entry);
 
             //we can safely receive back as usual
             

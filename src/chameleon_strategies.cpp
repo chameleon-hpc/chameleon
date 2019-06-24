@@ -145,15 +145,22 @@ void compute_num_tasks_to_replicate( std::vector<cham_replication_info_t>& repli
 	}
 }
 
-int32_t getDefaultLoadInformationForRank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen) {
+int32_t get_default_load_information_for_rank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* local_rep_task_ids, int32_t num_tasks_local_rep, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen, TYPE_TASK_ID* stolen_task_ids_rep, int32_t num_tasks_stolen_rep) {
     // simply return number of tasks in queue
     // int32_t num_ids = num_tasks_local + num_tasks_stolen;
     int32_t num_ids;
-    int tmp_num_stolen = _num_remote_tasks_outstanding.load();
-    if (tmp_num_stolen > num_tasks_stolen)
-        num_ids = num_tasks_local + tmp_num_stolen;
-    else
-        num_ids = num_tasks_local + num_tasks_stolen;
+
+    num_ids = num_tasks_local + num_tasks_local_rep;
+#if CHAM_REPLICATION_MODE==1
+    num_ids += std::max<int32_t>(_num_remote_tasks_outstanding.load(), num_tasks_stolen + num_tasks_stolen_rep);
+#else
+    num_ids += num_tasks_stolen;
+#endif
+//    int tmp_num_stolen = _num_remote_tasks_outstanding.load();
+//    if (tmp_num_stolen > num_tasks_stolen)
+//        num_ids = num_tasks_local + tmp_num_stolen;
+//    else
+//        num_ids = num_tasks_local + num_tasks_stolen;
     return num_ids;
 }
 #pragma endregion Strategies

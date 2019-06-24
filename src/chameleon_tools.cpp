@@ -158,6 +158,9 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callback_types_t which, ch
         case cham_t_callback_select_tasks_for_migration:
             cham_t_status.cham_t_callback_select_tasks_for_migration = (cham_t_callback_select_tasks_for_migration_t)callback;
             break;
+        case cham_t_callback_select_num_tasks_to_replicate:
+            cham_t_status.cham_t_callback_select_num_tasks_to_replicate = (cham_t_callback_select_num_tasks_to_replicate_t)callback;
+            break;
         default:
             fprintf(stderr, "ERROR: Unable to set callback for specifier %d\n", which);
             return cham_t_set_error;

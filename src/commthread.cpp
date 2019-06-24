@@ -2222,10 +2222,29 @@ inline void action_task_replication() {
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION ) {
 
     	int num_tasks_local = _local_tasks.dup_size();
-        std::vector<cham_replication_info_t> replication_infos;
-        compute_num_tasks_to_replicate(replication_infos, _load_info_ranks, num_tasks_local);
 
-        for( auto& info : replication_infos ) {
+        cham_replication_info_t* replication_infos = nullptr;
+        std::vector<cham_replication_info_t> replication_infos_data;
+        int num_rep_infos = 0;
+#if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
+        if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_replicate) {
+               replication_infos = cham_t_status.cham_t_callback_select_num_tasks_to_replicate(
+            		             &(_load_info_ranks[0]), num_tasks_local, &num_rep_infos);
+
+        } else {
+        	   compute_num_tasks_to_replicate(replication_infos_data, _load_info_ranks, num_tasks_local);
+        	   replication_infos = &(replication_infos_data[0]);
+        	   num_rep_infos = replication_infos_data.size();
+        }
+#else
+        compute_num_tasks_to_replicate(replication_infos_data, _load_info_ranks, num_tasks_local);
+        replication_infos = &(replication_infos_data[0]);
+ 	    num_rep_infos = replication_infos_data.size();
+#endif
+
+
+        for( int r=0; r<num_rep_infos; r++) {
+           cham_replication_info_t info = replication_infos[r];
            for(int i=0; i<info.num_tasks; i++) {
         	   cham_migratable_task_t *task = _local_tasks.pop_front();
         	   if(task) {

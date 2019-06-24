@@ -17,6 +17,7 @@ typedef struct cham_t_callbacks_active_s {
     cham_t_callback_sync_region_t                   cham_t_callback_sync_region                 = nullptr;
     cham_t_callback_determine_local_load_t          cham_t_callback_determine_local_load        = nullptr;
     cham_t_callback_select_num_tasks_to_offload_t   cham_t_callback_select_num_tasks_to_offload = nullptr;
+    cham_t_callback_select_num_tasks_to_replicate_t cham_t_callback_select_num_tasks_to_replicate = nullptr;
     cham_t_callback_select_tasks_for_migration_t    cham_t_callback_select_tasks_for_migration  = nullptr;
 
 } cham_t_callbacks_active_t;

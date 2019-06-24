@@ -113,7 +113,7 @@ static cham_replication_info_t cham_replication_info_create(int num_tasks, int n
 
 static void free_replication_info(cham_replication_info_t *info) {
 	free(info->replicating_ranks);
-	info = nullptr;
+	info = NULL;
 }
 
 #ifdef __cplusplus
@@ -194,7 +194,7 @@ void chameleon_free_data(void *tgt_ptr);
 
 void chameleon_incr_mem_alloc(int64_t size);
 
-int32_t chameleon_add_task(cham_migratable_task_t *task, bool replicated);
+int32_t chameleon_add_task(cham_migratable_task_t *task, int is_replicated);
 
 TYPE_TASK_ID chameleon_get_last_local_task_id_added();
 

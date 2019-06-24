@@ -826,7 +826,7 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 }
 
-int32_t chameleon_add_task(cham_migratable_task_t *task, bool replicated) {
+int32_t chameleon_add_task(cham_migratable_task_t *task, int replicated) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
 #ifdef TRACE

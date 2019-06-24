@@ -78,6 +78,10 @@ extern std::atomic<int> _num_threads_involved_in_taskwait;
 extern std::atomic<int32_t> _num_threads_idle;
 extern std::atomic<int> _num_ranks_not_completely_idle;
 
+// number of active migrations per target rank
+// desired: should block new migration to target as long as there are still active migrations ongoing
+extern std::vector<int> _active_migrations_per_target_rank;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

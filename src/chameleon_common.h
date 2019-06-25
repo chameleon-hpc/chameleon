@@ -654,6 +654,8 @@ extern std::atomic<long> mem_allocated;
 // general settings for migration
 extern std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION;
 extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
+extern std::atomic<int> TAG_NBITS_TASK_ID;
+extern std::atomic<int> TAG_MAX_TASK_ID;
 
 // settings to manipulate default migration strategy
 extern std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION;
@@ -793,12 +795,20 @@ static void load_config_values() {
     if(tmp) {
         ENABLE_TRACE_TO_SYNC_CYCLE = std::atof(tmp);
     }
+
+    tmp = nullptr;
+    tmp = std::getenv("TAG_NBITS_TASK_ID");
+    if(tmp) {
+        TAG_NBITS_TASK_ID = std::atof(tmp);
+    }
+    TAG_MAX_TASK_ID = ((int)pow(2.0, (double)TAG_NBITS_TASK_ID.load()))-1;
 }
 
 static void print_config_values() {
     RELP("OMP_NUM_THREADS=%d\n", OMP_NUM_THREADS_VAR.load());
     RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
     RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
+    RELP("TAG_NBITS_TASK_ID=%d\n", TAG_NBITS_TASK_ID.load());
     RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());
     RELP("MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load());
     RELP("PERCENTAGE_DIFF_TASKS_TO_MIGRATE=%f\n", PERCENTAGE_DIFF_TASKS_TO_MIGRATE.load());

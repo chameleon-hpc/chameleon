@@ -23,6 +23,8 @@ std::atomic<int> _num_sync_cycle(0);
 // general settings for migration
 std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
 std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE(1);
+std::atomic<int> TAG_NBITS_TASK_ID(16);
+std::atomic<int> TAG_MAX_TASK_ID(65535);
 
 // settings to manipulate default migration strategy
 std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION(2);
@@ -59,8 +61,12 @@ cham_migratable_task_t::cham_migratable_task_t(
         
     // generate a unique task id
     TYPE_TASK_ID tmp_counter = ++_task_id_counter;
+    if(tmp_counter > TAG_MAX_TASK_ID) {
+        RELP("Task id greater that maximal allowed %d. Maybe try increasing TAG_NBITS_TASK_ID env variable.\n", TAG_MAX_TASK_ID.load());
+        assert(tmp_counter <= TAG_MAX_TASK_ID.load());
+    }
     // int tmp_rank = chameleon_comm_rank;
-    task_id = (chameleon_comm_rank << 24) | (tmp_counter);
+    task_id = (chameleon_comm_rank << TAG_NBITS_TASK_ID) | (tmp_counter);
     // DBP("cham_migratable_task_t - Created task with (task_id=%ld)\n", task_id);
 
     tgt_entry_ptr = (intptr_t) p_tgt_entry_ptr;

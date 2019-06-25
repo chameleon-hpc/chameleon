@@ -92,7 +92,7 @@ void cham_t_init() {
     else if (!strcmp(cham_t_env_var, "0"))
         cham_t_status.enabled = 0;
 
-    DBP("cham_t_init: CHAMELEN_TOOL = %s\n", cham_t_env_var);
+    DBP("cham_t_init: CHAMELEON_TOOL = %s\n", cham_t_env_var);
     
     if(cham_t_status.enabled)
     {

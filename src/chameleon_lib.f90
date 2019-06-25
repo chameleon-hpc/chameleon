@@ -44,25 +44,20 @@ interface
     integer :: chameleon_get_annotation_int_fortran
   end function chameleon_get_annotation_int_fortran
 
- function chameleon_add_task_manual_fortran(entry, nargs, args) bind(c, name="chameleon_add_task_manual_fortran")
-   use iso_c_binding
-   implicit none
-   type(c_funptr), value, intent(in) :: entry
-   integer(kind=c_int), value, intent(in) :: nargs
-   type(c_ptr), intent(in), value :: args
-   integer:: chameleon_add_task_manual_fortran
- end function chameleon_add_task_manual_fortran
-
- function chameleon_add_task_manual_fortran_w_annotations(entry, nargs, args, annotations) bind(c, name="chameleon_add_task_manual_fortran_w_annotations")
+ type(c_ptr) function chameleon_create_task_fortran(entry, nargs, args) bind(c, name="chameleon_create_task_fortran")
     use iso_c_binding
     implicit none
     type(c_funptr), value, intent(in) :: entry
     integer(kind=c_int), value, intent(in) :: nargs
     type(c_ptr), intent(in), value :: args
-    !type(map_entry),dimension(:) :: args
-    type(c_ptr), intent(in), value :: annotations
-    integer:: chameleon_add_task_manual_fortran_w_annotations
-  end function chameleon_add_task_manual_fortran_w_annotations
+ end function chameleon_create_task_fortran
+
+ function chameleon_add_task_fortran(task) bind(c, name="chameleon_add_task_fortran")
+   use iso_c_binding
+   implicit none
+   type(c_funptr), value, intent(in) :: task
+   integer:: chameleon_add_task_fortran
+ end function chameleon_add_task_fortran
 
  function chameleon_distributed_taskwait(nowait) bind(c)
    use iso_c_binding
@@ -78,17 +73,17 @@ interface
  end function chameleon_finalize
 end interface
 
-contains
- function chameleon_add_task_manual(entry, nargs, args)
-   use iso_c_binding
-   implicit none
-   procedure(),pointer, intent(in) :: entry
-   integer(kind=c_int) :: nargs
-   type(map_entry),dimension(:) :: args
-   integer(kind=c_int) :: chameleon_add_task_manual
+! contains
+!  function chameleon_add_task_manual(entry, nargs, args)
+!    use iso_c_binding
+!    implicit none
+!    procedure(),pointer, intent(in) :: entry
+!    integer(kind=c_int) :: nargs
+!    type(map_entry),dimension(:) :: args
+!    integer(kind=c_int) :: chameleon_add_task_manual
    
-   chameleon_add_task_manual = chameleon_add_task_manual_fortran(c_funloc(entry), nargs, c_loc(args))
- end function
+!    chameleon_add_task_manual = chameleon_add_task_manual_fortran(c_funloc(entry), nargs, c_loc(args))
+!  end function
 
 end module
 

@@ -70,8 +70,8 @@
 
 #ifndef CHAM_REPLICATION_MODE
 #define CHAM_REPLICATION_MODE 0 //no replication
-//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
-//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
+// #define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+// #define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 #endif
 
 //Specify whether tasks should be offloaded aggressively after one performance update
@@ -131,22 +131,25 @@ typedef union cham_annotation_value_t {
 typedef struct cham_annotation_entry_t {
     int32_t                 value_type;
     int32_t                 string_length;
+    int32_t                 is_manual_allocated;
     cham_annotation_value_t value;
 } cham_annotation_entry_t;
 
 static cham_annotation_entry_t cham_annotation_entry_string(int32_t val_type, int32_t str_len, cham_annotation_value_t val) {
     cham_annotation_entry_t entry;
-    entry.value_type      = val_type;
-    entry.string_length   = str_len;
-    entry.value           = val;
+    entry.value_type            = val_type;
+    entry.string_length         = str_len;
+    entry.value                 = val;
+    entry.is_manual_allocated   = 0;
     return entry;
 }
 
 static cham_annotation_entry_t cham_annotation_entry_value(int32_t val_type, cham_annotation_value_t val) {
     cham_annotation_entry_t entry;
-    entry.value_type      = val_type;
-    entry.string_length   = -1;
-    entry.value           = val;
+    entry.value_type            = val_type;
+    entry.string_length         = -1;
+    entry.value                 = val;
+    entry.is_manual_allocated   = 0;
     return entry;
 }
 
@@ -227,11 +230,15 @@ typedef struct chameleon_annotations_t {
             // key size
             int32_t str_size = ((int32_t *) cur_ptr)[0];
             cur_ptr += sizeof(int32_t);
+            
             // key string
             char* key = (char*) malloc(str_size+1);
             memcpy(key, cur_ptr, str_size);
             cur_ptr += str_size;
             key[str_size] = '\0';
+            std::string cur_key = std::string(key);
+            free(key);
+            
             // value type
             int32_t value_type = ((int32_t *) cur_ptr)[0];
             cur_ptr += sizeof(int32_t);
@@ -247,11 +254,21 @@ typedef struct chameleon_annotations_t {
                 str_value[val_size] = '\0';
                 cham_annotation_value_t value;
                 value.val_ptr = (void*)str_value;
-                anno.insert(std::make_pair(std::string(key), cham_annotation_entry_string(value_type, val_size, value)));
+                cham_annotation_entry_t cur_entry = cham_annotation_entry_string(value_type, val_size, value);
+                cur_entry.is_manual_allocated = 1;
+                anno.insert(std::make_pair(cur_key, cur_entry));
             } else {
                 cham_annotation_value_t value = ((cham_annotation_value_t *) cur_ptr)[0];
                 cur_ptr += sizeof(cham_annotation_value_t);
-                anno.insert(std::make_pair(std::string(key), cham_annotation_entry_value(value_type, value)));
+                anno.insert(std::make_pair(cur_key, cham_annotation_entry_value(value_type, value)));
+            }
+        }
+    }
+
+    void free_annotations() {
+        for (std::pair<std::string, cham_annotation_entry_t> element : anno) {
+            if(element.second.value_type == cham_annotation_string && element.second.is_manual_allocated) {
+                free(element.second.value.val_ptr);
             }
         }
     }
@@ -289,22 +306,21 @@ typedef struct cham_migratable_task_t {
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;
-    //int32_t source_mpi_tag      = 0;
     int32_t target_mpi_rank     = -1;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
     std::atomic<bool> result_in_progress;
 
     // Vector of replicating ranks
-    std::vector<int> replicating_ranks;
+    std::vector<int> replication_ranks;
 
-    chameleon_annotations_t task_annotations;
+    chameleon_annotations_t* task_annotations = nullptr;
 
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t task_tool_data;
 #endif
 
-    // Constructor 1: Called when creating new task during decoding
+    // Constructor 1: Called when creating new task during decoding or from application with API call
     // here we dont need to give a task id in that case because it should be transfered from source
     cham_migratable_task_t() : result_in_progress(false) { }
 
@@ -314,18 +330,7 @@ typedef struct cham_migratable_task_t {
         void **p_tgt_args, 
         ptrdiff_t *p_tgt_offsets, 
         int64_t *p_tgt_arg_types, 
-        int32_t p_arg_num); 
-
-    // Constructor 3: Called from API version when replicated task is created
-    cham_migratable_task_t(
-        void *p_tgt_entry_ptr,
-        void **p_tgt_args,
-        ptrdiff_t *p_tgt_offsets,
-        int64_t *p_tgt_arg_types,
-        int32_t p_arg_num,
-        int num_replicating_ranks,
-        int *replicating_ranks);
-
+        int32_t p_arg_num);
 
     void ReSizeArrays(int32_t num_args);
     
@@ -698,7 +703,11 @@ static void chameleon_dbg_print(int rank, ... ) {
 
 static void free_migratable_task(cham_migratable_task_t *task, bool is_remote_task = false) {
     if(task) {
-        // TODO: deallocate annotations
+        if(task->task_annotations) {
+            task->task_annotations->free_annotations();
+            delete task->task_annotations;
+            task->task_annotations = nullptr;
+        }
         if(is_remote_task) {
             for(int i = 0; i < task->arg_num; i++) {
                 int64_t tmp_type    = task->arg_types[i];

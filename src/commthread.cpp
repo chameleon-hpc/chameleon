@@ -2227,8 +2227,8 @@ inline void action_task_replication() {
 
     	int num_tasks_local = _local_tasks.dup_size();
 
-        cham_replication_info_t* replication_infos = nullptr;
-        std::vector<cham_replication_info_t> replication_infos_data;
+        cham_t_replication_info_t* replication_infos = nullptr;
+        std::vector<cham_t_replication_info_t> replication_infos_data;
         int num_rep_infos = 0;
 #if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
         if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_replicate) {
@@ -2248,7 +2248,7 @@ inline void action_task_replication() {
 
 
         for( int r=0; r<num_rep_infos; r++) {
-           cham_replication_info_t info = replication_infos[r];
+           cham_t_replication_info_t info = replication_infos[r];
            for(int i=0; i<info.num_tasks; i++) {
         	   cham_migratable_task_t *task = _local_tasks.pop_front();
         	   if(task) {

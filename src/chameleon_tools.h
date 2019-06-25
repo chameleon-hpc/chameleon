@@ -109,14 +109,14 @@ static const char* cham_t_sync_region_status_t_values[] = {
     "cham_t_sync_region_end"            // 2
 };
 
+/*****************************************************************************
+ * General definitions
+ ****************************************************************************/
 typedef struct cham_t_rank_info_t {
     int32_t comm_rank;
     int32_t comm_size;
 } cham_t_rank_info_t;
 
-/*****************************************************************************
- * General definitions
- ****************************************************************************/
 typedef void (*cham_t_interface_fn_t) (void);
 
 typedef cham_t_interface_fn_t (*cham_t_function_lookup_t) (
@@ -146,6 +146,24 @@ static cham_t_migration_tupel_t cham_t_migration_tupel_create(TYPE_TASK_ID task_
     val.task_id = task_id;
     val.rank_id = rank_id;
     return val;
+}
+
+typedef struct cham_t_replication_info_t {
+	int num_tasks, num_replication_ranks;
+	int *replication_ranks;
+} cham_t_replication_info_t;
+
+static cham_t_replication_info_t cham_t_replication_info_create(int num_tasks, int num_replication_ranks, int *replication_ranks) {
+	cham_t_replication_info_t info;
+	info.num_tasks = num_tasks;
+	info.num_replication_ranks = num_replication_ranks;
+	info.replication_ranks = replication_ranks;
+	return info;
+}
+
+static void free_replication_info(cham_t_replication_info_t *info) {
+	free(info->replication_ranks);
+	info = NULL;
 }
 
 /*****************************************************************************
@@ -259,7 +277,7 @@ typedef void (*cham_t_callback_select_num_tasks_to_offload_t) (
     int32_t num_tasks_stolen
 );
 
-typedef cham_replication_info_t* (*cham_t_callback_select_num_tasks_to_replicate_t) (
+typedef cham_t_replication_info_t* (*cham_t_callback_select_num_tasks_to_replicate_t) (
     const int32_t* load_info_per_rank,
     int32_t num_tasks_local,
     int32_t *num_replication_infos

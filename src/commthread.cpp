@@ -279,6 +279,7 @@ int32_t stop_communication_threads() {
     _th_service_actions_created             = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
     _num_threads_idle                       = 0;
+    _task_id_counter                        = 0;
     #endif
 
     #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
@@ -322,6 +323,7 @@ int32_t put_comm_threads_to_sleep() {
     _comm_thread_load_exchange_happend      = 0;
     _num_threads_involved_in_taskwait       = INT_MAX;
     _num_threads_idle                       = 0;
+    _task_id_counter                        = 0;
     DBP("put_comm_threads_to_sleep  - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
     _num_ranks_not_completely_idle          = INT_MAX;
     DBP("put_comm_threads_to_sleep - new _num_ranks_not_completely_idle: INT_MAX\n");

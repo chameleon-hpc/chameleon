@@ -99,20 +99,20 @@ static chameleon_map_data_entry_t chameleon_map_data_entry_create(void* arg_ptr,
 }
 
 typedef struct cham_replication_info_t {
-	int num_tasks, num_replicating_ranks;
-	int *replicating_ranks;
+	int num_tasks, num_replication_ranks;
+	int *replication_ranks;
 } cham_replication_info_t;
 
-static cham_replication_info_t cham_replication_info_create(int num_tasks, int num_replicating_ranks, int *replicating_ranks) {
+static cham_replication_info_t cham_replication_info_create(int num_tasks, int num_replication_ranks, int *replication_ranks) {
 	cham_replication_info_t info;
 	info.num_tasks = num_tasks;
-	info.num_replicating_ranks = num_replicating_ranks;
-	info.replicating_ranks = replicating_ranks;
+	info.num_replication_ranks = num_replication_ranks;
+	info.replication_ranks = replication_ranks;
 	return info;
 }
 
 static void free_replication_info(cham_replication_info_t *info) {
-	free(info->replicating_ranks);
+	free(info->replication_ranks);
 	info = NULL;
 }
 
@@ -133,10 +133,6 @@ typedef struct cham_migratable_task_t cham_migratable_task_t;
 // ================================================================================
 chameleon_annotations_t* chameleon_create_annotation_container();
 
-void* chameleon_create_annotation_container_fortran();
-int chameleon_set_annotation_int_fortran(void* ann, int value);
-int chameleon_get_annotation_int_fortran(void* ann);
-
 int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value);
 int chameleon_set_annotation_int64(chameleon_annotations_t* ann, char *key, int64_t value);
 int chameleon_set_annotation_double(chameleon_annotations_t* ann, char *key, double value);
@@ -149,33 +145,23 @@ int chameleon_get_annotation_double(chameleon_annotations_t* ann, char *key, dou
 int chameleon_get_annotation_float(chameleon_annotations_t* ann, char *key, float* val);
 int chameleon_get_annotation_string(chameleon_annotations_t* ann, char *key, char** val);
 
+// void* chameleon_create_annotation_container_fortran();
+// int chameleon_set_annotation_int_fortran(void* ann, int value);
+// int chameleon_get_annotation_int_fortran(void* ann);
+
 chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id);
 chameleon_annotations_t* chameleon_get_task_annotations_opaque(cham_migratable_task_t* task);
 
+void chameleon_set_task_annotations(cham_migratable_task_t* task, chameleon_annotations_t* ann);
+
 // ================================================================================
-// External functions (that can be called from source code or libomptarget)
+// Handling replication
 // ================================================================================
-cham_migratable_task_t* create_migratable_task(
-        void *p_tgt_entry_ptr, 
-        void **p_tgt_args, 
-        ptrdiff_t *p_tgt_offsets, 
-        int64_t *p_tgt_arg_types, 
-        int32_t p_arg_num);
+void chameleon_set_task_replication_info(cham_migratable_task_t* task, int num_replication_ranks, int *replication_ranks);
 
-cham_migratable_task_t* create_migratable_task_replicated(
-        void *p_tgt_entry_ptr,
-        void **p_tgt_args,
-        ptrdiff_t *p_tgt_offsets,
-        int64_t *p_tgt_arg_types,
-        int32_t p_arg_num,
-        int num_replicating_ranks,
-        int *replicating_ranks);
-
-
-void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset);
-
-TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task);
-
+// ================================================================================
+// Init / Finalize / Taskwait / Utils
+// ================================================================================
 int32_t chameleon_init();
 
 int32_t chameleon_thread_init();
@@ -188,41 +174,52 @@ int32_t chameleon_thread_finalize();
 
 int32_t chameleon_distributed_taskwait(int nowait);
 
-int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
-
-void chameleon_free_data(void *tgt_ptr);
-
-void chameleon_incr_mem_alloc(int64_t size);
-
-int32_t chameleon_add_task(cham_migratable_task_t *task, int is_replicated);
-
-TYPE_TASK_ID chameleon_get_last_local_task_id_added();
-
-int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id);
-
 int32_t chameleon_wake_up_comm_threads();
 
 int32_t chameleon_taskyield();
 
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
-int32_t chameleon_add_task_manual(void * entry_point, int num_args, chameleon_map_data_entry_t* args);
-
-int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t* args, chameleon_annotations_t* ann);
-
-int32_t chameleon_add_task_manual_fortran(void * entry_point, int num_args, void *args_info);
-
-int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int num_args, void *args_info, void* annotations);
-
-int32_t chameleon_add_replicated_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t *args, 
-                                                        chameleon_annotations_t* ann, int num_replicating_ranks, int *replicating_ranks);
-
-int32_t chameleon_add_replicated_task_manual(void * entry_point, int num_args, chameleon_map_data_entry_t *args, 
-                                                         int num_replicating_ranks, int *replicating_ranks);
-
 int32_t chameleon_determine_base_addresses(void * main_ptr);
 
 void chameleon_set_tracing_enabled(int enabled);
+
+// ================================================================================
+// Functions for data and task handling - used by libomptarget approach
+// ================================================================================
+int32_t chameleon_submit_data(void *tgt_ptr, void *hst_ptr, int64_t size);
+
+void chameleon_free_data(void *tgt_ptr);
+
+void chameleon_incr_mem_alloc(int64_t size);
+
+cham_migratable_task_t* create_migratable_task(
+        void *p_tgt_entry_ptr, 
+        void **p_tgt_args, 
+        ptrdiff_t *p_tgt_offsets, 
+        int64_t *p_tgt_arg_types, 
+        int32_t p_arg_num);
+
+void chameleon_set_img_idx_offset(cham_migratable_task_t *task, int32_t img_idx, ptrdiff_t entry_image_offset);
+
+// ================================================================================
+// Functions related to tasks
+// ================================================================================
+cham_migratable_task_t* chameleon_create_task(void * entry_point, int num_args, chameleon_map_data_entry_t* args);
+
+// not 100% sure whether we still need fortran specific functions
+void* chameleon_create_task_fortran(void * entry_point, int num_args, void* args);
+
+int32_t chameleon_add_task(cham_migratable_task_t *task);
+
+// not 100% sure whether we still need fortran specific functions
+int32_t chameleon_add_task_fortran(void *task);
+
+TYPE_TASK_ID chameleon_get_last_local_task_id_added();
+
+int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id);
+
+TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task);
 
 #ifdef __cplusplus
 }

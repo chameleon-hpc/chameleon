@@ -644,7 +644,7 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
 
         #if CHAM_REPLICATION_MODE==2
         if(task_entry->is_replicated_task) {
-        	for(auto rank : task_entry->replicating_ranks) {
+        	for(auto rank : task_entry->replication_ranks) {
         		if(rank!=source)
         			cancel_offloaded_task_on_rank(task_entry, rank);
         	}
@@ -708,7 +708,7 @@ void cancel_offloaded_task(cham_migratable_task_t *task) {
       if(task->target_mpi_rank>=0) {
         cancel_offloaded_task_on_rank(task, task->target_mpi_rank);
       }
-      for( auto rank : task->replicating_ranks ) {
+      for( auto rank : task->replication_ranks ) {
         cancel_offloaded_task_on_rank(task, rank);
       }
     }
@@ -1020,9 +1020,10 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
     for (int i = 0; i < num_tasks; i++) {
         int32_t task_annotations_buf_size = 0;
         void *task_annotations_buffer = nullptr;
-        task_annotations_buffer = tasks[i]->task_annotations.pack(&task_annotations_buf_size);
-        total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
-        
+        if(tasks[i]->task_annotations) {
+            task_annotations_buffer = tasks[i]->task_annotations->pack(&task_annotations_buf_size);
+            total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
+        }
         annotation_sizes[i] = task_annotations_buf_size;
         annotation_buffers[i] = task_annotations_buffer;
     }
@@ -1256,7 +1257,8 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         int32_t task_annotations_buf_size = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
         if(task_annotations_buf_size > 0) {
-            task->task_annotations.unpack((void*)cur_ptr);
+            task->task_annotations = new chameleon_annotations_t();
+            task->task_annotations->unpack((void*)cur_ptr);
             cur_ptr += task_annotations_buf_size;
         }
         #endif
@@ -2251,7 +2253,7 @@ inline void action_task_replication() {
         	   cham_migratable_task_t *task = _local_tasks.pop_front();
         	   if(task) {
         		   task->is_replicated_task = 1;
-        		   task->replicating_ranks = std::vector<int>(&info.replicating_ranks[0], &info.replicating_ranks[info.num_replicating_ranks]);
+        		   task->replication_ranks = std::vector<int>(&info.replication_ranks[0], &info.replication_ranks[info.num_replication_ranks]);
         		   _replicated_local_tasks.push_back(task);
         		   _replicated_tasks_to_transfer.push_back(task);
         	   }
@@ -2270,7 +2272,7 @@ inline void action_task_replication_send() {
 	if(cur_task) {
       //if somebody is already computing, we don't need to replicate task
       if(!cur_task->result_in_progress) {
-		for( auto rank : cur_task->replicating_ranks) {
+		for( auto rank : cur_task->replication_ranks) {
 			offload_tasks_to_rank(&cur_task, 1, rank);
 		}
       }

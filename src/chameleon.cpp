@@ -93,26 +93,26 @@ int32_t process_replicated_local_task();
 int32_t process_replicated_remote_task();
 #pragma endregion Forward Declarations
 
-#pragma region Annotations
+#pragma region Annotations / Replication
 chameleon_annotations_t* chameleon_create_annotation_container() {
     chameleon_annotations_t* container = new chameleon_annotations_t();
     return container;
 }
 
-void* chameleon_create_annotation_container_fortran() {
-    chameleon_annotations_t* container = new chameleon_annotations_t();
-    return (void*)container;
-}
+// void* chameleon_create_annotation_container_fortran() {
+//     chameleon_annotations_t* container = new chameleon_annotations_t();
+//     return (void*)container;
+// }
 
-int chameleon_set_annotation_int_fortran(void* ann, int value) {
-    return chameleon_set_annotation_int((chameleon_annotations_t*)ann, (char*)"num_cells", value);
-}
+// int chameleon_set_annotation_int_fortran(void* ann, int value) {
+//     return chameleon_set_annotation_int((chameleon_annotations_t*)ann, (char*)"num_cells", value);
+// }
 
-int chameleon_get_annotation_int_fortran(void* ann) {
-    int res;
-    int found = chameleon_get_annotation_int((chameleon_annotations_t*) ann, (char*)"num_cells", &res);
-    return found ? res : -1;
-}
+// int chameleon_get_annotation_int_fortran(void* ann) {
+//     int res;
+//     int found = chameleon_get_annotation_int((chameleon_annotations_t*) ann, (char*)"num_cells", &res);
+//     return found ? res : -1;
+// }
 
 int chameleon_set_annotation_int(chameleon_annotations_t* ann, char *key, int value) {
     cham_annotation_value_t val;
@@ -212,14 +212,39 @@ int chameleon_get_annotation_ptr(chameleon_annotations_t* ann, char *key, void**
 chameleon_annotations_t* chameleon_get_task_annotations(TYPE_TASK_ID task_id) {
     cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
     if(task)
-        return &(task->task_annotations);
+        return task->task_annotations;
     return nullptr;
 }
 
 chameleon_annotations_t* chameleon_get_task_annotations_opaque(cham_migratable_task_t* task) {
     if(task)
-        return &(task->task_annotations);
+        return task->task_annotations;
     return nullptr;
+}
+
+void chameleon_set_task_annotations(cham_migratable_task_t* task, chameleon_annotations_t* ann) {
+    if(task) {
+        if (task->task_annotations) {
+            // free old annotations first
+            task->task_annotations->free_annotations();
+            delete task->task_annotations;
+        }
+        task->task_annotations = ann;
+    }
+}
+
+void chameleon_set_task_replication_info(cham_migratable_task_t* task, int num_replication_ranks, int *replication_ranks) {
+    if(task) {
+        if(replication_ranks && num_replication_ranks > 0) {
+            // mark as repliacted
+            task->is_replicated_task = 1;
+
+            for(int i = 0; i < num_replication_ranks; i++) {
+                assert(replication_ranks[i]<chameleon_comm_size);
+                task->replication_ranks.push_back( replication_ranks[i] );
+            }
+        }
+    }
 }
 #pragma endregion Annotations
 
@@ -232,24 +257,6 @@ cham_migratable_task_t* create_migratable_task(
         int32_t p_arg_num) {
 
     cham_migratable_task_t *tmp_task = new cham_migratable_task_t(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets, p_tgt_arg_types, p_arg_num);
-    assert(tmp_task->result_in_progress.load()==false);
-    
-    return tmp_task;
-}
-
-cham_migratable_task_t* create_migratable_task_replicated(
-        void *p_tgt_entry_ptr, 
-        void **p_tgt_args, 
-        ptrdiff_t *p_tgt_offsets, 
-        int64_t *p_tgt_arg_types, 
-        int32_t p_arg_num,
-        int num_replicating,
-        int *replicating_ranks) {
-
-    cham_migratable_task_t *tmp_task = new cham_migratable_task_t(p_tgt_entry_ptr, p_tgt_args, p_tgt_offsets,
-                                                                  p_tgt_arg_types, p_arg_num,
-                                                                  num_replicating, replicating_ranks);
-
     assert(tmp_task->result_in_progress.load()==false);
     
     return tmp_task;
@@ -826,94 +833,12 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 }
 
-int32_t chameleon_add_task(cham_migratable_task_t *task, int replicated) {
-    DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
-    verify_initialized();
-#ifdef TRACE
-    static int event_task_create = -1;
-    std::string event_name = "task_create";
-    if(event_task_create == -1) 
-        int ierr = VT_funcdef(event_name.c_str(), VT_NOCLASS, &event_task_create);
-    VT_BEGIN_CONSTRAINED(event_task_create);
-#endif
-    
-    // perform lookup only when task has been created with libomptarget
-    if(!task->is_manual_task) {
-        lookup_hst_pointers(task);
-    }
-
-#if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_create) {
-        void *codeptr_ra = __builtin_return_address(0);
-        cham_t_status.cham_t_callback_task_create(task, &(task->task_tool_data), codeptr_ra);
-    }
-#endif
-
-    // add to queue
-#if CHAM_REPLICATION_MODE>0
-    if(!replicated) 
-#endif
-      _local_tasks.push_back(task);
-#if CHAM_REPLICATION_MODE>0
-    else {
-      _replicated_local_tasks.push_back(task);
-      _replicated_tasks_to_transfer.push_back(task);
-    }
-#endif
-    // set id of last task added
-    __last_task_id_added = task->task_id;
-
-    _unfinished_locally_created_tasks.push_back(task->task_id);
-    _map_overall_tasks.insert(task->task_id, task);
-    
-    _mtx_load_exchange.lock();
-    _num_local_tasks_outstanding++;
-    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
-#ifdef TRACE
-    VT_END_W_CONSTRAINED(event_task_create);
-#endif
-    return CHAM_SUCCESS;
-}
-
-TYPE_TASK_ID chameleon_get_last_local_task_id_added() {
-    return __last_task_id_added;
-}
-
-/*
- * Checks whether the corresponding task has already been finished
- */
-int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id) {
-    bool found = _unfinished_locally_created_tasks.find(task_id);
-    return found ? 0 : 1;
-}
-
-/*
-* As variadic function are not supported, this compatibility function is provided
-*/
-int32_t chameleon_add_task_manual_fortran(void *entry_point, int num_args, void *args_info) {
-    chameleon_map_data_entry_t *args_entries = (chameleon_map_data_entry_t *) args_info;   
-    chameleon_add_task_manual(entry_point, num_args, args_entries);
-
-    return CHAM_SUCCESS;
-}
-
-int32_t chameleon_add_task_manual_fortran_w_annotations(void * entry_point, int num_args, void *args_info, void* annotations) {
-    chameleon_map_data_entry_t *args_entries = (chameleon_map_data_entry_t *) args_info;
-    chameleon_annotations_t * anno = (chameleon_annotations_t *) annotations;
-    return chameleon_add_task_manual_w_annotations(entry_point, num_args, args_entries, anno);
-}
-
-int32_t chameleon_add_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args) {
-    return chameleon_add_task_manual_w_annotations(entry_point, num_args, args, nullptr);
-}
-
-int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t* args, chameleon_annotations_t* ann) {
+cham_migratable_task_t* chameleon_create_task(void * entry_point, int num_args, chameleon_map_data_entry_t* args) {
     // Format of variable input args should always be:
     // 1. void* to data entry
-    // 2. size_t size of data
-    // 3. agument type specifier (also includes information whether it is literal or not)
+    // 2. number of arguments
+    // 3. information about each agument
+
     std::vector<void *>     arg_hst_pointers(num_args);
     std::vector<int64_t>    arg_sizes(num_args);
     std::vector<int64_t>    arg_types(num_args);
@@ -941,59 +866,81 @@ int32_t chameleon_add_task_manual_w_annotations(void * entry_point, int num_args
     tmp_task->is_manual_task    = 1;
     tmp_task->arg_hst_pointers  = arg_hst_pointers;
     tmp_task->arg_sizes         = arg_sizes;
-    if(ann) {
-        tmp_task->task_annotations = *ann;
-    }
-    return chameleon_add_task(tmp_task, false);
+
+    return tmp_task;
 }
 
-int32_t chameleon_add_replicated_task_manual(void *entry_point, int num_args, chameleon_map_data_entry_t *args, int num_replicating_ranks, int *replicating_ranks) {
-    return chameleon_add_replicated_task_manual_w_annotations(entry_point, num_args, args, nullptr, num_replicating_ranks, replicating_ranks);
+void* chameleon_create_task_fortran(void * entry_point, int num_args, void* args) {
+    chameleon_map_data_entry_t* tmp_args = (chameleon_map_data_entry_t*) args;
+    cham_migratable_task_t* tmp_task = chameleon_create_task(entry_point, num_args, tmp_args);
+    return (void*)tmp_task;
 }
 
-int32_t chameleon_add_replicated_task_manual_w_annotations(void * entry_point, int num_args, chameleon_map_data_entry_t *args, chameleon_annotations_t* ann, int num_replicating_ranks, int *replicating_ranks) {
-
-    // todo: avoid code duplication
-    // Format of variable input args should always be:
-    // 1. void* to data entry
-    // 2. size_t size of data
-    // 3. agument type specifier (also includes information whether it is literal or not)
-    std::vector<void *>     arg_hst_pointers(num_args);
-    std::vector<int64_t>    arg_sizes(num_args);
-    std::vector<int64_t>    arg_types(num_args);
-    std::vector<void *>     arg_tgt_pointers(num_args);
-    std::vector<ptrdiff_t>  arg_tgt_offsets(num_args);
-
-    for(int i = 0; i < num_args; i++) {
-        void * cur_arg          = args[i].valptr;
-        int64_t cur_size        = args[i].size;
-        int64_t cur_type        = args[i].type;
-
-        arg_hst_pointers[i]     = cur_arg;
-        arg_sizes[i]            = cur_size;
-        arg_types[i]            = cur_type;
-        arg_tgt_pointers[i]     = nullptr;
-        arg_tgt_offsets[i]      = 0;
+int32_t chameleon_add_task(cham_migratable_task_t *task) {
+    DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
+    verify_initialized();
+#ifdef TRACE
+    static int event_task_create = -1;
+    std::string event_name = "task_create";
+    if(event_task_create == -1) 
+        int ierr = VT_funcdef(event_name.c_str(), VT_NOCLASS, &event_task_create);
+    VT_BEGIN_CONSTRAINED(event_task_create);
+#endif
+    
+    // perform lookup only when task has been created with libomptarget
+    if(!task->is_manual_task) {
+        lookup_hst_pointers(task);
     }
 
-    cham_migratable_task_t *tmp_task = create_migratable_task_replicated(entry_point, &arg_tgt_pointers[0], &arg_tgt_offsets[0],
-                                                                           &arg_types[0], num_args,
-                                                                           num_replicating_ranks,
-                                                                           replicating_ranks);
-
-    // calculate offset to base address
-    intptr_t base_address   = _image_base_addresses[99];
-    ptrdiff_t diff          = (intptr_t) entry_point - base_address;
-    chameleon_set_img_idx_offset(tmp_task, 99, diff);
-
-    tmp_task->is_manual_task    = 1;
-    tmp_task->arg_hst_pointers  = arg_hst_pointers;
-    tmp_task->arg_sizes         = arg_sizes;
-    if(ann) {
-        tmp_task->task_annotations = *ann;
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_task_create) {
+        void *codeptr_ra = __builtin_return_address(0);
+        cham_t_status.cham_t_callback_task_create(task, &(task->task_tool_data), codeptr_ra);
     }
+#endif
 
-    return chameleon_add_task(tmp_task, true);
+    // add to queue
+#if CHAM_REPLICATION_MODE>0
+    if(!task->is_replicated_task) 
+#endif
+      _local_tasks.push_back(task);
+#if CHAM_REPLICATION_MODE>0
+    else {
+      _replicated_local_tasks.push_back(task);
+      _replicated_tasks_to_transfer.push_back(task);
+    }
+#endif
+    // set id of last task added
+    __last_task_id_added = task->task_id;
+
+    _unfinished_locally_created_tasks.push_back(task->task_id);
+    _map_overall_tasks.insert(task->task_id, task);
+    
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding++;
+    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+#ifdef TRACE
+    VT_END_W_CONSTRAINED(event_task_create);
+#endif
+    return CHAM_SUCCESS;
+}
+
+int32_t chameleon_add_task_fortran(void *task) {
+    return chameleon_add_task(((cham_migratable_task_t*)task));
+}
+
+TYPE_TASK_ID chameleon_get_last_local_task_id_added() {
+    return __last_task_id_added;
+}
+
+/*
+ * Checks whether the corresponding task has already been finished
+ */
+int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id) {
+    bool found = _unfinished_locally_created_tasks.find(task_id);
+    return found ? 0 : 1;
 }
 
 #pragma endregion Fcns for Data and Tasks

@@ -546,6 +546,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
     verify_initialized();
     DBP("chameleon_distributed_taskwait (enter)\n");
+    _num_threads_active_in_taskwait++;
 
     #if CHAM_STATS_RECORD
     double time_start_tw = omp_get_wtime();
@@ -778,6 +779,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 #ifdef TRACE
     VT_END_W_CONSTRAINED(event_taskwait);
 #endif
+    _num_threads_active_in_taskwait--;
     DBP("chameleon_distributed_taskwait (exit)\n");
     return CHAM_SUCCESS;
 }

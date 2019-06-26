@@ -668,6 +668,9 @@ extern std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION;
 extern std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE;
 extern std::atomic<int> OMP_NUM_THREADS_VAR;
 
+// settings to manipulate replication strategy
+extern std::atomic<double> MAX_PERCENTAGE_REPLICATED_TASKS;
+
 // settings to enable / disable tracing only for specific range of synchronization cycles
 extern std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE;
 extern std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE;
@@ -794,6 +797,12 @@ static void load_config_values() {
     }
 
     tmp = nullptr;
+    tmp = std::getenv("MAX_PERCENTAGE_REPLICATED_TASKS");
+    if(tmp) {
+        MAX_PERCENTAGE_REPLICATED_TASKS = std::atof(tmp);
+    }
+
+    tmp = nullptr;
     tmp = std::getenv("ENABLE_TRACE_FROM_SYNC_CYCLE");
     if(tmp) {
         ENABLE_TRACE_FROM_SYNC_CYCLE = std::atof(tmp);
@@ -823,6 +832,7 @@ static void print_config_values() {
     RELP("PERCENTAGE_DIFF_TASKS_TO_MIGRATE=%f\n", PERCENTAGE_DIFF_TASKS_TO_MIGRATE.load());
     RELP("ENABLE_TRACE_FROM_SYNC_CYCLE=%d\n", ENABLE_TRACE_FROM_SYNC_CYCLE.load());
     RELP("ENABLE_TRACE_TO_SYNC_CYCLE=%d\n", ENABLE_TRACE_TO_SYNC_CYCLE.load());
+    RELP("MAX_PERCENTAGE_REPLICATED_TASKS=%d\n", MAX_PERCENTAGE_REPLICATED_TASKS.load());
 }
 #pragma endregion
 

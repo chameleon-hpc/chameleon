@@ -32,6 +32,9 @@ std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION(0.05);
 std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(1);
 std::atomic<int> OMP_NUM_THREADS_VAR(1);
 
+// settings to manipulate default replication strategy
+std::atomic<double> MAX_PERCENTAGE_REPLICATED_TASKS(0.1);
+
 // settings to enable / disable tracing only for specific range of synchronization cycles
 std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE(-1);
 std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE(INT_MAX);

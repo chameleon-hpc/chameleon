@@ -55,7 +55,7 @@ interface
  function chameleon_add_task_fortran(task) bind(c, name="chameleon_add_task_fortran")
    use iso_c_binding
    implicit none
-   type(c_funptr), value, intent(in) :: task
+   type(c_ptr), value, intent(in) :: task
    integer:: chameleon_add_task_fortran
  end function chameleon_add_task_fortran
 

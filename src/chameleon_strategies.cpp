@@ -125,9 +125,15 @@ void compute_num_tasks_to_offload( std::vector<int32_t>& tasksToOffloadPerRank, 
 
 // implements default replication strategy where neighbouring ranks logically have some "overlapping tasks"
 void compute_num_tasks_to_replicate( std::vector<cham_t_replication_info_t>& replication_infos, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local) {
-    double alpha = 0.1;
+        double alpha;
 	int myLeft = chameleon_comm_rank-1;
 	int myRight = chameleon_comm_rank+1;
+
+        int num_neighbours = 0;
+        if(myLeft>0) num_neighbours++;
+        if(myRight<chameleon_comm_size) num_neighbours++;
+   
+        alpha = MAX_PERCENTAGE_REPLICATED_TASKS/num_neighbours;
 
 	if(myLeft>0) {
 	    int num_tasks = num_tasks_local*alpha;

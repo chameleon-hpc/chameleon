@@ -112,6 +112,7 @@ std::mutex _mtx_taskwait;
 std::atomic<int> _flag_comm_threads_sleeping(1);
 
 std::atomic<int> _num_threads_involved_in_taskwait(INT_MAX);
+std::atomic<int> _num_threads_active_in_taskwait(0);
 std::atomic<int32_t> _num_threads_idle(0);
 std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
@@ -2334,7 +2335,7 @@ void* comm_thread_action(void* arg) {
     int err;
     int flag_set                    = 0;
     int num_threads_in_tw           = _num_threads_involved_in_taskwait.load();
-    bool is_first_load_exchange     = true;
+    bool has_not_replicated     = true;
     double cur_time;
     double time_last_load_exchange  = 0;
     double time_gather_posted       = 0;
@@ -2406,7 +2407,7 @@ void* comm_thread_action(void* arg) {
             #endif
             flag_set = 0;
             tag_counter_send_tasks = 0;
-            is_first_load_exchange = true;
+            has_not_replicated = true;
             // reset last received ids
             for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
                 _tracked_last_req_recv[tmp_i] = -1;
@@ -2502,9 +2503,9 @@ void* comm_thread_action(void* arg) {
         }
 
         #if CHAM_REPLICATION_MODE>0
-        if(is_first_load_exchange) {
+        if(has_not_replicated && _num_threads_involved_in_taskwait == _num_threads_active_in_taskwait) {
             action_task_replication();
-            is_first_load_exchange = false;
+            has_not_replicated = false;
         }
         else{
         #endif

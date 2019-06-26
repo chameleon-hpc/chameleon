@@ -75,6 +75,7 @@ extern std::atomic<int> _comm_thread_load_exchange_happend;
 // variables to indicate when it is save to break out of taskwait
 extern std::mutex _mtx_taskwait;
 extern std::atomic<int> _num_threads_involved_in_taskwait;
+extern std::atomic<int> _num_threads_active_in_taskwait;
 extern std::atomic<int32_t> _num_threads_idle;
 extern std::atomic<int> _num_ranks_not_completely_idle;
 

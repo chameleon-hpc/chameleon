@@ -758,15 +758,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         cham_t_status.cham_t_callback_sync_region(cham_t_sync_region_taskwait, cham_t_sync_region_end, &(__thread_data[gtid].thread_tool_data) , codeptr_ra);
     }
 #endif
-
-    #if THREAD_ACTIVATION
-    // put threads to sleep again after sync cycle
-    put_comm_threads_to_sleep();
-    #else
-    // stop threads here - actually the last thread will do that
-    stop_communication_threads();
-    #endif
-
+    
     if(!nowait) {
         #pragma omp barrier
     }
@@ -776,6 +768,15 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     atomic_add_dbl(_time_taskwait_sum, time_tw_elapsed);
     _time_taskwait_count++;
     #endif /* CHAM_STATS_RECORD */
+
+    #if THREAD_ACTIVATION
+    // put threads to sleep again after sync cycle
+    put_comm_threads_to_sleep();
+    #else
+    // stop threads here - actually the last thread will do that
+    stop_communication_threads();
+    #endif
+
 #ifdef TRACE
     VT_END_W_CONSTRAINED(event_taskwait);
 #endif

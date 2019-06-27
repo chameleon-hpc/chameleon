@@ -73,7 +73,17 @@ interface
  end function chameleon_finalize
 end interface
 
-! contains
+  contains
+   type(c_ptr) function chameleon_create_task(entry, nargs, args)
+     use iso_c_binding
+     implicit none
+     procedure(),pointer, intent(in) :: entry
+     integer(kind=c_int) :: nargs
+     type(map_entry),dimension(:) :: args
+     
+     chameleon_create_task = chameleon_create_task_fortran(c_funloc(entry), nargs, c_loc(args))
+   end function chameleon_create_task
+
 !  function chameleon_add_task_manual(entry, nargs, args)
 !    use iso_c_binding
 !    implicit none

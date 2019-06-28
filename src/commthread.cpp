@@ -673,7 +673,9 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         //_num_offloaded_tasks_outstanding--;
 
         // mark locally created task finished
+        #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
         _unfinished_locally_created_tasks.remove(task_entry->task_id);
+        #endif
         _map_overall_tasks.erase(task_entry->task_id);
 
         // decrement counter if offloading + receiving results finished

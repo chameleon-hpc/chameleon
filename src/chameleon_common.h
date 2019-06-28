@@ -103,12 +103,16 @@
 #define ENABLE_TRACING_FOR_SYNC_CYCLES 0
 #endif
 
-#if CHAMELEON_TOOL_SUPPORT
-#include "chameleon_tools.h"
-#endif
-
 #ifndef CHAM_MIGRATE_ANNOTATIONS
 #define CHAM_MIGRATE_ANNOTATIONS 0
+#endif
+
+#ifndef CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
+#define CHAMELEON_ENABLE_FINISHED_TASK_TRACKING 0
+#endif
+
+#if CHAMELEON_TOOL_SUPPORT
+#include "chameleon_tools.h"
 #endif
 
 #pragma region Type Definitions

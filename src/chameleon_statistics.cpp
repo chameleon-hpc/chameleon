@@ -2,6 +2,9 @@
 #include "chameleon_common.h"
 #include "chameleon_statistics.h"
 #include <float.h>
+#include <stdio.h>
+
+std::atomic<int>     _num_printed_sync_cycles(0);
 
 std::atomic<int>     _num_executed_tasks_local(0);
 std::atomic<int>     _num_executed_tasks_stolen(0);
@@ -139,72 +142,97 @@ void cham_stats_reset_for_sync_cycle() {
     _throughput_recv_num = 0;
 }
 
-void cham_stats_print_stats_w_mean(std::string name, double sum, int count, bool cummulative = false) {
+void cham_stats_print_stats_w_mean(FILE *cur_file, std::string name, double sum, int count, bool cummulative = false) {
     std::string prefix = "Stats";
     if(cummulative)
-        prefix = "Cumulative Stats";
+        prefix = "Cumulative Stats";    
 
     if(count <= 0) {
-        fprintf(stderr, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, 0);
+        fprintf(cur_file, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%d\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, 0);
     } else {
-        fprintf(stderr, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
+        fprintf(cur_file, "%s R#%d:\t%s\tsum=\t%.10f\tcount=\t%d\tmean=\t%.10f\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), sum, count, (sum / (double)count));
     }
 }
 
-void cham_stats_print_communication_stats(std::string name, double time_avg, int nbytes) {
+void cham_stats_print_communication_stats(FILE *cur_file, std::string name, double time_avg, int nbytes) {
     std::string prefix = "Stats";
  
-    fprintf(stderr, "%s R#%d:\t%s\teffective throughput=\t%.3f MB/s\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), nbytes/(1e06*time_avg));
+    fprintf(cur_file, "%s R#%d:\t%s\teffective throughput=\t%.3f MB/s\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), nbytes/(1e06*time_avg));
 }
 
 void cham_stats_print_stats() {
     _mtx_relp.lock();
-    fprintf(stderr, "Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
-    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
-    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
-    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_replicated\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated.load());
-    fprintf(stderr, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
-    fprintf(stderr, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
-    fprintf(stderr, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
-    fprintf(stderr, "Stats R#%d:\t_num_migration_decision_performed\t%d\n", chameleon_comm_rank, _num_migration_decision_performed.load());
-    fprintf(stderr, "Stats R#%d:\t_num_migration_done\t%d\n", chameleon_comm_rank, _num_migration_done.load());
-    fprintf(stderr, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());
-    fprintf(stderr, "Stats R#%d:\t_num_bytes_sent\t%d\n", chameleon_comm_rank, _num_bytes_sent.load());
-    fprintf(stderr, "Stats R#%d:\t_num_bytes_received\t%d\n", chameleon_comm_rank, _num_bytes_received.load());
-    fprintf(stderr, "Stats R#%d:\t_num_slow_communication_operations\t%d\n", chameleon_comm_rank, _num_slow_communication_operations.load());
 
-    cham_stats_print_stats_w_mean("_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
-    cham_stats_print_stats_w_mean("_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
-    cham_stats_print_stats_w_mean("_time_task_execution_replicated_sum", _time_task_execution_replicated_sum, _time_task_execution_replicated_count);
-    cham_stats_print_stats_w_mean("_time_task_execution_overall_sum", (_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_task_execution_replicated_count+_time_task_execution_local_count+_time_task_execution_stolen_count);
-    cham_stats_print_stats_w_mean("_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
-    cham_stats_print_stats_w_mean("_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
-    cham_stats_print_stats_w_mean("_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);
-    cham_stats_print_stats_w_mean("_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
-    cham_stats_print_stats_w_mean("_time_encode_sum", _time_encode_sum, _time_encode_count);
-    cham_stats_print_stats_w_mean("_time_decode_sum", _time_decode_sum, _time_decode_count);
-    cham_stats_print_stats_w_mean("_time_between_load_exchange_sum", _time_between_load_exchange_sum, _time_between_load_exchange_count);
-    cham_stats_print_stats_w_mean("_time_between_allgather_and_exchange_sum", _time_between_allgather_and_exchange_sum, _time_between_allgather_and_exchange_count);
-    cham_stats_print_stats_w_mean("_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
-    cham_stats_print_stats_w_mean("_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
-    cham_stats_print_stats_w_mean("_time_commthread_active_sum", _time_commthread_active_sum, _time_commthread_active_count);
-    cham_stats_print_stats_w_mean("_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count, true);
+    FILE *cur_file = stderr;
+    char *file_prefix = CHAMELEON_STATS_FILE_PREFIX.load();
+    char tmp_file_name[255];
+
+    if(file_prefix) {
+        // initial string
+        strcpy(tmp_file_name, "");
+        // append
+        strcat(tmp_file_name, file_prefix);
+        strcat(tmp_file_name, "_R");
+        strcat(tmp_file_name, std::to_string(chameleon_comm_rank).c_str());
+        cur_file = fopen(tmp_file_name, "a");
+    }
+
+    #if CHAM_STATS_PER_SYNC_INTERVAL
+    fprintf(cur_file, "Stats R#%d:\t===== Printing stats for sync cycle\t%d\t=====\n", chameleon_comm_rank, _num_printed_sync_cycles.load());
+    _num_printed_sync_cycles++;
+    #endif
+
+    fprintf(cur_file, "Stats R#%d:\t_num_overall_ranks\t%d\n", chameleon_comm_rank, chameleon_comm_size);
+    fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_local.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_stolen\t%d\n", chameleon_comm_rank, _num_executed_tasks_stolen.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_replicated\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
+    fprintf(cur_file, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_migration_decision_performed\t%d\n", chameleon_comm_rank, _num_migration_decision_performed.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_migration_done\t%d\n", chameleon_comm_rank, _num_migration_done.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_bytes_sent\t%d\n", chameleon_comm_rank, _num_bytes_sent.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_bytes_received\t%d\n", chameleon_comm_rank, _num_bytes_received.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_slow_communication_operations\t%d\n", chameleon_comm_rank, _num_slow_communication_operations.load());
+
+    cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_replicated_sum", _time_task_execution_replicated_sum, _time_task_execution_replicated_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_overall_sum", (_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_task_execution_replicated_count+_time_task_execution_local_count+_time_task_execution_stolen_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_encode_sum", _time_encode_sum, _time_encode_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_decode_sum", _time_decode_sum, _time_decode_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_between_load_exchange_sum", _time_between_load_exchange_sum, _time_between_load_exchange_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_between_allgather_and_exchange_sum", _time_between_allgather_and_exchange_sum, _time_between_allgather_and_exchange_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_commthread_active_sum", _time_commthread_active_sum, _time_commthread_active_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count);
 #if CHAMELEON_TOOL_SUPPORT
-    cham_stats_print_stats_w_mean("_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
+    cham_stats_print_stats_w_mean(cur_file, "_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
 
-    cham_stats_print_stats_w_mean("_throughput_send_min (MB/s, not reliable)", _throughput_send_min, 1);
-    cham_stats_print_stats_w_mean("_throughput_send_max (MB/s, not reliable)", _throughput_send_max, 1);
-    cham_stats_print_stats_w_mean("_throughput_send_avg (MB/s, not reliable)", _throughput_send_avg, 1);
-    fprintf(stderr, "Stats R#%d:\t_throughput_send_num\t%d\n", chameleon_comm_rank, _throughput_send_num.load());
-    cham_stats_print_stats_w_mean("_throughput_recv_min (MB/s, not reliable)", _throughput_recv_min, 1);
-    cham_stats_print_stats_w_mean("_throughput_recv_max (MB/s, not reliable)", _throughput_recv_max, 1);
-    cham_stats_print_stats_w_mean("_throughput_recv_avg (MB/s, not reliable)", _throughput_recv_avg, 1);
-    fprintf(stderr, "Stats R#%d:\t_throughput_recv_num\t%d\n", chameleon_comm_rank, _throughput_recv_num.load());
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_min (MB/s, not reliable)", _throughput_send_min, 1);
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_max (MB/s, not reliable)", _throughput_send_max, 1);
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_avg (MB/s, not reliable)", _throughput_send_avg, 1);
+    fprintf(cur_file, "Stats R#%d:\t_throughput_send_num\t%d\n", chameleon_comm_rank, _throughput_send_num.load());
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_min (MB/s, not reliable)", _throughput_recv_min, 1);
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_max (MB/s, not reliable)", _throughput_recv_max, 1);
+    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_avg (MB/s, not reliable)", _throughput_recv_avg, 1);
+    fprintf(cur_file, "Stats R#%d:\t_throughput_recv_num\t%d\n", chameleon_comm_rank, _throughput_recv_num.load());
 
-    cham_stats_print_communication_stats("sending", _time_commthread_active_sum, _num_bytes_sent);
-    cham_stats_print_communication_stats("receiving", _time_commthread_active_sum, _num_bytes_received);
-    cham_stats_print_communication_stats("total", _time_commthread_active_sum, _num_bytes_sent+_num_bytes_received);
+    cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, _num_bytes_sent);
+    cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, _num_bytes_received);
+    cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, _num_bytes_sent+_num_bytes_received);
+
+    if(file_prefix) {
+        fclose(cur_file);
+    }
+
     _mtx_relp.unlock();
 }
 

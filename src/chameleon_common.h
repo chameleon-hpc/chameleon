@@ -660,6 +660,8 @@ extern std::atomic<long> mem_allocated;
 // ============================================================ 
 // config values defined through environment variables
 // ============================================================
+extern std::atomic<char*> CHAMELEON_STATS_FILE_PREFIX;
+
 // general settings for migration
 extern std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION;
 extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
@@ -824,6 +826,12 @@ static void load_config_values() {
         TAG_NBITS_TASK_ID = std::atof(tmp);
     }
     TAG_MAX_TASK_ID = ((int)pow(2.0, (double)TAG_NBITS_TASK_ID.load()))-1;
+
+    tmp = nullptr;
+    tmp = std::getenv("CHAMELEON_STATS_FILE_PREFIX");
+    if(tmp) {
+        CHAMELEON_STATS_FILE_PREFIX = tmp;
+    }
 }
 
 static void print_config_values() {
@@ -837,6 +845,9 @@ static void print_config_values() {
     RELP("ENABLE_TRACE_FROM_SYNC_CYCLE=%d\n", ENABLE_TRACE_FROM_SYNC_CYCLE.load());
     RELP("ENABLE_TRACE_TO_SYNC_CYCLE=%d\n", ENABLE_TRACE_TO_SYNC_CYCLE.load());
     RELP("MAX_PERCENTAGE_REPLICATED_TASKS=%f\n", MAX_PERCENTAGE_REPLICATED_TASKS.load());
+    if(CHAMELEON_STATS_FILE_PREFIX.load()) {
+        RELP("CHAMELEON_STATS_FILE_PREFIX=%s\n", CHAMELEON_STATS_FILE_PREFIX.load());
+    }
 }
 #pragma endregion
 

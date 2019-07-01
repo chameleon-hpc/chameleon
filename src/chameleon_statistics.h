@@ -20,6 +20,8 @@
 #define CHAM_STATS_PRINT 0
 #endif
 
+extern std::atomic<int>     _num_printed_sync_cycles;
+
 extern std::atomic<int>     _num_executed_tasks_local;
 extern std::atomic<int>     _num_executed_tasks_stolen;
 extern std::atomic<int>     _num_executed_tasks_replicated;

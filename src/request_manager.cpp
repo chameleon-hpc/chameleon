@@ -15,7 +15,7 @@ RequestManager::RequestManager()
   std::fill(&_num_completed_request_groups[0], &_num_completed_request_groups[5], 0);
 }
 
-void RequestManager::submitRequests( int tag, int rank, 
+void RequestManager::submitRequests( double startStamp, int tag, int rank, 
                                 int n_requests, 
                                 MPI_Request *requests,
                                 int sum_bytes,
@@ -25,11 +25,6 @@ void RequestManager::submitRequests( int tag, int rank,
                                 void* buffer,
                                 cham_migratable_task_t** tasks,
                                 int num_tasks) {
-    double startStamp = 0;
-    #if CHAM_STATS_RECORD
-    startStamp = omp_get_wtime();
-    #endif
-
     #if CHAM_DEBUG
     std::string str_task_ids = "";
     if(tasks != NULL) {
@@ -49,13 +44,16 @@ void RequestManager::submitRequests( int tag, int rank,
     
     if(canFinish) {
 #if CHAM_STATS_RECORD   
-      double elapsed = omp_get_wtime()-startStamp;
-      addTimingToStatistics(elapsed, type);
-      if(type == send || type == sendBack) {
-          add_throughput_send(elapsed, sum_bytes);
-      } else {
-          add_throughput_recv(elapsed, sum_bytes);
-      }
+    double elapsed = omp_get_wtime()-startStamp;
+    addTimingToStatistics(elapsed, type);
+    if(type == send || type == sendBack) {
+        add_throughput_send(elapsed, sum_bytes);
+    } else {
+    #if OFFLOAD_DATA_PACKING_TYPE > 0 // disable tracking for very short meta data messages because it might destroy reliability of statistics
+        if(type != recv)
+    #endif
+            add_throughput_recv(elapsed, sum_bytes);
+    }
 #endif 
       _num_completed_requests[type]+= n_requests;
       _num_completed_request_groups[type]+=1;
@@ -138,15 +136,15 @@ void RequestManager::progressRequests() {
   std::vector<int> arr_of_indices(n_requests);
   std::vector<MPI_Status> arr_of_statuses(n_requests);
 
-//#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-//    double cur_time = omp_get_wtime();
-//#endif
+#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+   double cur_time = omp_get_wtime();
+#endif
   MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
-//#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-//    cur_time = omp_get_wtime()-cur_time;
-//    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
-//      _num_slow_communication_operations++; 
-//#endif
+#if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+   cur_time = omp_get_wtime()-cur_time;
+   if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+     _num_slow_communication_operations++; 
+#endif
   _current_num_finished_requests += outcount;
 
   for(int i=0; i<outcount; i++) {
@@ -183,9 +181,12 @@ void RequestManager::progressRequests() {
        if(type == send || type == sendBack) {
             add_throughput_send(finishedStamp-startStamp, request_group_data.sum_bytes);
        } else {
-           add_throughput_recv(finishedStamp-startStamp, request_group_data.sum_bytes);
+            #if OFFLOAD_DATA_PACKING_TYPE > 0 // disable tracking for very short meta data messages because it might destroy reliability of statistics
+            if(type != recv)
+            #endif
+                add_throughput_recv(finishedStamp-startStamp, request_group_data.sum_bytes);
        }
-#endif               
+#endif
        handler(buffer, tag, rank, tasks, num_tasks);
        _map_id_to_request_group_data.erase(gid);
     }

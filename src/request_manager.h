@@ -29,7 +29,7 @@ static const char* RequestType_values[] = {
 class RequestManager {
   public:
     RequestManager();
-    void submitRequests( int tag, int rank, int n_requests, 
+    void submitRequests( double startStamp, int tag, int rank, int n_requests, 
                          MPI_Request *requests,
                          int sum_bytes,
                          bool block,

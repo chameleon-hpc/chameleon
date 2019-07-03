@@ -4,6 +4,57 @@
 #include <float.h>
 #include <stdio.h>
 
+MinMaxAvgStats::MinMaxAvgStats(std::string name, std::string unit) {
+    stat_name = name;
+    unit_str = unit;
+    reset();
+}
+
+void MinMaxAvgStats::reset() {
+    count = 0;
+    val_sum = 0.0;
+    val_min = DBL_MAX;
+    val_max = DBL_MIN;
+    val_avg = 0.0;    
+}
+
+void MinMaxAvgStats::add_stat_value(double val) {
+    if(val > val_max) {
+        val_max = val;
+    }
+    if(val < val_min) {
+        val_min = val;
+    }
+
+    // add up
+    val_sum = val_sum + val;
+
+    if(count == 0)
+    {
+        val_avg = val;
+        count++;
+    } else {
+        // calculate avg throughput
+        double cur_num = (double) count.load();
+        val_avg = (val_avg.load() * cur_num + (double) val) / (cur_num+1);
+        count++;
+    }
+}
+
+void MinMaxAvgStats::print_stats(FILE *cur_file) {
+    std::stringstream ss; 
+    ss.str(""); ss.clear(); ss << stat_name << "_sum (" << unit_str << ")";
+    fprintf(cur_file, "Stats R#%d:\t%s\t%lf\n", chameleon_comm_rank, ss.str().c_str(), val_sum.load());
+    ss.str(""); ss.clear(); ss << stat_name << "_count";
+    fprintf(cur_file, "Stats R#%d:\t%s\t%ld\n", chameleon_comm_rank, ss.str().c_str(), count.load());
+    ss.str(""); ss.clear(); ss << stat_name << "_min (" << unit_str << ")";
+    cham_stats_print_stats_w_mean(cur_file, ss.str(), val_min.load(), 1);
+    ss.str(""); ss.clear(); ss << stat_name << "_max (" << unit_str << ")";
+    cham_stats_print_stats_w_mean(cur_file, ss.str(), val_max.load(), 1);
+    ss.str(""); ss.clear(); ss << stat_name << "_avg (" << unit_str << ")";
+    cham_stats_print_stats_w_mean(cur_file, ss.str(), val_avg.load(), 1);
+}
+
 std::atomic<int>     _num_printed_sync_cycles(0);
 
 std::atomic<int>     _num_executed_tasks_local(0);
@@ -15,8 +66,6 @@ std::atomic<int>     _num_migration_decision_performed(0);
 std::atomic<int>     _num_migration_done(0);
 std::atomic<int>     _num_load_exchanges_performed(0);
 std::atomic<int>     _num_slow_communication_operations(0);
-std::atomic<int>     _num_bytes_sent(0);
-std::atomic<int>     _num_bytes_received(0);
 
 std::atomic<double>  _time_data_submit_sum(0.0);
 std::atomic<int>     _time_data_submit_count(0);
@@ -60,15 +109,12 @@ std::atomic<int>     _time_taskwait_count(0);
 std::atomic<double>  _time_commthread_active_sum(0.0);
 std::atomic<int>     _time_commthread_active_count(0.0);
 
-std::atomic<double>  _throughput_send_min(DBL_MAX);
-std::atomic<double>  _throughput_send_max(DBL_MIN);
-std::atomic<double>  _throughput_send_avg(0.0);
-std::atomic<int>     _throughput_send_num(0);
-
-std::atomic<double>  _throughput_recv_min(DBL_MAX);
-std::atomic<double>  _throughput_recv_max(DBL_MIN);
-std::atomic<double>  _throughput_recv_avg(0.0);
-std::atomic<int>     _throughput_recv_num(0);
+MinMaxAvgStats       _stats_bytes_send_per_message = MinMaxAvgStats("_bytes_send_per_message", "Bytes");
+MinMaxAvgStats       _stats_bytes_recv_per_message = MinMaxAvgStats("_bytes_recv_per_message", "Bytes");
+MinMaxAvgStats       _stats_time_comm_send = MinMaxAvgStats("time_comm_send", "sec, not reliable");
+MinMaxAvgStats       _stats_time_comm_recv = MinMaxAvgStats("time_comm_recv", "sec, not reliable");
+MinMaxAvgStats       _stats_throughput_send = MinMaxAvgStats("_throughput_send", "MB/s, not reliable");
+MinMaxAvgStats       _stats_throughput_recv = MinMaxAvgStats("_throughput_recv", "MB/s, not reliable");
 
 #if CHAMELEON_TOOL_SUPPORT
 std::atomic<double>  _time_tool_get_thread_data_sum(0.0);
@@ -89,8 +135,6 @@ void cham_stats_reset_for_sync_cycle() {
     _num_migration_done = 0;
     _num_load_exchanges_performed = 0;
     _num_slow_communication_operations = 0;
-    _num_bytes_sent = 0;
-    _num_bytes_received = 0;
   
     _time_task_execution_local_sum = 0.0;
     _time_task_execution_local_count = 0;
@@ -131,18 +175,15 @@ void cham_stats_reset_for_sync_cycle() {
     _time_commthread_active_sum = 0.0;
     _time_commthread_active_count = 0;
 
-    _throughput_send_max = DBL_MIN;
-    _throughput_send_min = DBL_MAX;
-    _throughput_send_avg = 0.0;
-    _throughput_send_num = 0;
-
-    _throughput_recv_max = DBL_MIN;
-    _throughput_recv_min = DBL_MAX;
-    _throughput_recv_avg = 0.0;
-    _throughput_recv_num = 0;
+    _stats_bytes_send_per_message.reset();
+    _stats_throughput_send.reset();
+    _stats_bytes_recv_per_message.reset();
+    _stats_throughput_recv.reset();
+    _stats_time_comm_send.reset();
+    _stats_time_comm_recv.reset();
 }
 
-void cham_stats_print_stats_w_mean(FILE *cur_file, std::string name, double sum, int count, bool cummulative = false) {
+void cham_stats_print_stats_w_mean(FILE *cur_file, std::string name, double sum, int count, bool cummulative) {
     std::string prefix = "Stats";
     if(cummulative)
         prefix = "Cumulative Stats";    
@@ -192,18 +233,16 @@ void cham_stats_print_stats() {
     fprintf(cur_file, "Stats R#%d:\t_num_migration_decision_performed\t%d\n", chameleon_comm_rank, _num_migration_decision_performed.load());
     fprintf(cur_file, "Stats R#%d:\t_num_migration_done\t%d\n", chameleon_comm_rank, _num_migration_done.load());
     fprintf(cur_file, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());
-    fprintf(cur_file, "Stats R#%d:\t_num_bytes_sent\t%d\n", chameleon_comm_rank, _num_bytes_sent.load());
-    fprintf(cur_file, "Stats R#%d:\t_num_bytes_received\t%d\n", chameleon_comm_rank, _num_bytes_received.load());
     fprintf(cur_file, "Stats R#%d:\t_num_slow_communication_operations\t%d\n", chameleon_comm_rank, _num_slow_communication_operations.load());
 
     cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_local_sum", _time_task_execution_local_sum, _time_task_execution_local_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_stolen_sum", _time_task_execution_stolen_sum, _time_task_execution_stolen_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_replicated_sum", _time_task_execution_replicated_sum, _time_task_execution_replicated_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_task_execution_overall_sum", (_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_task_execution_replicated_count+_time_task_execution_local_count+_time_task_execution_stolen_count);
-    cham_stats_print_stats_w_mean(cur_file, "_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
-    cham_stats_print_stats_w_mean(cur_file, "_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
-    cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);
-    cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
+    // cham_stats_print_stats_w_mean(cur_file, "_time_comm_send_task_sum", _time_comm_send_task_sum, _time_comm_send_task_count);
+    // cham_stats_print_stats_w_mean(cur_file, "_time_comm_recv_task_sum", _time_comm_recv_task_sum, _time_comm_recv_task_count);
+    // cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_send_sum", _time_comm_back_send_sum, _time_comm_back_send_count);
+    // cham_stats_print_stats_w_mean(cur_file, "_time_comm_back_recv_sum", _time_comm_back_recv_sum, _time_comm_back_recv_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_encode_sum", _time_encode_sum, _time_encode_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_decode_sum", _time_decode_sum, _time_decode_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_between_load_exchange_sum", _time_between_load_exchange_sum, _time_between_load_exchange_count);
@@ -216,18 +255,16 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean(cur_file, "_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
 
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_min (MB/s, not reliable)", _throughput_send_min, 1);
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_max (MB/s, not reliable)", _throughput_send_max, 1);
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_send_avg (MB/s, not reliable)", _throughput_send_avg, 1);
-    fprintf(cur_file, "Stats R#%d:\t_throughput_send_num\t%d\n", chameleon_comm_rank, _throughput_send_num.load());
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_min (MB/s, not reliable)", _throughput_recv_min, 1);
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_max (MB/s, not reliable)", _throughput_recv_max, 1);
-    cham_stats_print_stats_w_mean(cur_file, "_throughput_recv_avg (MB/s, not reliable)", _throughput_recv_avg, 1);
-    fprintf(cur_file, "Stats R#%d:\t_throughput_recv_num\t%d\n", chameleon_comm_rank, _throughput_recv_num.load());
+    _stats_throughput_send.print_stats(cur_file);
+    _stats_bytes_send_per_message.print_stats(cur_file);
+    _stats_throughput_recv.print_stats(cur_file);
+    _stats_bytes_recv_per_message.print_stats(cur_file);
+    _stats_time_comm_send.print_stats(cur_file);
+    _stats_time_comm_recv.print_stats(cur_file);
 
-    cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, _num_bytes_sent);
-    cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, _num_bytes_received);
-    cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, _num_bytes_sent+_num_bytes_received);
+    cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load());
+    cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, (int)_stats_bytes_recv_per_message.val_sum.load());
+    cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load() + (int)_stats_bytes_recv_per_message.val_sum.load());
 
     if(file_prefix) {
         fclose(cur_file);
@@ -252,45 +289,15 @@ void cham_stats_print_stats() {
 void add_throughput_send(double elapsed_sec, int sum_byes) {
     double cur_throughput_mb_s = (double)sum_byes / (elapsed_sec * 1e06);
     // RELP("Send data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
-    if(cur_throughput_mb_s > _throughput_send_max) {
-        _throughput_send_max = cur_throughput_mb_s;
-    }
-    if(cur_throughput_mb_s < _throughput_send_min) {
-        _throughput_send_min = cur_throughput_mb_s;
-    }
-
-    if(_throughput_send_num == 0)
-    {
-        _throughput_send_avg = cur_throughput_mb_s;
-        _throughput_send_num++;
-    } else {
-        // calculate avg throughput
-        double cur_num = (double) _throughput_send_num.load();
-        _throughput_send_avg = (_throughput_send_avg.load() * cur_num + cur_throughput_mb_s) / (cur_num+1);
-        _throughput_send_num++;
-    }
+    _stats_throughput_send.add_stat_value(cur_throughput_mb_s);
+    _stats_time_comm_send.add_stat_value(elapsed_sec);
 }
 
 void add_throughput_recv(double elapsed_sec, int sum_byes) {
     double cur_throughput_mb_s = (double)sum_byes / (elapsed_sec * 1e06);
     // RELP("Recv data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
-    if(cur_throughput_mb_s > _throughput_recv_max) {
-        _throughput_recv_max = cur_throughput_mb_s;
-    }
-    if(cur_throughput_mb_s < _throughput_recv_min) {
-        _throughput_recv_min = cur_throughput_mb_s;
-    }
-
-    if(_throughput_recv_num == 0)
-    {
-        _throughput_recv_avg = cur_throughput_mb_s;
-        _throughput_recv_num++;
-    } else {
-        // calculate avg throughput
-        double cur_num = (double) _throughput_recv_num.load();
-        _throughput_recv_avg = (_throughput_recv_avg.load() * cur_num + cur_throughput_mb_s) / (cur_num+1);
-        _throughput_recv_num++;
-    }
+    _stats_throughput_recv.add_stat_value(cur_throughput_mb_s);
+    _stats_time_comm_recv.add_stat_value(elapsed_sec);
 }
 
 #ifdef __cplusplus

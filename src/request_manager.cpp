@@ -45,7 +45,6 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
     if(canFinish) {
 #if CHAM_STATS_RECORD   
     double elapsed = omp_get_wtime()-startStamp;
-    addTimingToStatistics(elapsed, type);
     if(type == send || type == sendBack) {
         add_throughput_send(elapsed, sum_bytes);
     } else {
@@ -82,7 +81,7 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
 //      assert(ierr==MPI_SUCCESS);
 // #if CHAM_STATS_RECORD
 //      time += omp_get_wtime();
-//      addTimingToStatistics(time, type); 
+//      // TODO: add throughput
 // #endif
 //      handler(buffer, tag, rank, tasks, num_tasks);
 //      //for(int i=0; i<buffers_to_delete.size(); i++) delete[] buffers_to_delete[i];
@@ -177,7 +176,6 @@ void RequestManager::progressRequests() {
        DBP("%s - finally finished all requests for tag %ld\n", RequestType_values[type], tag);
 #if CHAM_STATS_RECORD
        double startStamp = request_group_data.start_time;
-       addTimingToStatistics(finishedStamp-startStamp, type);
        if(type == send || type == sendBack) {
             add_throughput_send(finishedStamp-startStamp, request_group_data.sum_bytes);
        } else {
@@ -218,25 +216,3 @@ void RequestManager::printRequestInformation() {
 int RequestManager::getNumberOfOutstandingRequests() {
   return _request_queue.size()-_current_num_finished_requests;
 }
-
-#if CHAM_STATS_RECORD
-void RequestManager::addTimingToStatistics(double elapsed, RequestType type) {
-  switch(type) {
-    case send:
-        atomic_add_dbl(_time_comm_send_task_sum, elapsed);
-        break;        
-    case sendBack:
-        atomic_add_dbl(_time_comm_back_send_sum, elapsed);
-        break;
-    case recv:
-        atomic_add_dbl(_time_comm_recv_task_sum, elapsed);
-        break;
-    case recvData:
-        atomic_add_dbl(_time_comm_recv_task_sum, elapsed);
-        break;
-    case recvBack:
-        atomic_add_dbl(_time_comm_back_recv_sum, elapsed);
-        break;
-  }
-}
-#endif

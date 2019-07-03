@@ -60,9 +60,6 @@ class RequestManager {
         MPI_Request mpi_request;
     };
 
-#if CHAM_STATS_RECORD
-    void addTimingToStatistics(double elapsed, RequestType type);
-#endif
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     std::queue<int> _request_queue;

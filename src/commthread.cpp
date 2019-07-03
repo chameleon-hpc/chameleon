@@ -604,7 +604,6 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #endif /* OFFLOAD_DATA_PACKING_TYPE == ... */
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
     #if MPI_BLOCKING
     add_throughput_recv(cur_time, num_bytes_received);
     #endif
@@ -849,8 +848,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, buffer_size);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
 
 #if OFFLOAD_DATA_PACKING_TYPE > 0 && CHAM_STATS_RECORD
@@ -894,8 +891,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, tmp_bytes_send);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     int tmp_overall_arg_nums = 0;
@@ -950,8 +945,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, size);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
     ierr = MPI_Type_free(&type_mapped_vars);
     assert(ierr==MPI_SUCCESS);
@@ -1663,10 +1656,6 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     double start_time_requests = 0;
 
     #if OFFLOAD_DATA_PACKING_TYPE == 0
-    #if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
-    #endif
-
     int32_t tmp_size_buff = 0;
     for(int i = 0; i < cur_task->arg_num; i++) {
         if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
@@ -1690,12 +1679,6 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     start_time_requests = omp_get_wtime();
     #endif 
     MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &request);
-    
-    #if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_back_send_sum, cur_time);
-    _time_comm_back_send_count++;
-    #endif
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
@@ -1714,10 +1697,8 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     
     #elif OFFLOAD_DATA_PACKING_TYPE > 0
     #if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
-    start_time_requests = cur_time;
+    start_time_requests = omp_get_wtime();
     #endif
-
     #if OFFLOAD_DATA_PACKING_TYPE == 1
     MPI_Request *requests = new MPI_Request[cur_task->arg_num];
     int num_requests = 0;
@@ -1777,12 +1758,6 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     assert(ierr==MPI_SUCCESS);
     ierr = MPI_Type_free(&type_mapped_vars);
     assert(ierr==MPI_SUCCESS);
-    #endif
-
-    #if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_back_send_sum, cur_time);
-    _time_comm_back_send_count++;
     #endif
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
@@ -1906,8 +1881,6 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #endif
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             num_bytes_received += recv_buff_size;
             _stats_bytes_recv_per_message.add_stat_value((double)recv_buff_size);
             #if MPI_BLOCKING
@@ -1964,8 +1937,6 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2054,8 +2025,6 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2108,8 +2077,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++; //TODO count trash receives!
+            //TODO count trash receives!
             num_bytes_received += msg_size;
             _stats_bytes_recv_per_message.add_stat_value((double)msg_size);
             #if MPI_BLOCKING
@@ -2160,8 +2128,6 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2213,8 +2179,6 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
 
     #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
-    _time_comm_recv_task_count++;
     num_bytes_received += recv_buff_size;
     #if OFFLOAD_DATA_PACKING_TYPE == 0 // disable tracking for very short meta data messages because it might destroy reliability of statistics
     _stats_bytes_recv_per_message.add_stat_value((double)recv_buff_size);

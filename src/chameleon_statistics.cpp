@@ -99,8 +99,8 @@ std::atomic<int>     _time_commthread_active_count(0.0);
 
 MinMaxAvgStats       _stats_bytes_send_per_message = MinMaxAvgStats("_bytes_send_per_message", "Bytes");
 MinMaxAvgStats       _stats_bytes_recv_per_message = MinMaxAvgStats("_bytes_recv_per_message", "Bytes");
-MinMaxAvgStats       _stats_time_comm_send = MinMaxAvgStats("time_comm_send", "sec, not reliable");
-MinMaxAvgStats       _stats_time_comm_recv = MinMaxAvgStats("time_comm_recv", "sec, not reliable");
+MinMaxAvgStats       _stats_time_comm_send = MinMaxAvgStats("_time_comm_send", "sec, not reliable");
+MinMaxAvgStats       _stats_time_comm_recv = MinMaxAvgStats("_time_comm_recv", "sec, not reliable");
 MinMaxAvgStats       _stats_throughput_send = MinMaxAvgStats("_throughput_send", "MB/s, not reliable");
 MinMaxAvgStats       _stats_throughput_recv = MinMaxAvgStats("_throughput_recv", "MB/s, not reliable");
 

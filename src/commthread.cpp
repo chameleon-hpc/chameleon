@@ -834,9 +834,9 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     DBP("offload_action - sending data to target rank %d with mpi_tag: %d\n", target_rank, tmp_tag);
 #if CHAM_STATS_RECORD
     num_bytes_sent += buffer_size;
-    #if OFFLOAD_DATA_PACKING_TYPE == 0
+    // #if OFFLOAD_DATA_PACKING_TYPE == 0
     _stats_bytes_send_per_message.add_stat_value((double)buffer_size);
-    #endif
+    // #endif
     start_time_requests = cur_time = omp_get_wtime();
 #endif
     MPI_Request *requests = new MPI_Request[n_requests];

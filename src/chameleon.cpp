@@ -452,8 +452,6 @@ int32_t chameleon_finalize() {
 
     // cleanup
     free(__thread_data);
-    if(trash_buffer)
-        free(trash_buffer);
 
     DBP("chameleon_finalize (exit)\n");
     return CHAM_SUCCESS;

@@ -25,9 +25,6 @@ extern RequestManager request_manager_cancel;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
-//"trash buffer" for late receives (i.e. a replicated task is already processed locally)
-extern void *trash_buffer;
-
 extern std::vector<intptr_t> _image_base_addresses;
 
 // list with local task entries

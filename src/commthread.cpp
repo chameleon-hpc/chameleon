@@ -39,10 +39,6 @@ RequestManager request_manager_receive;
 RequestManager request_manager_send;
 RequestManager request_manager_cancel;
 
-//"trash buffer" for late receives (i.e. a replicated task is already processed locally)
-void *trash_buffer = nullptr;
-int cur_trash_buffer_size = 0;
-
 // array that holds image base addresses
 std::vector<intptr_t> _image_base_addresses;
 
@@ -705,6 +701,8 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
         cham_migratable_task_t *task = tasks[i_task];
         free_migratable_task(task, false);
     }
+    if(buffer)
+        free(buffer);
 }
 #pragma endregion
 
@@ -2053,14 +2051,11 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         {
             DBP("Late receive back occured for replicated task, task_id %ld\n", task_entry->task_id);
             int msg_size = 0;
+            void *trash_buffer;
+
             #if OFFLOAD_DATA_PACKING_TYPE == 0
             MPI_Get_count(cur_status_receiveBack, MPI_BYTE, &msg_size);
-            if(msg_size > cur_trash_buffer_size) {
-                if(trash_buffer)
-                    free(trash_buffer);
-                trash_buffer = malloc(msg_size);
-                cur_trash_buffer_size = msg_size;
-            }
+            trash_buffer = malloc(msg_size);
             MPI_Request request;
 
             #if CHAM_STATS_RECORD
@@ -2075,7 +2070,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            //TODO count trash receives!
+            //TODO: count trash receives!
             num_bytes_received += msg_size;
             _stats_bytes_recv_per_message.add_stat_value((double)msg_size);
             #if MPI_BLOCKING
@@ -2092,7 +2087,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                                                     0,
                                                     receive_back_trash_handler,
                                                     recvBack,
-                                                    nullptr);
+                                                    trash_buffer);
             #endif
 
             #elif OFFLOAD_DATA_PACKING_TYPE > 0 // TODO: need to take care of Type 2
@@ -2108,13 +2103,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                     msg_size += task_entry->arg_sizes[i];
                 }
             }
-            if(msg_size > cur_trash_buffer_size) {
-                if(trash_buffer)
-                    free(trash_buffer);
-                trash_buffer = malloc(msg_size);
-                cur_trash_buffer_size = msg_size;
-            }
-
+            trash_buffer = malloc(msg_size);
             // current position for trash data
             char *cur_ptr_pos = (char*)trash_buffer;
 
@@ -2151,13 +2140,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                     num_outputs++;
                 }
             }
-            if(msg_size > cur_trash_buffer_size) {
-                if(trash_buffer)
-                    free(trash_buffer);
-                trash_buffer = malloc(msg_size);
-                cur_trash_buffer_size = msg_size;
-            }
-            
+            trash_buffer = malloc(msg_size);            
             // current position for trash data
             char *cur_ptr_pos = (char*)trash_buffer;
 
@@ -2207,7 +2190,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #endif
             
             #if MPI_BLOCKING
-            receive_back_handler(nullptr, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
+            receive_back_handler(trash_buffer, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
             #else
             request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, num_requests, 
                                                 &requests[0],
@@ -2215,7 +2198,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                                                 0,
                                                 receive_back_trash_handler,
                                                 recvBack,
-                                                nullptr);
+                                                trash_buffer);
             #endif
             delete[] requests;
             #endif /* OFFLOAD_DATA_PACKING_TYPE */

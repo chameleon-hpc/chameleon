@@ -51,8 +51,8 @@
 // determines how data (arguments) is packed and send during offloading
 #ifndef OFFLOAD_DATA_PACKING_TYPE
 // #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
-// #define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
-#define OFFLOAD_DATA_PACKING_TYPE 2     // 2 = zero copy approach, only pack meta data (num_args, arg types ...) + ONE separat send for with mapped arguments
+#define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
+//#define OFFLOAD_DATA_PACKING_TYPE 2     // 2 = zero copy approach, only pack meta data (num_args, arg types ...) + ONE separat send for with mapped arguments
 #endif
 
 #ifndef OFFLOAD_SEND_TASKS_SEPARATELY
@@ -69,9 +69,9 @@
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
-#define CHAM_REPLICATION_MODE 0 //no replication
-// #define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
-// #define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
+//#define CHAM_REPLICATION_MODE 0 //no replication
+#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+//#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 #endif
 
 //Specify whether tasks should be offloaded aggressively after one performance update
@@ -303,6 +303,7 @@ typedef struct cham_migratable_task_t {
     int32_t is_replicated_task  = 0;
 
     int32_t num_outstanding_recvbacks = 0;
+    int32_t num_outstanding_replication_sends = 0;
 
     // Some special settings for stolen tasks
     int32_t source_mpi_rank     = 0;

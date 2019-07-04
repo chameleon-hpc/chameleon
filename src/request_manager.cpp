@@ -39,13 +39,16 @@ void RequestManager::submitRequests( int tag, int rank,
         }
     }
     DBP("%s - submitting requests for tag %d and tasks %s\n", RequestType_values[type], tag, str_task_ids.c_str());
+
+
     #endif
   
     _num_posted_requests[type]+= n_requests; 
     _num_posted_request_groups[type]+=1;
 
     int canFinish = 0;
-    MPI_Testall(n_requests, &requests[0], &canFinish, MPI_STATUSES_IGNORE);
+    int ierr = MPI_Testall(n_requests, &requests[0], &canFinish, MPI_STATUSES_IGNORE);
+    assert(ierr==MPI_SUCCESS);
     
     if(canFinish) {
 #if CHAM_STATS_RECORD   

@@ -4,6 +4,7 @@
  
 #include <numeric>
 #include <algorithm>
+#include <cassert>
 
 #pragma region Local Helpers
 template <typename T>
@@ -161,10 +162,14 @@ int32_t get_default_load_information_for_rank(TYPE_TASK_ID* local_task_ids, int3
     // simply return number of tasks in queue
     // int32_t num_ids = num_tasks_local + num_tasks_stolen;
     int32_t num_ids;
+    assert(num_tasks_stolen_rep>=0);
+    assert(num_tasks_stolen>=0);
+    assert(num_tasks_local_rep>=0);
+    assert(num_tasks_local>=0);
 
     num_ids = num_tasks_local + num_tasks_local_rep;
 #if CHAM_REPLICATION_MODE==1
-    num_ids += std::max<int32_t>(_num_remote_tasks_outstanding.load(), num_tasks_stolen + num_tasks_stolen_rep);
+    num_ids += num_tasks_stolen + num_tasks_stolen_rep;
 #else
     num_ids += num_tasks_stolen;
 #endif

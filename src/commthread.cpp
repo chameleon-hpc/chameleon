@@ -2664,8 +2664,8 @@ void* comm_thread_action(void* arg) {
         }
 
         #if CHAM_REPLICATION_MODE>0
-        if(has_not_replicated && _num_threads_involved_in_taskwait == _num_threads_active_in_taskwait) {           
-            has_not_replicated = !action_task_replication();
+        if(has_not_replicated && _num_threads_involved_in_taskwait == _num_threads_active_in_taskwait) {
+           has_not_replicated = !action_task_replication();
         }
         else{
         #endif

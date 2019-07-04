@@ -7,6 +7,7 @@
 
 #include "chameleon.h"
 #include "chameleon_common.h"
+#include "chameleon_tools.h"
 #include "request_manager.h"
 
 // communicator for remote task requests
@@ -46,7 +47,7 @@ extern thread_safe_task_list_t _replicated_remote_tasks;
 // list with stolen task entries that need output data transfer
 extern thread_safe_task_list_t _remote_tasks_send_back;
 // list with replicated task entries that need initial transfer
-extern thread_safe_task_list_t _replicated_tasks_to_transfer;
+extern thread_safe_list_t<cham_t_replication_info_t*> _replication_infos_list;
 
 // map that maps tag ids back to local tasks that have been offloaded and expect result data
 extern thread_safe_task_map_t _map_offloaded_tasks_with_outputs;

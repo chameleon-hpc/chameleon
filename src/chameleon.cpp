@@ -901,9 +901,11 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
         cham_t_status.cham_t_callback_task_create(task, &(task->task_tool_data), codeptr_ra);
     }
 #endif
+    assert(task->num_outstanding_recvbacks==0);
 
+    _local_tasks.push_back(task);
     // add to queue
-#if CHAM_REPLICATION_MODE>0
+/*#if CHAM_REPLICATION_MODE>0
     if(!task->is_replicated_task) 
 #endif
       _local_tasks.push_back(task);
@@ -912,7 +914,7 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
       _replicated_local_tasks.push_back(task);
       _replicated_tasks_to_transfer.push_back(task);
     }
-#endif
+#endif */
     // set id of last task added
     __last_task_id_added = task->task_id;
 
@@ -1147,6 +1149,8 @@ inline int32_t process_replicated_local_task() {
 
     //atomic CAS
     if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
+        DBP("process_replicated_local_task - task %d was reserved for local execution\n", replicated_task->task_id);
+    //if(true) {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
 
 #ifdef TRACE
@@ -1184,11 +1188,11 @@ inline int32_t process_replicated_local_task() {
         _unfinished_locally_created_tasks.remove(replicated_task->task_id);
         _map_overall_tasks.erase(replicated_task->task_id);
 
-        _mtx_load_exchange.lock();
-        _num_local_tasks_outstanding--;
-        DBP("process_replicated_task - decrement local outstanding count for task %ld\n", replicated_task->task_id);
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
+//        _mtx_load_exchange.lock();
+//        _num_local_tasks_outstanding--;
+//        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
+//        trigger_update_outstanding();
+//        _mtx_load_exchange.unlock();
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
 #endif

@@ -127,32 +127,38 @@ void compute_num_tasks_to_offload( std::vector<int32_t>& tasksToOffloadPerRank, 
 // implements default replication strategy where neighbouring ranks logically have some "overlapping tasks"
  cham_t_replication_info_t * compute_num_tasks_to_replicate(  std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t *num_replication_infos ) {
 
-    double alpha;
+    double alpha = 0;
     int myLeft = chameleon_comm_rank-1;
     int myRight = chameleon_comm_rank+1;
+    
+    assert(num_tasks_local>=0);
 
     int num_neighbours = 0;
-    if(myLeft>0) num_neighbours++;
+    if(myLeft>=0) num_neighbours++;
     if(myRight<chameleon_comm_size) num_neighbours++;
     cham_t_replication_info_t *replication_infos = (cham_t_replication_info_t*) malloc(sizeof(cham_t_replication_info_t)*num_neighbours);
 
     alpha = MAX_PERCENTAGE_REPLICATED_TASKS/num_neighbours;
+    assert(alpha>=0);
 
     int32_t cnt = 0;
 
-	if(myLeft>0) {
+	if(myLeft>=0) {
+	    //printf("alpha %f, num_tasks_local %d\n", alpha, num_tasks_local);
 	    int num_tasks = num_tasks_local*alpha;
+            assert(num_tasks>=0);
 	    int *replication_ranks = (int*) malloc(sizeof(int)*1);
 	    replication_ranks[0] = myLeft;
 		cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
 		replication_infos[cnt++] = info;
 	}
 	if(myRight<chameleon_comm_size) {
-		int num_tasks = num_tasks_local*alpha;
-		int *replication_ranks = (int*) malloc(sizeof(int)*1);
-		replication_ranks[0] = myRight;
-		cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
-		replication_infos[cnt++] = info;
+	    int num_tasks = num_tasks_local*alpha;
+            assert(num_tasks>=0);
+	    int *replication_ranks = (int*) malloc(sizeof(int)*1);
+	    replication_ranks[0] = myRight;
+	    cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
+	    replication_infos[cnt++] = info;
 	}
 	*num_replication_infos = cnt;
 	return replication_infos;

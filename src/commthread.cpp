@@ -2122,7 +2122,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             int msg_size = 0;
             MPI_Get_count(cur_status_receiveBack, MPI_BYTE, &msg_size);
             if(msg_size > cur_trash_buffer_size) {
-                free(trash_buffer);
+                //free(trash_buffer);
                 trash_buffer = malloc(msg_size);
                 cur_trash_buffer_size = msg_size; 
             }     

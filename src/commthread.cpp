@@ -39,10 +39,6 @@ RequestManager request_manager_receive;
 RequestManager request_manager_send;
 RequestManager request_manager_cancel;
 
-//"trash buffer" for late receives (i.e. a replicated task is already processed locally)
-void *trash_buffer = nullptr;
-int cur_trash_buffer_size = 0;
-
 // array that holds image base addresses
 std::vector<intptr_t> _image_base_addresses;
 
@@ -462,6 +458,7 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
     // add tasks to stolen list
     for (int i_task = 0; i_task < num_tasks; i_task++) {
         cham_migratable_task_t *task = tasks[i_task];
+        // check if task has already been cancelled
         if(_cancelled_task_ids.find(task->task_id)!=_cancelled_task_ids.end()) {
         	_cancelled_task_ids.erase(task->task_id);
         	free_migratable_task(task, 1);
@@ -522,6 +519,7 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     receive_handler_data(NULL, tag, source, p_tasks, n_tasks);
 #elif OFFLOAD_DATA_PACKING_TYPE > 0
+    double start_time_requests = 0;
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime();
 #endif
@@ -532,6 +530,10 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     }
     MPI_Request *requests = new MPI_Request[num_requests];
     int cur_req_num = 0;
+
+    #if CHAM_STATS_RECORD
+    start_time_requests = omp_get_wtime();
+    #endif
     for(int i_task = 0; i_task < n_tasks; i_task++) {
         cham_migratable_task_t *task = list_tasks[i_task];
         for(int i=0; i<task->arg_num; i++) {
@@ -553,6 +555,7 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
             }
             #if CHAM_STATS_RECORD
             num_bytes_received += task->arg_sizes[i];
+            _stats_bytes_recv_per_message.add_stat_value((double)task->arg_sizes[i]);
             #endif
             cur_req_num++;
             print_arg_info("receive_handler - receiving argument", task, i);
@@ -599,10 +602,14 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     int size = 0;
     MPI_Type_size(type_mapped_vars, &size);
     num_bytes_received += size;
+    _stats_bytes_recv_per_message.add_stat_value((double)size);
     #endif
     #if MPI_BLOCKING
     ierr = MPI_Recv(MPI_BOTTOM, 1, type_mapped_vars, source, tag, chameleon_comm, MPI_STATUS_IGNORE);
     #else
+    #if CHAM_STATS_RECORD
+    start_time_requests = omp_get_wtime();
+    #endif
     ierr = MPI_Irecv(MPI_BOTTOM, 1, type_mapped_vars, source, tag, chameleon_comm, &requests[0]);
     #endif
     assert(ierr==MPI_SUCCESS);
@@ -611,7 +618,6 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #endif /* OFFLOAD_DATA_PACKING_TYPE == ... */
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
     #if MPI_BLOCKING
     add_throughput_recv(cur_time, num_bytes_received);
     #endif
@@ -620,7 +626,7 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     #if MPI_BLOCKING
     receive_handler_data(NULL, tag, source, p_tasks, n_tasks);
     #else
-    request_manager_receive.submitRequests(tag, 
+    request_manager_receive.submitRequests(start_time_requests, tag, 
                                     source,
                                     num_requests, 
                                     requests,
@@ -634,9 +640,6 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     #endif
     delete[] requests;
 #endif /* OFFLOAD_DATA_PACKING_TYPE > 0 */
-#if CHAM_STATS_RECORD
-    _num_bytes_received += num_bytes_received;
-#endif 
 }
 
 static void send_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -647,16 +650,16 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
     if(tasks) {
         for(int i_task = 0; i_task < num_tasks; i_task++) {
             cham_migratable_task_t *task = tasks[i_task];
+            _mtx_load_exchange.lock();
+            _num_remote_tasks_outstanding--;
+            DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", task->task_id, _num_remote_tasks_outstanding.load());
+            trigger_update_outstanding();
+            _mtx_load_exchange.unlock();
             free_migratable_task(task, true);
         }
         free(tasks);
     }
 
-    //_mtx_load_exchange.lock();
-    //_num_remote_tasks_outstanding--;
-    //DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
-    //trigger_update_outstanding();
-    //_mtx_load_exchange.unlock();
 }
 
 static void receive_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -696,19 +699,23 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
        #endif
         //_num_offloaded_tasks_outstanding--;
 
-        if(task_entry->num_outstanding_recvbacks==0) {
-          // mark locally created task finished
-          _unfinished_locally_created_tasks.remove(task_entry->task_id);
-          _map_overall_tasks.erase(task_entry->task_id);
+        // mark locally created task finished
+        #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
+        _unfinished_locally_created_tasks.remove(task_entry->task_id);
+        #endif
+        _map_overall_tasks.erase(task_entry->task_id);
 
-           // decrement counter if offloading + receiving results finished
+        if(task_entry->num_outstanding_recvbacks==0  || !task_entry->is_replicated_task) {
+        // decrement counter if offloading + receiving results finished
           _mtx_load_exchange.lock();
           _num_local_tasks_outstanding--;
           DBP("receive_back_handler - decrement local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
           trigger_update_outstanding();
           _mtx_load_exchange.unlock();
-          free_migratable_task(task_entry, false);
         }
+
+        //if(task_entry->num_outstanding_recvbacks==0)
+        //  free_migratable_task(task_entry, false);
     }
 
     if(tasks)
@@ -733,9 +740,13 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
 		  DBP("receive_back_trash_handler - decrement local outstanding count for task %ld, new count %d\n", task->task_id, _num_local_tasks_outstanding.load());
 		  trigger_update_outstanding();
 		  _mtx_load_exchange.unlock();
-		  free_migratable_task(task, false);
+
+		  if(!task->is_replicated_task)
+		    free_migratable_task(task, false);
         }
     }
+    if(buffer)
+        free(buffer);
     free(tasks);
 }
 #pragma endregion
@@ -746,9 +757,9 @@ void cancel_offloaded_task(cham_migratable_task_t *task) {
 
     // we have sent the task already
     if(task->num_outstanding_recvbacks) {
-      if(task->target_mpi_rank>=0) {
-        cancel_offloaded_task_on_rank(task, task->target_mpi_rank);
-      }
+      //if(task->target_mpi_rank>=0) {
+      //  cancel_offloaded_task_on_rank(task, task->target_mpi_rank);
+      //}
       for( auto rank : task->replication_ranks ) {
         cancel_offloaded_task_on_rank(task, rank);
       }
@@ -764,8 +775,12 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
 
     MPI_Request request; 
     // TODO: depends on int32 or int64
+    double start_time_requests = 0;
+    #if CHAM_STATS_RECORD
+    start_time_requests = omp_get_wtime();
+    #endif
     MPI_Isend(&task->task_id, 1, MPI_INTEGER, rank, 0, chameleon_comm_cancel, &request);
-    request_manager_cancel.submitRequests( 0, rank, 1,
+    request_manager_cancel.submitRequests( start_time_requests, 0, rank, 1,
                                            &request,
                                            -1, // TODO: what will this be?
                                            0, 
@@ -847,6 +862,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     _time_encode_count++;
 #endif
 
+    double start_time_requests = 0;
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     // RELP("Packing Type: Buffer\n");
     int n_requests = 1;
@@ -865,7 +881,10 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     DBP("offload_action - sending data to target rank %d with mpi_tag: %d\n", target_rank, tmp_tag);
 #if CHAM_STATS_RECORD
     num_bytes_sent += buffer_size;
-    cur_time = omp_get_wtime();
+    // #if OFFLOAD_DATA_PACKING_TYPE == 0
+    _stats_bytes_send_per_message.add_stat_value((double)buffer_size);
+    // #endif
+    start_time_requests = cur_time = omp_get_wtime();
 #endif
     MPI_Request *requests = new MPI_Request[n_requests];
     #if MPI_BLOCKING
@@ -878,8 +897,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, buffer_size);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
 
 #if OFFLOAD_DATA_PACKING_TYPE > 0 && CHAM_STATS_RECORD
@@ -911,6 +928,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
             }
 #if CHAM_STATS_RECORD
             tmp_bytes_send += task->arg_sizes[i];
+            _stats_bytes_send_per_message.add_stat_value((double)task->arg_sizes[i]);
 #endif
             cur_req_index++;
             print_arg_info("offload_action - sending argument", task, i);
@@ -922,8 +940,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, tmp_bytes_send);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     int tmp_overall_arg_nums = 0;
@@ -965,6 +981,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     int size = 0;
     MPI_Type_size(type_mapped_vars, &size);
     num_bytes_sent += size;
+    _stats_bytes_send_per_message.add_stat_value((double)size);
 #endif
     #if MPI_BLOCKING
     ierr = MPI_Send(MPI_BOTTOM, 1, type_mapped_vars, target_rank, tmp_tag, chameleon_comm);
@@ -977,8 +994,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     add_throughput_send(cur_time, size);
     #endif
-    atomic_add_dbl(_time_comm_send_task_sum, cur_time);
-    _time_comm_send_task_count++;
 #endif
     ierr = MPI_Type_free(&type_mapped_vars);
     assert(ierr==MPI_SUCCESS);
@@ -999,7 +1014,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     send_handler(buffer, tmp_tag, target_rank, nullptr, 0);
     #else
-    request_manager_send.submitRequests(tmp_tag, target_rank, n_requests, 
+    request_manager_send.submitRequests(start_time_requests, tmp_tag, target_rank, n_requests, 
                                 requests,
                                 num_bytes_sent,
                                 0,
@@ -1010,9 +1025,6 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
                                 num_tasks);
     #endif
     delete[] requests;
-#if CHAM_STATS_RECORD
-    _num_bytes_sent += num_bytes_sent;
-#endif
     DBP("offload_action (exit)\n");
 }
 
@@ -1337,13 +1349,12 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
 int exit_condition_met(int from_taskwait, int print) {
     if(from_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
-        //DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n",
-        //    _comm_thread_load_exchange_happend.load(),
-        //    _outstanding_jobs_sum.load(),
-        //    cp_ranks_not_completely_idle);
         if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0) {
             // if(print)
-                 
+                // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
+                //     _comm_thread_load_exchange_happend.load(), 
+                //     _outstanding_jobs_sum.load(), 
+                //     cp_ranks_not_completely_idle);
             return 1;
         }
     } else {
@@ -1409,6 +1420,11 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
     int32_t num_tasks_replicated_remote = _replicated_remote_tasks.dup_size();
 
+    assert(num_tasks_local>=0);
+    assert(num_tasks_replicated_local>=0);
+    assert(num_tasks_replicated_remote>=0);
+
+
     TYPE_TASK_ID* ids_local = nullptr;
     int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
     TYPE_TASK_ID* ids_stolen = nullptr;
@@ -1425,23 +1441,21 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
         local_load_representation = cham_t_status.cham_t_callback_determine_local_load(ids_local, num_tasks_local,
         		                                                                       ids_local_rep, num_tasks_replicated_local,
         		                                                                       ids_stolen, num_tasks_stolen,
-																					   ids_stolen_rep, num_tasks_replicated_remote);
+											       ids_stolen_rep, num_tasks_replicated_remote);
         // clean up again
         free(ids_local);
         free(ids_stolen);
         free(ids_local_rep);
         free(ids_stolen_rep);
     } else {
-        local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local,
-        																  ids_local_rep, num_tasks_replicated_local,
-        																  ids_stolen, num_tasks_stolen,
-																		  ids_stolen_rep, num_tasks_replicated_remote);
+        local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local, ids_local_rep, num_tasks_replicated_local,
+        											      ids_stolen, num_tasks_stolen,
+												      ids_stolen_rep, num_tasks_replicated_remote);
     }
     #else 
-    local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local,
-            																  ids_local_rep, num_tasks_replicated_local,
-            																  ids_stolen, num_tasks_stolen,
-    																		  ids_stolen_rep, num_tasks_replicated_remote);
+    local_load_representation = get_default_load_information_for_rank(ids_local, num_tasks_local, ids_local_rep, num_tasks_replicated_local,
+            											  ids_stolen, num_tasks_stolen,
+    												  ids_stolen_rep, num_tasks_replicated_remote);
     #endif
 
     int tmp_val = _num_threads_idle.load() < *num_threads_in_tw ? 1 : 0;
@@ -1696,12 +1710,9 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     DBP("send_back_stolen_tasks - sending back data to rank %d with tag %d for (task_id=%ld)\n", cur_task->source_mpi_rank, cur_task->task_id, cur_task->task_id);
     
     int num_bytes_sent = 0;
+    double start_time_requests = 0;
 
     #if OFFLOAD_DATA_PACKING_TYPE == 0
-    #if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
-    #endif
-
     int32_t tmp_size_buff = 0;
     for(int i = 0; i < cur_task->arg_num; i++) {
         if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
@@ -1721,18 +1732,14 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     MPI_Request request;
     #if CHAM_STATS_RECORD
     num_bytes_sent += tmp_size_buff;
+    _stats_bytes_send_per_message.add_stat_value((double)tmp_size_buff);
+    start_time_requests = omp_get_wtime();
     #endif 
     MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &request);
-    
-    #if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_back_send_sum, cur_time);
-    _time_comm_back_send_count++;
-    #endif
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
-    request_manager_send->submitRequests( 
+    request_manager_send->submitRequests(start_time_requests, 
         cur_task->task_id, 
         cur_task->source_mpi_rank, 
         1, 
@@ -1747,9 +1754,8 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     
     #elif OFFLOAD_DATA_PACKING_TYPE > 0
     #if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
+    start_time_requests = omp_get_wtime();
     #endif
-
     #if OFFLOAD_DATA_PACKING_TYPE == 1
     MPI_Request *requests = new MPI_Request[cur_task->arg_num];
     int num_requests = 0;
@@ -1757,6 +1763,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
         if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
             #if CHAM_STATS_RECORD
             num_bytes_sent += cur_task->arg_sizes[i];
+            _stats_bytes_send_per_message.add_stat_value((double)cur_task->arg_sizes[i]);
             #endif
             MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[num_requests++]);
         }
@@ -1801,6 +1808,8 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     int size = 0;
     MPI_Type_size(type_mapped_vars, &size);
     num_bytes_sent += size;
+    _stats_bytes_send_per_message.add_stat_value((double)size);
+    start_time_requests = omp_get_wtime();
     #endif
     ierr = MPI_Isend(MPI_BOTTOM, 1, type_mapped_vars, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[0]);
     assert(ierr==MPI_SUCCESS);
@@ -1808,15 +1817,9 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     assert(ierr==MPI_SUCCESS);
     #endif
 
-    #if CHAM_STATS_RECORD
-    cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_back_send_sum, cur_time);
-    _time_comm_back_send_count++;
-    #endif
-
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
-    request_manager_send->submitRequests( 
+    request_manager_send->submitRequests(start_time_requests, 
         cur_task->task_id, 
         cur_task->source_mpi_rank, 
         num_requests, 
@@ -1831,15 +1834,11 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     delete[] requests;
     #endif /* OFFLOAD_DATA_PACKING_TYPE */
 
-    #ifdef CHAM_STATS_RECORD
-    _num_bytes_sent += num_bytes_sent;
-    #endif
-
-    _mtx_load_exchange.lock();
-    _num_remote_tasks_outstanding--;
-    DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
+    //_mtx_load_exchange.lock();
+    //_num_remote_tasks_outstanding--;
+    //DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
+    //trigger_update_outstanding();
+    //_mtx_load_exchange.unlock();
 
     #ifdef TRACE
     VT_END_W_CONSTRAINED(*event_send_back);
@@ -1854,16 +1853,14 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
 
     cham_migratable_task_t *task = _map_tag_to_remote_task.find_and_erase(task_id);
     if(task) {
-       // bool expected = false;
-       // bool desired = true;
-
-       // if(task->result_in_progress.compare_exchange_strong(expected, desired)) {
-            DBP("action_handle_cancel_request - cancelling task with task_id %ld\n", task_id);
-            if(task->is_replicated_task)
-               _replicated_remote_tasks.remove(task);
-            if(task->target_mpi_rank>=0)
-              _stolen_remote_tasks.remove(task); //this is an offloaded task which is offloaded by migration decisions based on the load information
-            _map_tag_to_remote_task.erase(task->task_id);
+      DBP("action_handle_cancel_request - cancelling task with task_id %ld\n", task_id);
+      if(task->is_replicated_task) {
+        cham_migratable_task_t *res = _replicated_remote_tasks.pop_task_by_id(task->task_id);
+        //if(task->target_mpi_rank>=0)
+        //  _stolen_remote_tasks.remove(task); //this is an offloaded task which is offloaded by migration decisions based on the load information
+        //_map_tag_to_remote_task.erase(task->task_id);
+        if(res) {
+            // we haven't processed this task yet so we can safely delete this task
             _map_overall_tasks.erase(task->task_id);
 
             // decrement load counter and ignore send back
@@ -1873,10 +1870,12 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
             trigger_update_outstanding();
             _mtx_load_exchange.unlock();
 
+            free_migratable_task(task);
             #if CHAM_STATS_RECORD
             _num_tasks_canceled++;
-            #endif       
-        //} else {}//do nothing -> task either has been executed or is currently executed, process_remote_task/process_replicated_remote_task will take care of cleaning up
+             #endif
+        }
+     }
     }
     else {
         DBP("action_handle_cancel_request - received cancel request for task_id %ld but could not find task\n", task_id);
@@ -1899,19 +1898,25 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         assert(task_entry->num_outstanding_recvbacks>=0);
 
         // check if we still need to receive the task data back or replicated task is executed locally already
-        bool expected = false;
-        bool desired = true;
+        //bool expected = false;
+        //bool desired = true;
         // DBP("action_handle_recvback_request - performing CAS for task with id %ld, flag %d\n", task_entry->task_id, task_entry->sync_commthread_lock.load());
         //assert(task_entry->sync_commthread_lock.load()==false);
-        bool exchanged = task_entry->result_in_progress.compare_exchange_strong(expected, desired);
+        //bool exchanged = task_entry->result_in_progress.compare_exchange_strong(expected, desired);
+        bool post_receive = true;
+        if(task_entry->is_replicated_task) {
+          cham_migratable_task_t *task_from_queue = _replicated_local_tasks.pop_task_by_id(task_entry->task_id);
+          if(task_from_queue==nullptr) post_receive=false;
+        }
         //assert(exchanged);
         // DBP("action_handle_recvback_request - CAS: expected = %d, desired = %d, exchanged = %d\n", expected, desired, exchanged);
         //atomic CAS   
-        if(exchanged) {
+        double start_time_requests = 0;
+        if(post_receive) {
             DBP("action_handle_recvback_request - posting receive requests for task with id %ld\n", task_entry->task_id);
             //remove from replicated task queue -> corresponds to local task cancellation
-            if(task_entry->is_replicated_task)
-              _replicated_local_tasks.remove(task_entry);
+            //if(task_entry->is_replicated_task)
+            //  _replicated_local_tasks.remove(task_entry);
 
             //we can safely receive back as usual
             
@@ -1927,7 +1932,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #endif
 
             #if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
+            start_time_requests = cur_time = omp_get_wtime();
             #endif
 
             #if MPI_BLOCKING
@@ -1940,9 +1945,8 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #endif
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             num_bytes_received += recv_buff_size;
+            _stats_bytes_recv_per_message.add_stat_value((double)recv_buff_size);
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -1953,7 +1957,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
-            request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
+            request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                     &request,
                                                     recv_buff_size,
                                                     0,
@@ -1974,12 +1978,11 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             VT_BEGIN_CONSTRAINED(*event_recv_back);
             #endif
 
-            #if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
-            #endif
-
             MPI_Request *requests = new MPI_Request[task_entry->arg_num];  
             int j = 0;
+            #if CHAM_STATS_RECORD
+            start_time_requests = cur_time = omp_get_wtime();
+            #endif
             for(int i = 0; i < task_entry->arg_num; i++) {
                 if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                     #if MPI_BLOCKING
@@ -1991,14 +1994,13 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
                     #endif                               
                     #if CHAM_STATS_RECORD
                     num_bytes_received += task_entry->arg_sizes[i];
+                    _stats_bytes_recv_per_message.add_stat_value((double)task_entry->arg_sizes[i]);
                     #endif
                 }
             }
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2009,7 +2011,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
-            request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, j, 
+            request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, j, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
@@ -2026,13 +2028,8 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #endif
 
             #elif OFFLOAD_DATA_PACKING_TYPE == 2
-
             #ifdef TRACE
             VT_BEGIN_CONSTRAINED(*event_recv_back);
-            #endif
-
-            #if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
             #endif
 
             MPI_Request *requests = new MPI_Request[1];
@@ -2073,8 +2070,9 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             int size = 0;
             MPI_Type_size(type_mapped_vars, &size);
             num_bytes_received += size;
+            _stats_bytes_recv_per_message.add_stat_value((double)size);
+            start_time_requests = cur_time = omp_get_wtime();
             #endif
-
             #if MPI_BLOCKING
             ierr = MPI_Recv(MPI_BOTTOM, 1, type_mapped_vars, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG, chameleon_comm_mapped, MPI_STATUS_IGNORE);
             #else
@@ -2086,8 +2084,6 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2098,7 +2094,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
-            request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
+            request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
@@ -2118,18 +2114,16 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         else // CAS didn't succeed -> we need to receive data into trash buffer
         {
             DBP("Late receive back occured for replicated task, task_id %ld\n", task_entry->task_id);
-            #if OFFLOAD_DATA_PACKING_TYPE == 0
             int msg_size = 0;
+            void *trash_buffer;
+
+            #if OFFLOAD_DATA_PACKING_TYPE == 0
             MPI_Get_count(cur_status_receiveBack, MPI_BYTE, &msg_size);
-            if(msg_size > cur_trash_buffer_size) {
-                //free(trash_buffer);
-                trash_buffer = malloc(msg_size);
-                cur_trash_buffer_size = msg_size; 
-            }     
+            trash_buffer = malloc(msg_size);
             MPI_Request request;
 
             #if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
+            start_time_requests = cur_time = omp_get_wtime();
             #endif
 
             #if MPI_BLOCKING
@@ -2140,9 +2134,9 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++; //TODO count trash receives!
+            //TODO: count trash receives!
             num_bytes_received += msg_size;
+            _stats_bytes_recv_per_message.add_stat_value((double)msg_size);
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
@@ -2153,173 +2147,135 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
-            request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
+            request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                     &request,
                                                     num_bytes_received,
                                                     0,
                                                     receive_back_trash_handler,
                                                     recvBack,
                                                     trash_buffer,
-													p_tasks,
-													1);
+				   		    p_tasks,
+						    1);
             #endif
 
-            #elif OFFLOAD_DATA_PACKING_TYPE == 1 // TODO: need to take care of Type 2
-            
-            #if CHAM_STATS_RECORD
-            cur_time = omp_get_wtime();
-            #endif   
+            #elif OFFLOAD_DATA_PACKING_TYPE > 0 // TODO: need to take care of Type 2
+            int num_requests;
+            MPI_Request *requests;
 
-            MPI_Request *requests = new MPI_Request[task_entry->arg_num];
-            int j = 0;
-            for(int i = 0; i < task_entry->arg_num; i++) {
-            	if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-            	  if(task_entry->arg_sizes[i]> cur_trash_buffer_size) {
-            	    free(trash_buffer);
-            	    trash_buffer = malloc(task_entry->arg_sizes[i]);
-            	    cur_trash_buffer_size = task_entry->arg_sizes[i];
-            	  }
-            	}
+            #if OFFLOAD_DATA_PACKING_TYPE == 1
+            num_requests = task_entry->arg_num;
+            requests = new MPI_Request[num_requests];
+
+            for(int i=0; i< task_entry->arg_num; i++) {
+                if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
+                    msg_size += task_entry->arg_sizes[i];
+                }
             }
+            trash_buffer = malloc(msg_size);
+            // current position for trash data
+            char *cur_ptr_pos = (char*)trash_buffer;
+
+            int j = 0;
+            #if CHAM_STATS_RECORD
+            start_time_requests = cur_time = omp_get_wtime();
+            #endif
             for(int i = 0; i < task_entry->arg_num; i++) {
                 if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                     #if MPI_BLOCKING
-                    MPI_Recv(trash_buffer, task_entry->arg_sizes[i], MPI_BYTE, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG,
+                    MPI_Recv(cur_ptr_pos, task_entry->arg_sizes[i], MPI_BYTE, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG,
                                                                                 chameleon_comm_mapped, MPI_STATUS_IGNORE);
                     #else
-                    MPI_Irecv(trash_buffer, task_entry->arg_sizes[i], MPI_BYTE, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG,
+                    MPI_Irecv(cur_ptr_pos, task_entry->arg_sizes[i], MPI_BYTE, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG,
                                                                                 chameleon_comm_mapped, &requests[j++]);
                     #endif
+                    cur_ptr_pos += task_entry->arg_sizes[i];
                     #if CHAM_STATS_RECORD
                     num_bytes_received += task_entry->arg_sizes[i];
+                    _stats_bytes_recv_per_message.add_stat_value((double)task_entry->arg_sizes[i]);
                     #endif
                 }
             }
+            num_requests = j;
+
+            #elif OFFLOAD_DATA_PACKING_TYPE == 2
+            num_requests = 1;
+            requests = new MPI_Request[num_requests];
+
+            MPI_Datatype type_mapped_vars;
+            int num_outputs = 0;
+            for(int i=0; i< task_entry->arg_num; i++) {
+                if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
+                    msg_size += task_entry->arg_sizes[i];
+                    num_outputs++;
+                }
+            }
+            trash_buffer = malloc(msg_size);            
+            // current position for trash data
+            char *cur_ptr_pos = (char*)trash_buffer;
+
+            MPI_Datatype separate_types[num_outputs];
+            int blocklen[num_outputs];
+            MPI_Aint disp[num_outputs];
+            int ierr = 0;
+            int j = 0;
+            for(int i=0; i < task_entry->arg_num; i++) {
+                int is_from = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;            
+                if(is_from) {
+                    separate_types[j]   = MPI_BYTE;
+                    blocklen[j]         = task_entry->arg_sizes[i];
+                    ierr = MPI_Get_address(cur_ptr_pos, &(disp[j]));
+                    assert(ierr==MPI_SUCCESS);
+                    cur_ptr_pos += task_entry->arg_sizes[i];
+                    j++;
+                }
+            }
+            ierr = MPI_Type_create_struct(num_outputs, blocklen, disp, separate_types, &type_mapped_vars);
+            assert(ierr==MPI_SUCCESS);
+            ierr = MPI_Type_commit(&type_mapped_vars);
+            assert(ierr==MPI_SUCCESS);
+
+            #if CHAM_STATS_RECORD
+            int size = 0;
+            MPI_Type_size(type_mapped_vars, &size);
+            num_bytes_received += size;
+            _stats_bytes_recv_per_message.add_stat_value((double)size);
+            start_time_requests = cur_time = omp_get_wtime();
+            #endif
+            #if MPI_BLOCKING
+            ierr = MPI_Recv(MPI_BOTTOM, 1, type_mapped_vars, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG, chameleon_comm_mapped, MPI_STATUS_IGNORE);
+            #else
+            ierr = MPI_Irecv(MPI_BOTTOM, 1, type_mapped_vars, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG, chameleon_comm_mapped, &requests[0]);
+            #endif
+            assert(ierr==MPI_SUCCESS);
+            ierr = MPI_Type_free(&type_mapped_vars);
+            assert(ierr==MPI_SUCCESS);
+            #endif
 
             #if CHAM_STATS_RECORD
             cur_time = omp_get_wtime()-cur_time;
-            atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-            _time_comm_back_recv_count++;
             #if MPI_BLOCKING
             add_throughput_recv(cur_time, num_bytes_received);
             #endif
             #endif
             
             #if MPI_BLOCKING
-            receive_back_handler(nullptr, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
+            receive_back_handler(trash_buffer, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
-            request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, j, 
+            request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, num_requests, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
                                                 receive_back_trash_handler,
                                                 recvBack,
-                                                nullptr,
-												p_tasks,
-												1);
+                                                trash_buffer,
+						p_tasks,
+						1);
             #endif
             delete[] requests;
-            #elif OFFLOAD_DATA_PACKING_TYPE==2
-
-            #ifdef TRACE
-			VT_BEGIN_CONSTRAINED(*event_recv_back);
-			#endif
-
-			#if CHAM_STATS_RECORD
-			cur_time = omp_get_wtime();
-			#endif
-
-            int msg_size = 0;
-            MPI_Get_count(cur_status_receiveBack, MPI_BYTE, &msg_size);
-            if(msg_size > cur_trash_buffer_size) {
-                free(trash_buffer);
-                trash_buffer = malloc(msg_size);
-                cur_trash_buffer_size = msg_size;
-            }
-
-			MPI_Request *requests = new MPI_Request[1];
-			MPI_Datatype type_mapped_vars;
-			int num_outputs = 0;
-			for(int i=0; i< task_entry->arg_num; i++) {
-				if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
-					num_outputs++;
-				}
-			}
-			MPI_Datatype separate_types[num_outputs];
-			int blocklen[num_outputs];
-			MPI_Aint disp[num_outputs];
-			int ierr = 0;
-			int j = 0;
-			for(int i=0; i < task_entry->arg_num; i++) {
-				int is_from = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;
-				if(is_from) {
-					separate_types[j]   = MPI_BYTE;
-					blocklen[j]         = task_entry->arg_sizes[i];
-					int is_lit          = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-					if(is_lit) {
-						ierr = MPI_Get_address(&task_entry->arg_hst_pointers[i], &(disp[j]));
-						assert(ierr==MPI_SUCCESS);
-					}
-					else {
-						ierr = MPI_Get_address(task_entry->arg_hst_pointers[i], &(disp[j]));
-						assert(ierr==MPI_SUCCESS);
-					}
-					j++;
-				}
-			}
-			ierr = MPI_Type_create_struct(num_outputs, blocklen, disp, separate_types, &type_mapped_vars);
-			assert(ierr==MPI_SUCCESS);
-			ierr = MPI_Type_commit(&type_mapped_vars);
-			assert(ierr==MPI_SUCCESS);
-			#if CHAM_STATS_RECORD
-			int size = 0;
-			MPI_Type_size(type_mapped_vars, &size);
-			num_bytes_received += size;
-			#endif
-
-			ierr = MPI_Irecv(trash_buffer, 1, type_mapped_vars, cur_status_receiveBack->MPI_SOURCE, cur_status_receiveBack->MPI_TAG, chameleon_comm_mapped, &requests[0]);
-
-			assert(ierr==MPI_SUCCESS);
-			ierr = MPI_Type_free(&type_mapped_vars);
-			assert(ierr==MPI_SUCCESS);
-
-			#if CHAM_STATS_RECORD
-			cur_time = omp_get_wtime()-cur_time;
-			atomic_add_dbl(_time_comm_back_recv_sum, cur_time);
-			_time_comm_back_recv_count++;
-			#if MPI_BLOCKING
-			add_throughput_recv(cur_time, num_bytes_received);
-			#endif
-			#endif
-
-			#if MPI_BLOCKING
-			receive_back_trash_handler(nullptr, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, nullptr, 0);
-			#else
-			cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
-			p_tasks[0] = task_entry;
-			request_manager_receive->submitRequests( cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1,
-												&requests[0],
-												num_bytes_received,
-												0,
-												receive_back_trash_handler,
-												recvBack,
-												nullptr,
-												p_tasks,
-												1);
-			#endif
-			delete[] requests;
-
-			#ifdef TRACE
-			VT_END_W_CONSTRAINED(*event_recv_back);
-#endif
-
             #endif /* OFFLOAD_DATA_PACKING_TYPE */
         }
-        #if CHAM_STATS_RECORD
-        _num_bytes_received += num_bytes_received;
-        #endif 
     } //match
 }
 
@@ -2335,9 +2291,11 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
     void *buffer = malloc(recv_buff_size);
 
     MPI_Request request = MPI_REQUEST_NULL;
+    double start_time_requests = 0;
 
     #if CHAM_STATS_RECORD
-    double cur_time = omp_get_wtime();
+    double cur_time;
+    start_time_requests = cur_time = omp_get_wtime();
     #endif
     int num_bytes_received = 0;
 
@@ -2350,9 +2308,10 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
 
     #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_comm_recv_task_sum, cur_time);
-    _time_comm_recv_task_count++;
     num_bytes_received += recv_buff_size;
+    #if OFFLOAD_DATA_PACKING_TYPE == 0 // disable tracking for very short meta data messages because it might destroy reliability of statistics
+    _stats_bytes_recv_per_message.add_stat_value((double)recv_buff_size);
+    #endif
     #if MPI_BLOCKING
     add_throughput_recv(cur_time, recv_buff_size);
     #endif
@@ -2361,7 +2320,7 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
     #if MPI_BLOCKING
     receive_handler(buffer, cur_status_receive->MPI_TAG, cur_status_receive->MPI_SOURCE, nullptr, 0);
     #else
-    request_manager_receive->submitRequests( cur_status_receive->MPI_TAG, 
+    request_manager_receive->submitRequests( start_time_requests, cur_status_receive->MPI_TAG, 
                                     cur_status_receive->MPI_SOURCE,
                                     1, 
                                     &request,
@@ -2370,9 +2329,6 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
                                     receive_handler,
                                     recv,
                                     buffer);
-    #endif
-    #if CHAM_STATS_RECORD
-    _num_bytes_received += num_bytes_received;
     #endif
     #ifdef TRACE
     VT_END_W_CONSTRAINED(*event_receive_tasks);

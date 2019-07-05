@@ -29,7 +29,7 @@ static const char* RequestType_values[] = {
 class RequestManager {
   public:
     RequestManager();
-    void submitRequests( int tag, int rank, int n_requests, 
+    void submitRequests( double startStamp, int tag, int rank, int n_requests, 
                          MPI_Request *requests,
                          int sum_bytes,
                          bool block,
@@ -60,9 +60,6 @@ class RequestManager {
         MPI_Request mpi_request;
     };
 
-#if CHAM_STATS_RECORD
-    void addTimingToStatistics(double elapsed, RequestType type);
-#endif
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     std::queue<int> _request_queue;

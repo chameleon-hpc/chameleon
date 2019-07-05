@@ -918,7 +918,9 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     // set id of last task added
     __last_task_id_added = task->task_id;
 
+    #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
     _unfinished_locally_created_tasks.push_back(task->task_id);
+    #endif
     _map_overall_tasks.insert(task->task_id, task);
     
     _mtx_load_exchange.lock();
@@ -944,8 +946,12 @@ TYPE_TASK_ID chameleon_get_last_local_task_id_added() {
  * Checks whether the corresponding task has already been finished
  */
 int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id) {
+    #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
     bool found = _unfinished_locally_created_tasks.find(task_id);
     return found ? 0 : 1;
+    #else
+    return 0;
+    #endif
 }
 
 #pragma endregion Fcns for Data and Tasks
@@ -1185,14 +1191,16 @@ inline int32_t process_replicated_local_task() {
 #endif
 
         // mark locally created task finished
+        #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
         _unfinished_locally_created_tasks.remove(replicated_task->task_id);
+        #endif
         _map_overall_tasks.erase(replicated_task->task_id);
 
-//        _mtx_load_exchange.lock();
-//        _num_local_tasks_outstanding--;
-//        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
-//        trigger_update_outstanding();
-//        _mtx_load_exchange.unlock();
+        //_mtx_load_exchange.lock();
+        //_num_local_tasks_outstanding--;
+        //DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
+        //trigger_update_outstanding();
+        //_mtx_load_exchange.unlock();
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
 #endif
@@ -1373,7 +1381,9 @@ inline int32_t process_local_task() {
     _time_task_execution_local_count++;
 #endif
     // mark locally created task finished
+    #if CHAMELEON_ENABLE_FINISHED_TASK_TRACKING
     _unfinished_locally_created_tasks.remove(task->task_id);
+    #endif
     _map_overall_tasks.erase(task->task_id);
 
     // it is save to decrement counter after local execution

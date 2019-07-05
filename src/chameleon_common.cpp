@@ -20,6 +20,8 @@ std::atomic<int> _num_sync_cycle(0);
 // ============================================================ 
 // config values defined through environment variables
 // ============================================================
+std::atomic<char*> CHAMELEON_STATS_FILE_PREFIX(nullptr);
+
 // general settings for migration
 std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
 std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE(1);

@@ -173,7 +173,7 @@ int32_t get_default_load_information_for_rank(TYPE_TASK_ID* local_task_ids, int3
     assert(num_tasks_local_rep>=0);
     assert(num_tasks_local>=0);
 
-    num_ids = num_tasks_local + num_tasks_local_rep;
+    num_ids = num_tasks_local + num_tasks_local_rep;  //Todo: include replicated tasks which are "in flight"
 #if CHAM_REPLICATION_MODE==1
     num_ids += num_tasks_stolen + num_tasks_stolen_rep;
 #else

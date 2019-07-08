@@ -1154,7 +1154,7 @@ inline int32_t process_replicated_local_task() {
     bool desired = true;
 
     //atomic CAS
-    if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
+    //if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
         DBP("process_replicated_local_task - task %d was reserved for local execution\n", replicated_task->task_id);
     //if(true) {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
@@ -1196,21 +1196,25 @@ inline int32_t process_replicated_local_task() {
         #endif
         _map_overall_tasks.erase(replicated_task->task_id);
 
-        //_mtx_load_exchange.lock();
-        //_num_local_tasks_outstanding--;
-        //DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
-        //trigger_update_outstanding();
-        //_mtx_load_exchange.unlock();
+//#if CHAM_REPLICATION_MODE==2
+        _mtx_load_exchange.lock();
+        _num_local_tasks_outstanding--;
+        assert(_num_local_tasks_outstanding>=0);
+        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
+        trigger_update_outstanding();
+        _mtx_load_exchange.unlock();
+//#endif
+
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
 #endif
         //Do not free replicated task here, as the communication thread may later receive back
         //this task and needs to access the task (check flag + post receive requests to trash buffer)
         //The replicated task should be deallocated in recv back handlers
-    }
-    else {
-        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
-    }
+    //}
+    //else {
+    //    return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
+   // }
 
     return CHAM_REPLICATED_TASK_SUCCESS;
 
@@ -1389,7 +1393,8 @@ inline int32_t process_local_task() {
     // it is save to decrement counter after local execution
     _mtx_load_exchange.lock();
     _num_local_tasks_outstanding--;
-    DBP("process_local_task - decrement local outstanding count for task %ld\n", task->task_id);
+    assert(_num_local_tasks_outstanding>=0);
+    DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding);
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 

@@ -3,6 +3,7 @@
 #include <omp.h>
 #include <cassert>
 #include "chameleon_common.h"
+#include "commthread.h"
 
 #define MAX_REQUESTS 10000000
 
@@ -38,11 +39,24 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
 
     #endif
   
+    //_num_outstanding_comm_requests ++;
+
     _num_posted_requests[type]+= n_requests; 
     _num_posted_request_groups[type]+=1;
 
     int canFinish = 0;
-    int ierr = MPI_Testall(n_requests, &requests[0], &canFinish, MPI_STATUSES_IGNORE);
+    MPI_Status *stats = new MPI_Status[n_requests];
+    int ierr = MPI_Testall(n_requests, &requests[0], &canFinish, stats);
+    if(ierr!=MPI_SUCCESS) {
+       for(int i=0; i<n_requests;i++) {
+          int eclass, len;
+          char estring[MPI_MAX_ERROR_STRING];
+          MPI_Error_class(stats[i].MPI_ERROR, &eclass);
+          MPI_Error_string(stats[i].MPI_ERROR, estring, &len);
+          DBP("Error %d: %s, requests: %d, type: %d\n", eclass, estring, n_requests, type);fflush(stdout);
+       }
+    }
+    delete[] stats;
     assert(ierr==MPI_SUCCESS);
     
     if(canFinish) {
@@ -61,6 +75,7 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
       _num_completed_request_groups[type]+=1;
       
       handler(buffer, tag, rank, tasks, num_tasks);
+      //_num_outstanding_comm_requests --;
       return;
     }
 
@@ -189,6 +204,7 @@ void RequestManager::progressRequests() {
        }
 #endif
        handler(buffer, tag, rank, tasks, num_tasks);
+       //_num_outstanding_comm_requests --;
        _map_id_to_request_group_data.erase(gid);
     }
   }

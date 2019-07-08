@@ -69,8 +69,8 @@
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
-//#define CHAM_REPLICATION_MODE 0 //no replication
-#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+#define CHAM_REPLICATION_MODE 0 //no replication
+//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
 //#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 #endif
 
@@ -305,6 +305,7 @@ typedef struct cham_migratable_task_t {
     int32_t is_remote_task      = 0;
     int32_t is_manual_task      = 0;
     int32_t is_replicated_task  = 0;
+    int32_t is_cancelled        = 0;
 
     int32_t num_outstanding_recvbacks = 0;
     int32_t num_outstanding_replication_sends = 0;
@@ -397,6 +398,12 @@ class thread_safe_task_map_t {
 
     bool empty() {
         return this->map_size <= 0;
+    }
+
+    void clear() {
+        this->m.lock();
+        this->task_map.clear();
+        this->m.unlock();
     }
 
     void insert(TYPE_TASK_ID task_id, cham_migratable_task_t* task) {

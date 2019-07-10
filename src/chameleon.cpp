@@ -903,6 +903,12 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
 #endif
     assert(task->num_outstanding_recvbacks==0);
 
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding++;
+    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+    
     _local_tasks.push_back(task);
     // add to queue
 /*#if CHAM_REPLICATION_MODE>0
@@ -923,11 +929,6 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     #endif
     _map_overall_tasks.insert(task->task_id, task);
     
-    _mtx_load_exchange.lock();
-    _num_local_tasks_outstanding++;
-    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
 #ifdef TRACE
     VT_END_W_CONSTRAINED(event_task_create);
 #endif

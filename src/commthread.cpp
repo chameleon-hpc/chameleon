@@ -64,6 +64,8 @@ std::atomic<int32_t> _num_replicated_remote_tasks_outstanding(0);
 
 // list with stolen task entries that need output data transfer
 thread_safe_task_list_t _remote_tasks_send_back;
+
+thread_safe_task_list_t _tasks_to_deallocate;
 // list with local replicated task entries that need initial transfer
 thread_safe_list_t<cham_t_replication_info_t*> _replication_infos_list;
 
@@ -997,6 +999,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     for(int i_task = 0; i_task < num_tasks; i_task++) {
         cham_migratable_task_t *task = tasks[i_task];
         if(task->HasAtLeastOneOutput()) {
+            _tasks_to_deallocate.push_back(task);
             _map_offloaded_tasks_with_outputs.insert(task->task_id, task);
             DBP("offload_action - inserted task with id %ld and pointer %p into offloaded map with outputs\n", task->task_id, task);
             assert(task->num_outstanding_recvbacks>=0);
@@ -1655,7 +1658,9 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
                         // block until no active offload for rank any more
                         if(_active_migrations_per_target_rank[r] == 0) {
                             int num_tasks_to_migrate = tasksToOffload[r];
-                            
+                           
+                            if(num_tasks_to_migrate==0) continue;
+ 
                             int num_tasks = 0;
                             cham_migratable_task_t **cur_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*)*num_tasks_to_migrate);
 
@@ -2508,6 +2513,10 @@ void* comm_thread_action(void* arg) {
                 _time_commthread_active_count++;
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
+                while(!_tasks_to_deallocate.empty()) {
+                	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
+                	free_migratable_task(task);
+                }
                 _cancelled_task_ids.clear();
                 _map_offloaded_tasks_with_outputs.clear();
                 DBP("comm_thread_action - cleared map_offloaded_tasks_with_outputs\n");
@@ -2611,6 +2620,10 @@ void* comm_thread_action(void* arg) {
                 _time_commthread_active_count++;
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
+                while(!_tasks_to_deallocate.empty()) {
+                   	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
+                   	free_migratable_task(task);
+                }
                 _cancelled_task_ids.clear();
                 _map_offloaded_tasks_with_outputs.clear();
                 DBP("comm_thread_action - cleared map_offloaded_tasks_with_outputs\n");

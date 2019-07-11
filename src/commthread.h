@@ -45,6 +45,7 @@ extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding;
 //extern std::atomic<int32_t> _num_outstanding_comm_requests;
 
 extern thread_safe_task_list_t _replicated_remote_tasks;
+extern std::atomic<int32_t> _num_replicated_remote_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
 extern thread_safe_task_list_t _remote_tasks_send_back;

@@ -260,16 +260,20 @@ void cham_stats_print_stats() {
 
 void add_throughput_send(double elapsed_sec, int sum_byes) {
     double cur_throughput_mb_s = (double)sum_byes / (elapsed_sec * 1e06);
-    // RELP("Send data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
-    _stats_throughput_send.add_stat_value(cur_throughput_mb_s);
-    _stats_time_comm_send.add_stat_value(elapsed_sec);
+    if(!std::isinf(cur_throughput_mb_s)) {
+        // RELP("Send data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
+        _stats_throughput_send.add_stat_value(cur_throughput_mb_s);
+        _stats_time_comm_send.add_stat_value(elapsed_sec);
+    }
 }
 
 void add_throughput_recv(double elapsed_sec, int sum_byes) {
     double cur_throughput_mb_s = (double)sum_byes / (elapsed_sec * 1e06);
-    // RELP("Recv data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
-    _stats_throughput_recv.add_stat_value(cur_throughput_mb_s);
-    _stats_time_comm_recv.add_stat_value(elapsed_sec);
+    if(!std::isinf(cur_throughput_mb_s)) {
+        // RELP("Recv data with n_bytes:\t%d\telapsed_time:\t%.6f sec\tthroughput:\t%.4f MB/s\n", sum_byes, elapsed_sec, cur_throughput_mb_s);
+        _stats_throughput_recv.add_stat_value(cur_throughput_mb_s);
+        _stats_time_comm_recv.add_stat_value(elapsed_sec);
+    }
 }
 
 #ifdef __cplusplus

@@ -467,6 +467,7 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         if(_cancelled_task_ids.find(task->task_id)!=_cancelled_task_ids.end()) {
         	_cancelled_task_ids.erase(task->task_id);
         	free_migratable_task(task, 1);
+        	_num_replicated_remote_tasks_outstanding--;
             _mtx_load_exchange.lock();
             _num_remote_tasks_outstanding --;
             DBP("receive_handler_data - late cancel, decrement stolen outstanding for task id: %d  new count %d\n", task->task_id, _num_remote_tasks_outstanding.load());

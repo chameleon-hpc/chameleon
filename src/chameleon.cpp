@@ -591,9 +591,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
-           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
+           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
-                                                                  _num_remote_tasks_outstanding.load());
+                                                                  _num_remote_tasks_outstanding.load(),
+                                                                  _num_replicated_local_tasks_outstanding.load(),
+                                                                  _num_replicated_remote_tasks_outstanding.load());
            request_manager_receive.printRequestInformation();
            request_manager_send.printRequestInformation();
            last_time_doing_sth_useful = omp_get_wtime(); 
@@ -1233,12 +1235,6 @@ inline int32_t process_replicated_remote_task() {
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
-    //synchronization with commthread which may concurrently want to cancel task
-    replicated_task = _map_tag_to_remote_task.find_and_erase(replicated_task->task_id);
-
-    //was already canceled
-    if(!replicated_task)
-      return CHAM_REPLICATED_TASK_SUCCESS;
 
 #ifdef TRACE
         static int event_process_replicated_remote = -1;

@@ -446,8 +446,9 @@ static void send_handler(void* buffer, int tag, int source, cham_migratable_task
     for(int i_task = 0; i_task<num_tasks; i_task++) {
     	cham_migratable_task_t *task = tasks[i_task];
     	if(task->is_replicated_task) {
+          _num_replicated_local_tasks_outstanding--;
     	  task->num_outstanding_replication_sends--;
-    	   	DBP("send_handler, replicated task, outstanding sends %d\n", task->num_outstanding_replication_sends);
+    	  DBP("send_handler, replicated task, outstanding sends %d\n", task->num_outstanding_replication_sends);
           // now we can push the replicated task into the local queue as it can safely be executed
     	  if(!task->num_outstanding_replication_sends) {
     		  DBP("send_handler, pushing replicated task into replicated local queue, task_id: %d\n", task->task_id);
@@ -520,6 +521,8 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     for(int i_task = 0; i_task < n_tasks; i_task++) {
         list_tasks[i_task]->source_mpi_rank = source;
         p_tasks[i_task] = list_tasks[i_task];
+        if(p_tasks[i_task]->is_replicated_task)
+        	_num_replicated_remote_tasks_outstanding++;
     }
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     receive_handler_data(NULL, tag, source, p_tasks, n_tasks);
@@ -655,6 +658,8 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
     if(tasks) {
         for(int i_task = 0; i_task < num_tasks; i_task++) {
             cham_migratable_task_t *task = tasks[i_task];
+            if(task->is_replicated_task)
+            	_num_replicated_remote_tasks_outstanding--;
             _mtx_load_exchange.lock();
             _num_remote_tasks_outstanding--;
             DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", task->task_id, _num_remote_tasks_outstanding.load());
@@ -670,10 +675,11 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
 static void receive_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
     DBP("receive_back_handler - receiving output data from rank %d for tag: %d\n", source, tag);
     cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(tag);
+    assert(task_entry!=nullptr);
     if(task_entry) {
         assert(task_entry->num_outstanding_recvbacks>=0);
-        if(task_entry->num_outstanding_recvbacks==0)
-        	_map_offloaded_tasks_with_outputs.erase(tag);
+       // if(task_entry->num_outstanding_recvbacks==0)
+       // 	_map_offloaded_tasks_with_outputs.erase(tag);
 
         #if CHAM_REPLICATION_MODE==2
         if(task_entry->is_replicated_task) {
@@ -732,7 +738,7 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
         DBP("receive_remote_tasks_trash - outstanding: %d for task id: %d\n",  task->num_outstanding_recvbacks, task->task_id);
         
         if(task->num_outstanding_recvbacks==0) {
-        	_map_offloaded_tasks_with_outputs.erase(tag);
+        	//_map_offloaded_tasks_with_outputs.erase(tag);
                                  // mark locally created task finished
 		  _unfinished_locally_created_tasks.remove(task->task_id);
 		  _map_overall_tasks.erase(task->task_id);
@@ -840,6 +846,7 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
         tasks[i]->target_mpi_rank = target_rank;
        else {
     	DBP("offload_action - offloading replicated task\n");
+    	_num_replicated_local_tasks_outstanding += tasks[i]->replication_ranks.size();
     	tasks[i]->num_outstanding_replication_sends = tasks[i]->replication_ranks.size();
       }
     }
@@ -1378,7 +1385,8 @@ int exit_condition_met(int from_taskwait, int print) {
 }
 
 void trigger_update_outstanding() {
-    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load();
+    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load()
+    		                    + _num_replicated_local_tasks_outstanding.load() + _num_replicated_remote_tasks_outstanding.load();
 }
 
 void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx) {
@@ -1866,6 +1874,7 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
         // we haven't processed this task yet so we can safely delete this task
         _map_overall_tasks.erase(task_id);
 
+        _num_replicated_remote_tasks_outstanding--;
         // decrement load counter and ignore send back
         _mtx_load_exchange.lock();
         _num_remote_tasks_outstanding--;
@@ -1887,6 +1896,7 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
 inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, RequestManager *request_manager_receive, int *event_recv_back) {
 	DBP("action_handle_recvback_request - looking for task for tag %ld\n", cur_status_receiveBack->MPI_TAG);
 	cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack->MPI_TAG);
+	assert(task_entry!=nullptr);
 	DBP("action_handle_recvback_request - found task %p\n", task_entry);
     if(task_entry) {
         #if CHAM_STATS_RECORD

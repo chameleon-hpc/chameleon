@@ -1186,7 +1186,6 @@ inline int32_t process_replicated_local_task() {
         _time_task_execution_replicated_count++;
 #endif
 
-        _num_replicated_local_tasks_outstanding--;
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated++;
 #endif

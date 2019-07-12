@@ -53,7 +53,7 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
           char estring[MPI_MAX_ERROR_STRING];
           MPI_Error_class(stats[i].MPI_ERROR, &eclass);
           MPI_Error_string(stats[i].MPI_ERROR, estring, &len);
-          DBP("Error %d: %s, requests: %d, type: %d\n", eclass, estring, n_requests, type);fflush(stdout);
+          fprintf(stderr, "Error %d: %s, requests: %d, type: %d\n", eclass, estring, n_requests, type);fflush(stderr);
        }
     }
     delete[] stats;
@@ -73,8 +73,13 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
 #endif 
       _num_completed_requests[type]+= n_requests;
       _num_completed_request_groups[type]+=1;
-      
+     
+     try{ 
       handler(buffer, tag, rank, tasks, num_tasks);
+     }
+     catch(std::bad_function_call& e) {
+      assert(false);
+     }
       //_num_outstanding_comm_requests --;
       return;
     }
@@ -157,6 +162,19 @@ void RequestManager::progressRequests() {
    double cur_time = omp_get_wtime();
 #endif
   int ierr = MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+  if(ierr!=MPI_SUCCESS) {
+     int eclass, len;
+     char estring[MPI_MAX_ERROR_STRING];
+     MPI_Error_class(ierr, &eclass);
+     MPI_Error_string(ierr, estring, &len);
+     fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
+     for(int i=0; i<n_requests;i++) {
+        fprintf(stderr, "Request : %ld\n", _current_request_array[i]);
+        MPI_Error_class(arr_of_statuses[i].MPI_ERROR, &eclass);
+        MPI_Error_string(arr_of_statuses[i].MPI_ERROR, estring, &len);
+        fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
+     }
+  }
   assert(ierr==MPI_SUCCESS);
 #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
    cur_time = omp_get_wtime()-cur_time;
@@ -204,7 +222,12 @@ void RequestManager::progressRequests() {
                 add_throughput_recv(finishedStamp-startStamp, request_group_data.sum_bytes);
        }
 #endif
+      try{
        handler(buffer, tag, rank, tasks, num_tasks);
+      }
+      catch (std::bad_function_call& e) {
+       assert(false);
+      }
        //_num_outstanding_comm_requests --;
        _map_id_to_request_group_data.erase(gid);
     }

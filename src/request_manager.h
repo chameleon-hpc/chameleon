@@ -16,7 +16,8 @@ typedef enum RequestType {
     recvData    = 2, 
     sendBack    = 3, 
     recvBack    = 4,
-    recvBackTrash = 5
+    recvBackTrash = 5,
+    cancel       = 6
 } RequestType;
 
 static const char* RequestType_values[] = {
@@ -25,7 +26,8 @@ static const char* RequestType_values[] = {
     "recvData",     // 2
     "sendBack",     // 3
     "recvBack",      // 4
-    "recvBackTrash" // 5
+    "recvBackTrash", // 5
+    "cancel"
 };
 
 class RequestManager {

@@ -1202,7 +1202,7 @@ inline int32_t process_replicated_local_task() {
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
         assert(_num_local_tasks_outstanding>=0);
-        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding);
+        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 //#endif
@@ -1390,7 +1390,7 @@ inline int32_t process_local_task() {
     _mtx_load_exchange.lock();
     _num_local_tasks_outstanding--;
     assert(_num_local_tasks_outstanding>=0);
-    DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding);
+    DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding.load());
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 

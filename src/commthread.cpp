@@ -91,6 +91,8 @@ std::vector<int32_t> _load_info_ranks;
 // for now use a single mutex for box info
 std::mutex _mtx_load_exchange;
 
+std::mutex _mtx_cancellation;
+
 // === Constants
 const int32_t MAX_BUFFER_SIZE_OFFLOAD_ENTRY = 20480; // 20 KB for testing
 
@@ -138,8 +140,8 @@ void* encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int3
 void decode_send_buffer(void *buffer, int mpi_tag, int32_t *num_tasks, std::vector<cham_migratable_task_t*> &tasks);
 
 short pin_thread_to_last_core(int n_last_core);
-void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank);
-int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank);
+void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronous_mode=false);
+int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronus_mode=false);
 
 static void send_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
 static void receive_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
@@ -776,6 +778,7 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
     assert(rank<chameleon_comm_size);
     
     DBP("cancel_offloaded_task - canceling offloaded task, task_id: %ld on remote rank: %d\n", task->task_id, rank);
+    //printf("cancel_offloaded_task - canceling offloaded task, task_id: %ld on remote rank: %d\n", task->task_id, rank);
 
     MPI_Request request; 
     // TODO: depends on int32 or int64
@@ -783,7 +786,10 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
     #if CHAM_STATS_RECORD
     start_time_requests = omp_get_wtime();
     #endif
-    MPI_Isend(&task->task_id, 1, MPI_INTEGER, rank, 0, chameleon_comm_cancel, &request);
+    int ierr= MPI_Isend(&task->task_id, 1, MPI_INTEGER, rank, 0, chameleon_comm_cancel, &request);
+    assert(ierr==MPI_SUCCESS);
+    //printf("cancel_offloaded_task - posted request %ld\n", request);
+    _mtx_cancellation.lock();
     request_manager_cancel.submitRequests( start_time_requests, 0, rank, 1,
                                            &request,
                                            -1, // TODO: what will this be?
@@ -791,9 +797,10 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
                                            handler_noop,
                                            send,   // TODO: special request
                                            nullptr);
+    _mtx_cancellation.unlock();
 }
 
-int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank) {
+int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronous_mode) {
     #ifdef TRACE
     static int event_offload = -1;
     std::string event_offload_name = "offload_tasks";
@@ -821,7 +828,7 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     }
     #endif */ /* CHAM_REPLICATION_MODE */
     
-    offload_action(tasks, num_tasks, target_rank);
+    offload_action(tasks, num_tasks, target_rank, use_synchronous_mode);
     //_num_offloaded_tasks_outstanding += num_tasks;
 
     #if CHAM_STATS_RECORD
@@ -836,7 +843,7 @@ int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks,
     return CHAM_SUCCESS;
 }
 
-void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank) {
+void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronous_mode) {
     // use unique tag for current offload in this sync cycle
     int tmp_tag = tag_counter_send_tasks++;
     DBP("offload_action (enter) - num_tasks: %d, target_rank: %d mpi_tag: %d\n", num_tasks, target_rank, tmp_tag);
@@ -895,7 +902,10 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     MPI_Send(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
     #else
-    MPI_Isend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
+    if(use_synchronous_mode)
+      MPI_Issend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
+    else
+      MPI_Isend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
     #endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
@@ -921,14 +931,20 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
                 #if MPI_BLOCKING
                 MPI_Send(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
                 #else
-                MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                if(use_synchronous_mode)
+                  MPI_Issend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                else
+                  MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
                 #endif                
             }
             else {
                 #if MPI_BLOCKING
                 MPI_Send(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
                 #else
-                MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                if(use_synchronous_mode)
+                  MPI_Issend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                else
+                  MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
                 #endif
             }
 #if CHAM_STATS_RECORD
@@ -991,7 +1007,10 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     ierr = MPI_Send(MPI_BOTTOM, 1, type_mapped_vars, target_rank, tmp_tag, chameleon_comm);
     #else
-    ierr = MPI_Isend(MPI_BOTTOM, 1, type_mapped_vars, target_rank, tmp_tag, chameleon_comm, &requests[1]);
+    if( use_synchronous_mode )
+      ierr = MPI_Issend(MPI_BOTTOM, 1, type_mapped_vars, target_rank, tmp_tag, chameleon_comm, &requests[1]);
+    else
+      ierr = MPI_Isend(MPI_BOTTOM, 1, type_mapped_vars, target_rank, tmp_tag, chameleon_comm, &requests[1]);
     #endif
     assert(ierr==MPI_SUCCESS);
 #if CHAM_STATS_RECORD
@@ -1750,7 +1769,10 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     _stats_bytes_send_per_message.add_stat_value((double)tmp_size_buff);
     start_time_requests = omp_get_wtime();
     #endif 
-    MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &request);
+    if(cur_task->is_replicated_task)
+      MPI_Issend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &request);
+    else
+      MPI_Isend(buff, tmp_size_buff, MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &request);
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
@@ -1781,7 +1803,10 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
             _stats_bytes_send_per_message.add_stat_value((double)cur_task->arg_sizes[i]);
             #endif
             //DBP("action_send_back_stolen_tasks - argument %i, size %i\n", i, cur_task->arg_sizes[i]);
-            MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[num_requests++]);
+            if(cur_task->is_replicated_task)
+              MPI_Issend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[num_requests++]);
+            else
+              MPI_Isend(cur_task->arg_hst_pointers[i], cur_task->arg_sizes[i], MPI_BYTE, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[num_requests++]);
         }
     }
     #elif OFFLOAD_DATA_PACKING_TYPE == 2
@@ -1827,7 +1852,10 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     _stats_bytes_send_per_message.add_stat_value((double)size);
     start_time_requests = omp_get_wtime();
     #endif
-    ierr = MPI_Isend(MPI_BOTTOM, 1, type_mapped_vars, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[0]);
+    if(cur_task->is_replicated_task)
+      ierr = MPI_Issend(MPI_BOTTOM, 1, type_mapped_vars, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[0]);
+    else
+      ierr = MPI_Isend(MPI_BOTTOM, 1, type_mapped_vars, cur_task->source_mpi_rank, cur_task->task_id, chameleon_comm_mapped, &requests[0]);
     assert(ierr==MPI_SUCCESS);
     ierr = MPI_Type_free(&type_mapped_vars);
     assert(ierr==MPI_SUCCESS);
@@ -1879,7 +1907,7 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
         // decrement load counter and ignore send back
         _mtx_load_exchange.lock();
         _num_remote_tasks_outstanding--;
-        DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld new %d\n", task_id, _num_remote_tasks_outstanding);
+        DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld new %d\n", task_id, _num_remote_tasks_outstanding.load());
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
 
@@ -2403,7 +2431,7 @@ inline void action_task_replication_send() {
       cur_task->is_replicated_task = 1;
       for(int i=0; i<rep_info->num_replication_ranks; i++) {
         cur_task->replication_ranks.push_back(rep_info->replication_ranks[i]);
-        offload_tasks_to_rank(cur_task_list, 1, rep_info->replication_ranks[i]);
+        offload_tasks_to_rank(cur_task_list, 1, rep_info->replication_ranks[i], true);
       }
       rep_info->num_tasks--;
     }
@@ -2499,7 +2527,9 @@ void* comm_thread_action(void* arg) {
 
     while(true) {
         #if CHAM_REPLICATION_MODE==2
+    	_mtx_cancellation.lock();
         request_manager_cancel.progressRequests();
+    	_mtx_cancellation.unlock();
         #endif
         #ifdef TRACE
         VT_BEGIN_CONSTRAINED(event_progress_send);
@@ -2524,6 +2554,7 @@ void* comm_thread_action(void* arg) {
                 _time_commthread_active_count++;
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
+                assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
                 while(!_tasks_to_deallocate.empty()) {
                 	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
                 	free_migratable_task(task);
@@ -2551,6 +2582,7 @@ void* comm_thread_action(void* arg) {
             tag_counter_send_tasks = 0;
             has_not_replicated = true;
             assert(_remote_tasks_send_back.empty());
+            assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
             _cancelled_task_ids.clear();
             _map_offloaded_tasks_with_outputs.clear();
             // reset last received ids
@@ -2631,6 +2663,7 @@ void* comm_thread_action(void* arg) {
                 _time_commthread_active_count++;
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
+                assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
                 while(!_tasks_to_deallocate.empty()) {
                    	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
                    	free_migratable_task(task);

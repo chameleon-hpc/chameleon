@@ -4,6 +4,7 @@
  
 #include <numeric>
 #include <algorithm>
+#include <cassert>
 
 #pragma region Local Helpers
 template <typename T>
@@ -124,41 +125,57 @@ void compute_num_tasks_to_offload( std::vector<int32_t>& tasksToOffloadPerRank, 
 }
 
 // implements default replication strategy where neighbouring ranks logically have some "overlapping tasks"
-void compute_num_tasks_to_replicate( std::vector<cham_t_replication_info_t>& replication_infos, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local) {
-        double alpha;
-	int myLeft = chameleon_comm_rank-1;
-	int myRight = chameleon_comm_rank+1;
+ cham_t_replication_info_t * compute_num_tasks_to_replicate(  std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t *num_replication_infos ) {
 
-        int num_neighbours = 0;
-        if(myLeft>0) num_neighbours++;
-        if(myRight<chameleon_comm_size) num_neighbours++;
-   
-        alpha = MAX_PERCENTAGE_REPLICATED_TASKS/num_neighbours;
+    double alpha = 0;
+    int myLeft = chameleon_comm_rank-1;
+    int myRight = chameleon_comm_rank+1;
+    
+    assert(num_tasks_local>=0);
 
-	if(myLeft>0) {
+    int num_neighbours = 0;
+    if(myLeft>=0) num_neighbours++;
+    if(myRight<chameleon_comm_size) num_neighbours++;
+    cham_t_replication_info_t *replication_infos = (cham_t_replication_info_t*) malloc(sizeof(cham_t_replication_info_t)*num_neighbours);
+
+    alpha = MAX_PERCENTAGE_REPLICATED_TASKS/num_neighbours;
+    assert(alpha>=0);
+
+    int32_t cnt = 0;
+
+	if(myLeft>=0) {
+	    //printf("alpha %f, num_tasks_local %d\n", alpha, num_tasks_local);
 	    int num_tasks = num_tasks_local*alpha;
+            assert(num_tasks>=0);
 	    int *replication_ranks = (int*) malloc(sizeof(int)*1);
 	    replication_ranks[0] = myLeft;
 		cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
-		replication_infos.push_back(info);
+		replication_infos[cnt++] = info;
 	}
 	if(myRight<chameleon_comm_size) {
-		int num_tasks = num_tasks_local*alpha;
-		int *replication_ranks = (int*) malloc(sizeof(int)*1);
-		replication_ranks[0] = myRight;
-		cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
-		replication_infos.push_back(info);
+	    int num_tasks = num_tasks_local*alpha;
+            assert(num_tasks>=0);
+	    int *replication_ranks = (int*) malloc(sizeof(int)*1);
+	    replication_ranks[0] = myRight;
+	    cham_t_replication_info_t info = cham_t_replication_info_create(num_tasks, 1, replication_ranks);
+	    replication_infos[cnt++] = info;
 	}
+	*num_replication_infos = cnt;
+	return replication_infos;
 }
 
 int32_t get_default_load_information_for_rank(TYPE_TASK_ID* local_task_ids, int32_t num_tasks_local, TYPE_TASK_ID* local_rep_task_ids, int32_t num_tasks_local_rep, TYPE_TASK_ID* stolen_task_ids, int32_t num_tasks_stolen, TYPE_TASK_ID* stolen_task_ids_rep, int32_t num_tasks_stolen_rep) {
     // simply return number of tasks in queue
     // int32_t num_ids = num_tasks_local + num_tasks_stolen;
     int32_t num_ids;
+    assert(num_tasks_stolen_rep>=0);
+    assert(num_tasks_stolen>=0);
+    assert(num_tasks_local_rep>=0);
+    assert(num_tasks_local>=0);
 
-    num_ids = num_tasks_local + num_tasks_local_rep;
+    num_ids = num_tasks_local + num_tasks_local_rep;  //Todo: include replicated tasks which are "in flight"
 #if CHAM_REPLICATION_MODE==1
-    num_ids += std::max<int32_t>(_num_remote_tasks_outstanding.load(), num_tasks_stolen + num_tasks_stolen_rep);
+    num_ids += num_tasks_stolen + num_tasks_stolen_rep;
 #else
     num_ids += num_tasks_stolen;
 #endif

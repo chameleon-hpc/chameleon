@@ -7,6 +7,7 @@
 
 #include "chameleon.h"
 #include "chameleon_common.h"
+#include "chameleon_tools.h"
 #include "request_manager.h"
 
 // communicator for remote task requests
@@ -28,7 +29,7 @@ extern int chameleon_comm_size;
 extern std::vector<intptr_t> _image_base_addresses;
 
 // list with local task entries
-// these can either be executed here or offloaded to a different rank
+// these can either be executed locally or offloaded/replicated to a different rank
 extern thread_safe_task_list_t _local_tasks;
 extern std::atomic<int32_t> _num_local_tasks_outstanding;
 
@@ -41,12 +42,15 @@ extern std::atomic<int32_t> _num_remote_tasks_outstanding;
 extern thread_safe_task_list_t _replicated_local_tasks;
 extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding;
 
+//extern std::atomic<int32_t> _num_outstanding_comm_requests;
+
 extern thread_safe_task_list_t _replicated_remote_tasks;
+extern std::atomic<int32_t> _num_replicated_remote_tasks_outstanding;
 
 // list with stolen task entries that need output data transfer
 extern thread_safe_task_list_t _remote_tasks_send_back;
 // list with replicated task entries that need initial transfer
-extern thread_safe_task_list_t _replicated_tasks_to_transfer;
+extern thread_safe_list_t<cham_t_replication_info_t*> _replication_infos_list;
 
 // map that maps tag ids back to local tasks that have been offloaded and expect result data
 extern thread_safe_task_map_t _map_offloaded_tasks_with_outputs;

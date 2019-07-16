@@ -591,9 +591,11 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
-           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d \n", chameleon_comm_rank,
+           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
-                                                                  _num_remote_tasks_outstanding.load());
+                                                                  _num_remote_tasks_outstanding.load(),
+                                                                  _num_replicated_local_tasks_outstanding.load(),
+                                                                  _num_replicated_remote_tasks_outstanding.load());
            request_manager_receive.printRequestInformation();
            request_manager_send.printRequestInformation();
            last_time_doing_sth_useful = omp_get_wtime(); 
@@ -901,9 +903,17 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
         cham_t_status.cham_t_callback_task_create(task, &(task->task_tool_data), codeptr_ra);
     }
 #endif
+    assert(task->num_outstanding_recvbacks==0);
 
+    _mtx_load_exchange.lock();
+    _num_local_tasks_outstanding++;
+    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
+    trigger_update_outstanding();
+    _mtx_load_exchange.unlock();
+    
+    _local_tasks.push_back(task);
     // add to queue
-#if CHAM_REPLICATION_MODE>0
+/*#if CHAM_REPLICATION_MODE>0
     if(!task->is_replicated_task) 
 #endif
       _local_tasks.push_back(task);
@@ -912,7 +922,7 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
       _replicated_local_tasks.push_back(task);
       _replicated_tasks_to_transfer.push_back(task);
     }
-#endif
+#endif */
     // set id of last task added
     __last_task_id_added = task->task_id;
 
@@ -921,11 +931,6 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     #endif
     _map_overall_tasks.insert(task->task_id, task);
     
-    _mtx_load_exchange.lock();
-    _num_local_tasks_outstanding++;
-    DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
 #ifdef TRACE
     VT_END_W_CONSTRAINED(event_task_create);
 #endif
@@ -1152,7 +1157,9 @@ inline int32_t process_replicated_local_task() {
     bool desired = true;
 
     //atomic CAS
-    if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
+    //if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
+        DBP("process_replicated_local_task - task %d was reserved for local execution\n", replicated_task->task_id);
+    //if(true) {
         //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
 
 #ifdef TRACE
@@ -1181,7 +1188,6 @@ inline int32_t process_replicated_local_task() {
         _time_task_execution_replicated_count++;
 #endif
 
-        _num_replicated_local_tasks_outstanding--;
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated++;
 #endif
@@ -1192,21 +1198,25 @@ inline int32_t process_replicated_local_task() {
         #endif
         _map_overall_tasks.erase(replicated_task->task_id);
 
+//#if CHAM_REPLICATION_MODE==2
         _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
-        DBP("process_replicated_task - decrement local outstanding count for task %ld\n", replicated_task->task_id);
+        assert(_num_local_tasks_outstanding>=0);
+        DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
         trigger_update_outstanding();
         _mtx_load_exchange.unlock();
+//#endif
+
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
 #endif
         //Do not free replicated task here, as the communication thread may later receive back
         //this task and needs to access the task (check flag + post receive requests to trash buffer)
         //The replicated task should be deallocated in recv back handlers
-    }
-    else {
-        return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
-    }
+    //}
+    //else {
+    //    return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
+   // }
 
     return CHAM_REPLICATED_TASK_SUCCESS;
 
@@ -1225,12 +1235,6 @@ inline int32_t process_replicated_remote_task() {
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
-    //synchronization with commthread which may concurrently want to cancel task
-    replicated_task = _map_tag_to_remote_task.find_and_erase(replicated_task->task_id);
-
-    //was already canceled
-    if(!replicated_task)
-      return CHAM_REPLICATED_TASK_SUCCESS;
 
 #ifdef TRACE
         static int event_process_replicated_remote = -1;
@@ -1385,7 +1389,8 @@ inline int32_t process_local_task() {
     // it is save to decrement counter after local execution
     _mtx_load_exchange.lock();
     _num_local_tasks_outstanding--;
-    DBP("process_local_task - decrement local outstanding count for task %ld\n", task->task_id);
+    assert(_num_local_tasks_outstanding>=0);
+    DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding.load());
     trigger_update_outstanding();
     _mtx_load_exchange.unlock();
 

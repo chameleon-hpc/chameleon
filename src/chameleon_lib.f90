@@ -79,9 +79,9 @@ end interface
      implicit none
      procedure(),pointer, intent(in) :: entry
      integer(kind=c_int) :: nargs
-     type(map_entry),dimension(:) :: args
+     type(map_entry),pointer,dimension(:) :: args
      
-     chameleon_create_task = chameleon_create_task_fortran(c_funloc(entry), nargs, c_loc(args))
+     chameleon_create_task = chameleon_create_task_fortran(c_funloc(entry), nargs, c_loc(args(1)))
    end function chameleon_create_task
 
 !  function chameleon_add_task_manual(entry, nargs, args)

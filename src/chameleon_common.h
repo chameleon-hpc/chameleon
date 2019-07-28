@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <cmath>
 #include <list>
 #include <mutex>
 #include <vector>
@@ -843,6 +844,8 @@ static void load_config_values() {
 }
 
 static void print_config_values() {
+    RELP("OFFLOAD_DATA_PACKING_TYPE=%d\n", OFFLOAD_DATA_PACKING_TYPE);
+    RELP("MPI_BLOCKING=%d\n", MPI_BLOCKING);
     RELP("OMP_NUM_THREADS=%d\n", OMP_NUM_THREADS_VAR.load());
     RELP("MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION.load());
     RELP("MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION=%f\n", MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION.load());

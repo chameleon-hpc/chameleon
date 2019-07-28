@@ -537,7 +537,10 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #if OFFLOAD_DATA_PACKING_TYPE == 1
     int num_requests = 0;
     for(int i_task = 0; i_task < n_tasks; i_task++) {
-        num_requests += list_tasks[i_task]->arg_num;
+        for(int i_par = 0; i_par < list_tasks[i_task]->arg_num; i_par++) {
+            if(list_tasks[i_task]->arg_types[i_par] & CHAM_OMP_TGT_MAPTYPE_TO)
+                num_requests++;
+        }
     }
     MPI_Request *requests = new MPI_Request[num_requests];
     int cur_req_num = 0;
@@ -549,27 +552,31 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
         cham_migratable_task_t *task = list_tasks[i_task];
         for(int i=0; i<task->arg_num; i++) {
             int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            if(is_lit) {
-                #if MPI_BLOCKING
-                int ierr = MPI_Recv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, MPI_STATUS_IGNORE);
-                #else
-                int ierr = MPI_Irecv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
+            int is_to       = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_TO;
+
+            if(is_to) {
+                if(is_lit) {
+                    #if MPI_BLOCKING
+                    int ierr = MPI_Recv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, MPI_STATUS_IGNORE);
+                    #else
+                    int ierr = MPI_Irecv(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
+                    #endif
+                    assert(ierr==MPI_SUCCESS);
+                } else {
+                    #if MPI_BLOCKING
+                    int ierr = MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, MPI_STATUS_IGNORE);
+                    #else
+                    int ierr = MPI_Irecv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
+                    #endif
+                    assert(ierr==MPI_SUCCESS);
+                }
+                #if CHAM_STATS_RECORD
+                num_bytes_received += task->arg_sizes[i];
+                _stats_bytes_recv_per_message.add_stat_value((double)task->arg_sizes[i]);
                 #endif
-                assert(ierr==MPI_SUCCESS);
-            } else {
-                #if MPI_BLOCKING
-                int ierr = MPI_Recv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, MPI_STATUS_IGNORE);
-                #else
-                int ierr = MPI_Irecv(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, source, tag, chameleon_comm, &requests[cur_req_num]);
-                #endif
-                assert(ierr==MPI_SUCCESS);
+                cur_req_num++;
+                print_arg_info("receive_handler - receiving argument", task, i);
             }
-            #if CHAM_STATS_RECORD
-            num_bytes_received += task->arg_sizes[i];
-            _stats_bytes_recv_per_message.add_stat_value((double)task->arg_sizes[i]);
-            #endif
-            cur_req_num++;
-            print_arg_info("receive_handler - receiving argument", task, i);
         }
     }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
@@ -577,7 +584,10 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     MPI_Request *requests = new MPI_Request[num_requests];
     int tmp_overall_arg_nums = 0;
     for(int i_task = 0; i_task < n_tasks; i_task++) {
-        tmp_overall_arg_nums += list_tasks[i_task]->arg_num;
+        for(int i_par = 0; i_par < list_tasks[i_task]->arg_num; i_par++) {
+            if(list_tasks[i_task]->arg_types[i_par] & CHAM_OMP_TGT_MAPTYPE_TO)
+                tmp_overall_arg_nums ++;
+        }
     }
 
     MPI_Datatype type_mapped_vars;
@@ -590,19 +600,21 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     for(int i_task = 0; i_task < n_tasks; i_task++) {
         cham_migratable_task_t *task = list_tasks[i_task];
         for(int i=0; i<task->arg_num; i++) {
-            separate_types[tmp_count]   = MPI_BYTE;
-            blocklen[tmp_count]         = task->arg_sizes[i];
-            int is_lit                  = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+            if(task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_TO) {
+                separate_types[tmp_count]   = MPI_BYTE;
+                blocklen[tmp_count]         = task->arg_sizes[i];
+                int is_lit                  = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
 
-            if(is_lit) {
-                ierr = MPI_Get_address(&task->arg_hst_pointers[i], &(disp[tmp_count]));
-                // assert(ierr==MPI_SUCCESS);
+                if(is_lit) {
+                    ierr = MPI_Get_address(&task->arg_hst_pointers[i], &(disp[tmp_count]));
+                    // assert(ierr==MPI_SUCCESS);
+                }
+                else {
+                    ierr = MPI_Get_address(task->arg_hst_pointers[i], &(disp[tmp_count]));
+                    // assert(ierr==MPI_SUCCESS);
+                }
+                tmp_count++;
             }
-            else {
-                ierr = MPI_Get_address(task->arg_hst_pointers[i], &(disp[tmp_count]));
-                // assert(ierr==MPI_SUCCESS);
-            }
-            tmp_count++;
         }
     }
     ierr = MPI_Type_create_struct(tmp_overall_arg_nums, blocklen, disp, separate_types, &type_mapped_vars);
@@ -672,7 +684,6 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
         }
         free(tasks);
     }
-
 }
 
 static void receive_back_handler(void* buffer, int tag, int source, cham_migratable_task_t** tasks, int num_tasks) {
@@ -1200,7 +1211,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
         // 9. loop through arguments and copy values
         for(int32_t i_arg = 0; i_arg < tasks[i]->arg_num; i_arg++) {
             int is_lit      = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            int is_to       = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_FROM;
+            int is_to       = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
 
             if(is_to) {
                 print_arg_info("encode_send_buffer", tasks[i], i_arg);
@@ -1849,8 +1860,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     int ierr = 0;
     int j = 0;
     for(int i=0; i < cur_task->arg_num; i++) {
-        int is_from         = cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;            
-        if(is_from) {
+        if(cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
             separate_types[j]   = MPI_BYTE;
             blocklen[j]         = cur_task->arg_sizes[i];
             int is_lit          = cur_task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
@@ -2114,8 +2124,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             int ierr = 0;
             int j = 0;
             for(int i=0; i < task_entry->arg_num; i++) {
-                int is_from = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;            
-                if(is_from) {
+                if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                     separate_types[j]   = MPI_BYTE;
                     blocklen[j]         = task_entry->arg_sizes[i];
                     int is_lit          = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
@@ -2288,8 +2297,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             MPI_Aint disp[num_outputs];
             int j = 0;
             for(int i=0; i < task_entry->arg_num; i++) {
-                int is_from = task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM;            
-                if(is_from) {
+                if(task_entry->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_FROM) {
                     separate_types[j]   = MPI_BYTE;
                     blocklen[j]         = task_entry->arg_sizes[i];
                     ierr = MPI_Get_address(cur_ptr_pos, &(disp[j]));

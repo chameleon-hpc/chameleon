@@ -882,7 +882,11 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     // RELP("Packing Type: Zero Copy\n");
     int n_requests = 1;
     for(int i_task = 0; i_task < num_tasks; i_task++) {
-        n_requests += tasks[i_task]->arg_num;
+        for(int tmp_i_arg = 0; tmp_i_arg < tasks[i_task]->arg_num; tmp_i_arg++) {
+            int is_to = tasks[i_task]->arg_types[tmp_i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
+            if(is_to)
+                n_requests++;
+        }
     }
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     // RELP("Packing Type: Zero Copy Single Message\n");
@@ -903,9 +907,9 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     MPI_Send(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
     #else
     if(use_synchronous_mode)
-      MPI_Issend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
+        MPI_Issend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
     else
-      MPI_Isend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
+        MPI_Isend(buffer, buffer_size, MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[0]);
     #endif
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
@@ -927,32 +931,35 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
         cham_migratable_task_t *task = tasks[i_task];
         for(int i=0; i<task->arg_num; i++) {
             int is_lit      = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            if(is_lit) {
-                #if MPI_BLOCKING
-                MPI_Send(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
-                #else
-                if(use_synchronous_mode)
-                  MPI_Issend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
-                else
-                  MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
-                #endif                
-            }
-            else {
-                #if MPI_BLOCKING
-                MPI_Send(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
-                #else
-                if(use_synchronous_mode)
-                  MPI_Issend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
-                else
-                  MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
-                #endif
-            }
+            int is_to       = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_TO;
+            if(is_to) {
+                if(is_lit) {
+                    #if MPI_BLOCKING
+                    MPI_Send(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
+                    #else
+                    if(use_synchronous_mode)
+                        MPI_Issend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                    else
+                        MPI_Isend(&task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                    #endif                
+                }
+                else {
+                    #if MPI_BLOCKING
+                    MPI_Send(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm);
+                    #else
+                    if(use_synchronous_mode)
+                        MPI_Issend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                    else
+                        MPI_Isend(task->arg_hst_pointers[i], task->arg_sizes[i], MPI_BYTE, target_rank, tmp_tag, chameleon_comm, &requests[cur_req_index]);
+                    #endif
+                }
 #if CHAM_STATS_RECORD
-            tmp_bytes_send += task->arg_sizes[i];
-            _stats_bytes_send_per_message.add_stat_value((double)task->arg_sizes[i]);
+                tmp_bytes_send += task->arg_sizes[i];
+                _stats_bytes_send_per_message.add_stat_value((double)task->arg_sizes[i]);
 #endif
-            cur_req_index++;
-            print_arg_info("offload_action - sending argument", task, i);
+                cur_req_index++;
+                print_arg_info("offload_action - sending argument", task, i);
+            }
         }
     }
 #if CHAM_STATS_RECORD
@@ -965,7 +972,11 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
 #elif OFFLOAD_DATA_PACKING_TYPE == 2
     int tmp_overall_arg_nums = 0;
     for(int i_task = 0; i_task < num_tasks; i_task++) {
-        tmp_overall_arg_nums += tasks[i_task]->arg_num;
+        for(int tmp_i_arg = 0; tmp_i_arg < tasks[i_task]->arg_num; tmp_i_arg++) {
+            int is_to = tasks[i_task]->arg_types[tmp_i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
+            if(is_to)
+                tmp_overall_arg_nums++;
+        }
     }
 
     MPI_Datatype type_mapped_vars;
@@ -979,19 +990,22 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
         cham_migratable_task_t *task = tasks[i_task];
 
         for(int i=0; i<task->arg_num; i++) {
-            separate_types[tmp_count]   = MPI_BYTE;
-            blocklen[tmp_count]         = task->arg_sizes[i];
-            int is_lit                  = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            
-            if(is_lit) {
-                ierr = MPI_Get_address(&task->arg_hst_pointers[i], &(disp[tmp_count]));
-                // assert(ierr==MPI_SUCCESS);
+            int is_to                       = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_TO;
+            if(is_to) {
+                separate_types[tmp_count]   = MPI_BYTE;
+                blocklen[tmp_count]         = task->arg_sizes[i];
+                int is_lit                  = task->arg_types[i] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
+                
+                if(is_lit) {
+                    ierr = MPI_Get_address(&task->arg_hst_pointers[i], &(disp[tmp_count]));
+                    // assert(ierr==MPI_SUCCESS);
+                }
+                else {
+                    ierr = MPI_Get_address(task->arg_hst_pointers[i], &(disp[tmp_count]));
+                    // assert(ierr==MPI_SUCCESS);
+                }
+                tmp_count++;
             }
-            else {
-                ierr = MPI_Get_address(task->arg_hst_pointers[i], &(disp[tmp_count]));
-                // assert(ierr==MPI_SUCCESS);
-            }
-            tmp_count++;
         }
     }
     ierr = MPI_Type_create_struct(tmp_overall_arg_nums, blocklen, disp, separate_types, &type_mapped_vars);
@@ -1096,7 +1110,9 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
 
         #if OFFLOAD_DATA_PACKING_TYPE == 0
         for(int i_arg = 0; i_arg < tasks[i]->arg_num; i_arg++) {
-            total_size += tasks[i]->arg_sizes[i_arg];
+            int is_to       = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
+            if(is_to)
+                total_size += tasks[i]->arg_sizes[i_arg];
         }
         #endif /* OFFLOAD_DATA_PACKING_TYPE */
     }
@@ -1184,17 +1200,18 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
         // 9. loop through arguments and copy values
         for(int32_t i_arg = 0; i_arg < tasks[i]->arg_num; i_arg++) {
             int is_lit      = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            int is_from     = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_FROM;
+            int is_to       = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_FROM;
 
-            print_arg_info("encode_send_buffer", tasks[i], i_arg);
-
-            // copy value from host pointer directly
-            if(is_lit) {
-                ((intptr_t *) cur_ptr)[0] = (intptr_t) tasks[i]->arg_hst_pointers[i_arg];
-            } else {
-                memcpy(cur_ptr, (char*)tasks[i]->arg_hst_pointers[i_arg], tasks[i]->arg_sizes[i_arg]);
+            if(is_to) {
+                print_arg_info("encode_send_buffer", tasks[i], i_arg);
+                // copy value from host pointer directly
+                if(is_lit) {
+                    ((intptr_t *) cur_ptr)[0] = (intptr_t) tasks[i]->arg_hst_pointers[i_arg];
+                } else {
+                    memcpy(cur_ptr, (char*)tasks[i]->arg_hst_pointers[i_arg], tasks[i]->arg_sizes[i_arg]);
+                }
+                cur_ptr += tasks[i]->arg_sizes[i_arg];
             }
-            cur_ptr += tasks[i]->arg_sizes[i_arg];
         }
         #endif /* OFFLOAD_DATA_PACKING_TYPE */
 
@@ -1315,23 +1332,30 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         // 9. loop through arguments and copy values
         for(int32_t i_arg = 0; i_arg < task->arg_num; i_arg++) {
             int is_lit      = task->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
-            // int is_from     = task->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_FROM;
+            int is_to       = task->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
 
             #if OFFLOAD_DATA_PACKING_TYPE == 0
-            // copy value from host pointer directly
             if(is_lit) {
-                intptr_t tmp_ptr = ((intptr_t *) cur_ptr)[0];
-                task->arg_hst_pointers[i_arg] = (void *) tmp_ptr;
+                if(is_to) {
+                    // set value directly
+                    intptr_t tmp_ptr = ((intptr_t *) cur_ptr)[0];
+                    task->arg_hst_pointers[i_arg] = (void *) tmp_ptr;
+                }
             } else {
                 // need to allocate new memory
                 void * new_mem = malloc(task->arg_sizes[i_arg]);
-                memcpy(new_mem, cur_ptr, task->arg_sizes[i_arg]);
+                if(is_to) {
+                    // copy data from buffer directly
+                    memcpy(new_mem, cur_ptr, task->arg_sizes[i_arg]);
+                }
                 task->arg_hst_pointers[i_arg] = new_mem;
             }
-            // increment pointer
-            cur_ptr += task->arg_sizes[i_arg];
+            if(is_to) {
+                // increment pointer
+                cur_ptr += task->arg_sizes[i_arg];
+            }
             #elif OFFLOAD_DATA_PACKING_TYPE > 0
-            // allocate memory for host pointer
+            // allocate memory for parameter
             if(!is_lit) {
                 void * new_mem = malloc(task->arg_sizes[i_arg]);
                 task->arg_hst_pointers[i_arg] = new_mem;

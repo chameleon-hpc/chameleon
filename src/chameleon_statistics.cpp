@@ -97,12 +97,12 @@ std::atomic<int>     _time_taskwait_count(0);
 std::atomic<double>  _time_commthread_active_sum(0.0);
 std::atomic<int>     _time_commthread_active_count(0.0);
 
-MinMaxAvgStats       _stats_bytes_send_per_message = MinMaxAvgStats("_bytes_send_per_message", "Bytes");
-MinMaxAvgStats       _stats_bytes_recv_per_message = MinMaxAvgStats("_bytes_recv_per_message", "Bytes");
-MinMaxAvgStats       _stats_time_comm_send = MinMaxAvgStats("_time_comm_send", "sec, not reliable");
-MinMaxAvgStats       _stats_time_comm_recv = MinMaxAvgStats("_time_comm_recv", "sec, not reliable");
-MinMaxAvgStats       _stats_throughput_send = MinMaxAvgStats("_throughput_send", "MB/s, not reliable");
-MinMaxAvgStats       _stats_throughput_recv = MinMaxAvgStats("_throughput_recv", "MB/s, not reliable");
+MinMaxAvgStats       _stats_bytes_send_per_message("_bytes_send_per_message", "Bytes");
+MinMaxAvgStats       _stats_bytes_recv_per_message("_bytes_recv_per_message", "Bytes");
+MinMaxAvgStats       _stats_time_comm_send("_time_comm_send", "sec, not reliable");
+MinMaxAvgStats       _stats_time_comm_recv("_time_comm_recv", "sec, not reliable");
+MinMaxAvgStats       _stats_throughput_send("_throughput_send", "MB/s, not reliable");
+MinMaxAvgStats       _stats_throughput_recv("_throughput_recv", "MB/s, not reliable");
 
 #if CHAMELEON_TOOL_SUPPORT
 std::atomic<double>  _time_tool_get_thread_data_sum(0.0);

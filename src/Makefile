@@ -1,5 +1,5 @@
-INSTALL_DIR ?=~/chameleon/
-#INSTALL_DIR ?=~/install/chameleon-lib/intel_1.0
+#INSTALL_DIR ?=~/chameleon/
+INSTALL_DIR ?=~/install/chameleon-lib/intel_1.0
 
 FILES_CXX_COMP=chameleon.cpp commthread.cpp chameleon_statistics.cpp chameleon_strategies.cpp chameleon_common.cpp request_manager.cpp chameleon_tools.cpp
 FILES_F90_COMP=chameleon_lib.f90
@@ -31,7 +31,7 @@ dbg: generic
 debug: FLAGS_OPTIMIZATION=-g -O0 -DCHAM_DEBUG
 debug: generic
 
-release: FLAGS_OPTIMIZATION=-g -O3 -DSHOW_WARNING_DEADLOCK
+release: FLAGS_OPTIMIZATION=-g -O3
 release: generic
 
 trace: FLAGS_OPTIMIZATION=-g -O3 -DTRACE -I$(VT_ROOT)/include -trace

@@ -11,7 +11,7 @@ tests-main.o:
 	$(CXX) $(CXX_FLAGS) tests-main.cpp -c
 
 run:
-	for x in *.out; do ./$$x; done
+	for x in *.out; do echo "Running $$x";  ./$$x; done
 
 clean:
 	rm -rf *.out

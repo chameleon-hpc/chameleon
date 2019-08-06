@@ -69,7 +69,7 @@ To build run:
 
 ### 3. Installation
 
-The default installation path is usually not accessible by normal users. Change the installation path can be done using `-DCMAKE_INSTALL_PREFIX`
+Installing to the default installation path usually requires root previliges. Changing the installation path can be done using `-DCMAKE_INSTALL_PREFIX`
 
     $ cmake -DCMAKE_INSTALL_PREFIX=<install/path> ../
     $ make

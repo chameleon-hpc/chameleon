@@ -1,0 +1,9 @@
+cmake_policy(SET CMP0011 NEW)
+cmake_policy(SET CMP0012 NEW)
+
+find_package(OpenMP REQUIRED)
+if (OPENMP_FOUND)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}" CACHE STRING "" FORCE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}" CACHE STRING "" FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${OpenMP_Fortran_FLAGS}" CACHE STRING "" FORCE)
+endif()

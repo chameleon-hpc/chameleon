@@ -10,6 +10,7 @@
 #include "chameleon_common.h"
 #include "commthread.h"
 #include "chameleon_statistics.h"
+#include "chameleon_version.h"
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
 
@@ -325,7 +326,7 @@ int32_t chameleon_init() {
     MPI_Errhandler_set(chameleon_comm_cancel, MPI_ERRORS_RETURN);
     MPI_Errhandler_set(chameleon_comm_load, MPI_ERRORS_RETURN);
 
-    DBP("chameleon_init\n");
+    RELP("chameleon_init: VERSION %s\n", CHAMELEON_VERSION_STRING);
 #ifdef CHAM_DEBUG
     mem_allocated = 0;
 #endif

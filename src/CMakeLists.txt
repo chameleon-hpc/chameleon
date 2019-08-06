@@ -40,17 +40,6 @@ set (ADDITIONAL_LIBRARIES
     ffi
 )
 
-message (STATUS "CHAMELEON additional compile flags:")
-set(ADDITIONAL_COMPILE_FLAGS_STR "")
-foreach (ADDITIONAL_FLAG ${ADDITIONAL_COMPILE_FLAGS})
-    message (STATUS "    " ${ADDITIONAL_FLAG})
-    set(ADDITIONAL_COMPILE_FLAGS_STR "${ADDITIONAL_COMPILE_FLAGS_STR} ${ADDITIONAL_FLAG}")
-endforeach()
-message (STATUS "DASH additional libraries:")
-foreach (ADDITIONAL_LIB ${ADDITIONAL_LIBRARIES})
-    message (STATUS "    " ${ADDITIONAL_LIB})
-endforeach()
-
 ## Build targets
 set (CHAMELEON_LIBRARY_NAME "chameleon")
 

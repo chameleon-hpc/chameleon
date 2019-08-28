@@ -106,12 +106,12 @@ std::mutex _mtx_comm_threads_ended;
 std::atomic<int> _comm_threads_ended_count(0);
 
 // flag that signalizes comm threads to abort their work
-std::atomic<int> _flag_abort_threads(0);
+std::atomic<int> _flag_abort_comm_thread(0);
 int tag_counter_send_tasks = 0;
 
 // variables to indicate when it is save to break out of taskwait
 std::mutex _mtx_taskwait;
-std::atomic<int> _flag_comm_threads_sleeping(1);
+std::atomic<int> _flag_comm_thread_sleeping(1);
 
 std::atomic<int> _num_threads_involved_in_taskwait(INT_MAX);
 std::atomic<int> _num_threads_active_in_taskwait(0);
@@ -164,19 +164,11 @@ int32_t start_communication_threads() {
         return CHAM_SUCCESS;
     }
 
-    #if !THREAD_ACTIVATION
-    #if CHAM_STATS_RECORD && CHAM_STATS_PER_SYNC_INTERVAL
-        cham_stats_reset_for_sync_cycle();
-    #endif
-    #endif
-
     DBP("start_communication_threads (enter)\n");
     // set flag to avoid that threads are directly aborting
-    _flag_abort_threads = 0;
-    // indicating that this has not happend yet for the current sync cycle
-    _comm_thread_load_exchange_happend = 0;
+    _flag_abort_comm_thread = 0;
 
-    // explicitly make threads joinable to be portable
+    // explicitly make thread joinable to be portable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -185,14 +177,13 @@ int32_t start_communication_threads() {
     err = pthread_create(&_th_service_actions, &attr, comm_thread_action, NULL);
     if(err != 0)
         handle_error_en(err, "pthread_create - _th_service_actions");
-
     pthread_mutex_lock(&_th_service_actions_mutex);
     while (_th_service_actions_created == 0) {
         pthread_cond_wait(&_th_service_actions_cond, &_th_service_actions_mutex);
     }
     pthread_mutex_unlock(&_th_service_actions_mutex);
 
-    // set flag to ensure that only a single thread is creating communication threads
+    // set flag to ensure that only a single thread is creating communication thread
     _comm_threads_started = 1;
     _mtx_comm_threads_started.unlock();
     DBP("start_communication_threads (exit)\n");
@@ -200,47 +191,21 @@ int32_t start_communication_threads() {
 }
 
 int32_t chameleon_wake_up_comm_threads() {
-    // check wether communication thread has already been started. Otherwise do so.
-    // Usually that should not be necessary if done in init
-    // start_communication_threads();
-
     // if threads already awake
-    if(!_flag_comm_threads_sleeping)
+    if(!_flag_comm_thread_sleeping)
         return CHAM_SUCCESS;
     
     _mtx_taskwait.lock();
     // need to check again
-    if(!_flag_comm_threads_sleeping) {
+    if(!_flag_comm_thread_sleeping) {
         _mtx_taskwait.unlock();
         return CHAM_SUCCESS;
     }
 
-    DBP("chameleon_wake_up_comm_threads (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
-
-    #if CHAM_STATS_RECORD && CHAM_STATS_PER_SYNC_INTERVAL
-        cham_stats_reset_for_sync_cycle();
-    #endif
-    // determine or set values once
-    _num_threads_involved_in_taskwait   = omp_get_num_threads();
-    _num_threads_idle                   = 0;
-    DBP("chameleon_wake_up_comm_threads       - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
-
-    // indicating that this has not happend yet for the current sync cycle
-    _comm_thread_load_exchange_happend  = 0;
-    _comm_thread_service_stopped        = 0;
-    _flag_comm_threads_sleeping         = 0;
-
-    #if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
-    _num_sync_cycle++;
-    if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
-        _tracing_enabled = 1;
-    } else {
-        _tracing_enabled = 0;
-    }
-    #endif
-
+    DBP("chameleon_wake_up_comm_threads (enter) - _flag_comm_thread_sleeping = %d\n", _flag_comm_thread_sleeping.load());
+    _flag_comm_thread_sleeping         = 0;
     _mtx_taskwait.unlock();
-    DBP("chameleon_wake_up_comm_threads (exit) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
+    DBP("chameleon_wake_up_comm_threads (exit) - _flag_comm_thread_sleeping = %d\n", _flag_comm_thread_sleeping.load());
     return CHAM_SUCCESS;
 }
 
@@ -263,30 +228,16 @@ int32_t stop_communication_threads() {
     DBP("stop_communication_threads (enter)\n");
     int err = 0;
     // safer that way because it leads to severe problems if threads are canceled inside a MPI communication
-    _flag_abort_threads = 1;
+    _flag_abort_comm_thread = 1;
     // then wait for all threads to finish
     err = pthread_join(_th_service_actions, NULL);
-    if(err != 0)    handle_error_en(err, "stop_communication_threads - _th_service_actions");
+    if(err != 0) handle_error_en(err, "stop_communication_threads - _th_service_actions");
 
     // should be save to reset flags and counters here
     _comm_threads_started = 0;
     #if !THREAD_ACTIVATION
-    _comm_thread_load_exchange_happend = 0;
-    _comm_threads_ended_count = 0;
-    
-    #ifdef CHAM_DEBUG
-    DBP("stop_communication_threads - still mem_allocated = %ld\n", (long)mem_allocated);
-    mem_allocated = 0;
-    #endif
-
-    _th_service_actions_created             = 0;
-    _num_threads_involved_in_taskwait       = INT_MAX;
-    _num_threads_idle                       = 0;
-    _task_id_counter                        = 0;
-    #endif
-
-    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
-    cham_stats_print_stats();
+    _comm_threads_ended_count       = 0;
+    _th_service_actions_created     = 0;
     #endif
     
     DBP("stop_communication_threads (exit)\n");
@@ -306,33 +257,18 @@ int32_t put_comm_threads_to_sleep() {
         return CHAM_SUCCESS;
     }
 
-    DBP("put_comm_threads_to_sleep (enter) - _flag_comm_threads_sleeping = %d\n", _flag_comm_threads_sleeping.load());
+    DBP("put_comm_threads_to_sleep (enter) - _flag_comm_thread_sleeping = %d\n", _flag_comm_thread_sleeping.load());
     //assert(request_manager_receive.getNumberOfOutstandingRequests()==0);
     //assert(request_manager_send.getNumberOfOutstandingRequests()==0);
 
-    #ifdef CHAM_DEBUG
-        DBP("put_comm_threads_to_sleep - still mem_allocated = %ld\n", (long)mem_allocated);
-        mem_allocated = 0;
-    #endif
-
-    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && CHAM_STATS_PER_SYNC_INTERVAL
-        cham_stats_print_stats();
-    #endif
-
-    _flag_comm_threads_sleeping             = 1;
+    _flag_comm_thread_sleeping             = 1;
     // wait until thread sleeps
     while(!_comm_thread_service_stopped) {
         usleep(CHAM_SLEEP_TIME_MICRO_SECS);
     }
     // DBP("put_comm_threads_to_sleep - service thread stopped = %d\n", _comm_thread_service_stopped);
     _comm_threads_ended_count               = 0;
-    _comm_thread_load_exchange_happend      = 0;
-    _num_threads_involved_in_taskwait       = INT_MAX;
-    _num_threads_idle                       = 0;
-    _task_id_counter                        = 0;
-    DBP("put_comm_threads_to_sleep  - _num_threads_idle =============> reset: %d\n", _num_threads_idle.load());
-    _num_ranks_not_completely_idle          = INT_MAX;
-    DBP("put_comm_threads_to_sleep - new _num_ranks_not_completely_idle: INT_MAX\n");
+    _comm_thread_service_stopped            = 0;
 
     DBP("put_comm_threads_to_sleep (exit)\n");
     _mtx_comm_threads_ended.unlock();
@@ -1435,7 +1371,7 @@ int exit_condition_met(int from_taskwait, int print) {
                 return 1;
             }
         }
-    }    
+    }
     return 0;
 }
 
@@ -2577,7 +2513,7 @@ void* comm_thread_action(void* arg) {
         #endif
 
         #if THREAD_ACTIVATION
-        while (_flag_comm_threads_sleeping) {
+        while (_flag_comm_thread_sleeping) {
             if(!flag_set) {
                 flag_set = 1;
                 #if CHAM_STATS_RECORD
@@ -2598,7 +2534,7 @@ void* comm_thread_action(void* arg) {
             }
             // dont do anything if the thread is sleeping
             usleep(CHAM_SLEEP_TIME_MICRO_SECS);
-            if(_flag_abort_threads) {
+            if(_flag_abort_comm_thread) {
                 DBP("comm_thread_action (abort)\n");
                 free(buffer_load_values);
                 int ret_val = 0;
@@ -2634,6 +2570,7 @@ void* comm_thread_action(void* arg) {
           action_task_replication_send();
         #endif
 
+        int request_gather_avail = 0;
         // avoid overwriting request and keep it up to date
         if(!request_gather_created) {
             #ifdef TRACE
@@ -2649,7 +2586,6 @@ void* comm_thread_action(void* arg) {
             #endif /* CHAM_STATS_RECORD */
         }
 
-        int request_gather_avail;
         #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
         double cur_time = omp_get_wtime();
         #endif
@@ -2686,7 +2622,7 @@ void* comm_thread_action(void* arg) {
             // Handle exit condition here to avoid that iallgather is posted after iteration finished
             bool exit_true = exit_condition_met(0,1);
             if(exit_true){
-                _flag_comm_threads_sleeping     = 1;
+                _flag_comm_thread_sleeping      = 1;
                 _comm_thread_service_stopped    = 1;
                 flag_set                        = 1;
                 #if CHAM_STATS_RECORD
@@ -2727,9 +2663,9 @@ void* comm_thread_action(void* arg) {
         }
         else{
         #endif
-            #if OFFLOAD_ENABLED
+            #if ENABLE_TASK_MIGRATION
             action_task_migration(&event_offload_decision, &offload_triggered, &num_threads_in_tw, tasksToOffload);
-            #endif /* OFFLOAD_ENABLED */
+            #endif /* ENABLE_TASK_MIGRATION */
         #if CHAM_REPLICATION_MODE>0
         }
         #endif

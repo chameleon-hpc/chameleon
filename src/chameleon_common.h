@@ -34,9 +34,20 @@
 
 #include "chameleon.h"
 
-// Flag wether offloading in general is enabled or disabled
-#ifndef OFFLOAD_ENABLED
-#define OFFLOAD_ENABLED 1
+// flag whether communication thread will be launched or not
+#ifndef ENABLE_COMM_THREAD
+#define ENABLE_COMM_THREAD 1
+#endif
+
+// Flag wether migration in general is enabled or disabled
+#ifndef ENABLE_TASK_MIGRATION
+#define ENABLE_TASK_MIGRATION 1
+#endif
+
+// No communication thread implies also not migration
+#if !ENABLE_COMM_THREAD
+#undef ENABLE_TASK_MIGRATION
+#define ENABLE_TASK_MIGRATION 0
 #endif
 
 // Flag whether task migration is forced. That means no locally created task are executed locally
@@ -60,11 +71,12 @@
 #define OFFLOAD_SEND_TASKS_SEPARATELY 0
 #endif
 
+// flag whether communication thread is started once and just activated (default) or completely new thread will be started for every taskwait
 #ifndef THREAD_ACTIVATION
 #define THREAD_ACTIVATION 1
 #endif
 
-//Specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
+// specify whether blocking or non-blocking MPI should be used (blocking in the sense of MPI_Isend or MPI_Irecv followed by an MPI_Waitall)
 #ifndef MPI_BLOCKING
 #define MPI_BLOCKING 0
 #endif
@@ -84,6 +96,7 @@
 #define CHAMELEON_TOOL_SUPPORT 0
 #endif
 
+// obsolete?
 #ifndef CHAMELEON_TOOL_USE_MAP
 #define CHAMELEON_TOOL_USE_MAP 0
 #endif
@@ -844,6 +857,8 @@ static void load_config_values() {
 }
 
 static void print_config_values() {
+    RELP("ENABLE_COMM_THREAD=%d\n", ENABLE_COMM_THREAD);
+    RELP("ENABLE_TASK_MIGRATION=%d\n", ENABLE_TASK_MIGRATION);
     RELP("OFFLOAD_DATA_PACKING_TYPE=%d\n", OFFLOAD_DATA_PACKING_TYPE);
     RELP("MPI_BLOCKING=%d\n", MPI_BLOCKING);
     RELP("OMP_NUM_THREADS=%d\n", OMP_NUM_THREADS_VAR.load());

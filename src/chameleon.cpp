@@ -46,6 +46,11 @@ std::unordered_map<void*, migratable_data_entry_t*> _data_entries;
 
 // list that holds task ids (created at the current rank) that are not finsihed yet
 thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
+
+// variables to indicate when it is save to break out of taskwait
+std::atomic<int> _flag_dtw_active(0);
+std::atomic<int> _num_threads_finished_dtw(0);
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -362,7 +367,6 @@ int32_t chameleon_init() {
         _active_migrations_per_target_rank[i] = 0;
     }
     _outstanding_jobs_sum = 0;
-    // _load_info_sum = 0;
     _mtx_load_exchange.unlock();
     _task_id_counter = 0;
 
@@ -373,9 +377,11 @@ int32_t chameleon_init() {
         printf("chameleon_init - dummy region\n");
     }
 
+    #if ENABLE_COMM_THREAD
     #if THREAD_ACTIVATION
     // start comm threads but in sleep mode
     start_communication_threads();
+    #endif
     #endif
         
     // set flag to ensure that only a single thread is initializing
@@ -443,7 +449,7 @@ int32_t chameleon_finalize() {
     DBP("chameleon_finalize (enter)\n");
     verify_initialized();
 
-    #if THREAD_ACTIVATION
+    #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
     stop_communication_threads();
     #endif
 
@@ -526,11 +532,80 @@ int32_t chameleon_taskyield() {
     return CHAM_FAILURE;
 }
 
+void dtw_startup() {
+    if(_flag_dtw_active)
+        return;
+    
+    _mtx_taskwait.lock();
+    // need to check again
+    if(_flag_dtw_active) {
+        _mtx_taskwait.unlock();
+        return;
+    }
+
+    #if CHAM_STATS_RECORD && CHAM_STATS_PER_SYNC_INTERVAL
+    cham_stats_reset_for_sync_cycle();
+    #endif
+
+    #if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
+    _num_sync_cycle++;
+    if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
+        _tracing_enabled = 1;
+    } else {
+        _tracing_enabled = 0;
+    }
+    #endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
+
+    _num_threads_involved_in_taskwait   = omp_get_num_threads();
+    _num_threads_idle                   = 0;
+    _num_threads_finished_dtw           = 0;
+
+    #if ENABLE_COMM_THREAD
+    // indicating that this has not happend yet for the current sync cycle
+    _comm_thread_load_exchange_happend  = 0;
+    #else
+    // need to set flags to ensure that exit condition is working with deactivated comm thread
+    _comm_thread_load_exchange_happend  = 1;
+    _num_ranks_not_completely_idle      = 0;
+    #endif /* ENABLE_COMM_THREAD */
+
+    _flag_dtw_active = 1;
+    _mtx_taskwait.unlock();
+}
+
+void dtw_teardown() {
+    // last thread should perform the teardown
+    int tmp_num = _num_threads_finished_dtw++;
+    if(tmp_num >= _num_threads_involved_in_taskwait.load()) {
+        _mtx_taskwait.lock();
+        _comm_thread_load_exchange_happend      = 0;
+        _num_threads_involved_in_taskwait       = INT_MAX;
+        _num_threads_idle                       = 0;
+        _task_id_counter                        = 0;
+        _num_ranks_not_completely_idle          = INT_MAX;
+
+        #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
+        cham_stats_print_stats();
+        #endif
+
+        #ifdef CHAM_DEBUG
+        DBP("dtw_teardown - still mem_allocated = %ld\n", (long)mem_allocated);
+        mem_allocated = 0;
+        #endif
+        
+        _flag_dtw_active = 0;
+        _mtx_taskwait.unlock();
+    }
+    
+    // currently barrier here to ensure correctness
+    #pragma omp barrier
+}
+
 /* 
  * Function chameleon_distributed_taskwait
- * Default distributed task wait function that will
- *      - start communication threads
- *      - execute local and stolen tasks
+ * Default distributed taskwait function that will
+ *      - start communication thread
+ *      - execute local, stolen and replicated tasks
  *      - wait until all global work is done
  * 
  * Also provides the possibility for a nowait if there is a delay caused by stopping the comm threads
@@ -553,23 +628,27 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     double time_start_tw = omp_get_wtime();
     #endif /* CHAM_STATS_RECORD */
     
+    // startup actions
+    dtw_startup();
+
+    #if ENABLE_COMM_THREAD
     #if THREAD_ACTIVATION
     // need to wake threads up if not already done
     chameleon_wake_up_comm_threads();
-    bool this_thread_idle = false;
-    
-    int tmp_count_trip = 0;
-    int my_idle_order = -1;
-
-    // at least try to execute this amout of normal task after rank runs out of offloadable tasks
-    // before assuming idle state
-    // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 0;
-    int this_thread_num_attemps_standard_task = 0;
     #else
     // start communication threads here
     start_communication_threads();
-    #endif
+    #endif /* THREAD_ACTIVATION */
+    #endif /* ENABLE_COMM_THREAD */
+
+    bool this_thread_idle = false;
+    int my_idle_order = -1;    
+    // at least try to execute this amout of normal tasks after rank runs out of offloadable tasks before assuming idle state
+    // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
+    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 0;
+    int this_thread_num_attemps_standard_task = 0;
+    
+    // int tmp_count_trip = 0;
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
@@ -603,7 +682,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
         #endif
 
-#if OFFLOAD_ENABLED
+#if ENABLE_COMM_THREAD && ENABLE_TASK_MIGRATION
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
      
@@ -611,7 +690,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
 
-            #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
@@ -619,7 +697,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
-            #endif
 
             res = process_remote_task();
 
@@ -637,7 +714,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
             
-            #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
@@ -645,7 +721,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
-            #endif
 
             // try to execute a local task
             res = process_local_task();
@@ -656,7 +731,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
 #endif
 
-#if OFFLOAD_ENABLED && CHAM_REPLICATION_MODE>0
+#if ENABLE_COMM_THREAD && ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0
         // ========== Prio 3: work on replicated local tasks
         if(!_replicated_local_tasks.empty()) {
             
@@ -664,7 +739,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
             
-            #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
@@ -672,7 +746,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
-            #endif
 
             // try to execute a local task
             res = process_replicated_local_task();
@@ -688,7 +761,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             last_time_doing_sth_useful = omp_get_wtime();
             #endif
 
-            #if THREAD_ACTIVATION
             if(this_thread_idle) {
                 // decrement counter again
                 my_idle_order = --_num_threads_idle;
@@ -696,7 +768,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 this_thread_idle = false;
             }
             // this_thread_num_attemps_standard_task = 0;
-            #endif
 
             // try to execute a local task
             res = process_replicated_remote_task();
@@ -706,7 +777,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
 #endif
 
-        #if THREAD_ACTIVATION
         // ========== Prio 4: work on a regular OpenMP task
         // make sure that we get info about outstanding tasks with dependences
         // to avoid that we miss some tasks
@@ -724,16 +794,15 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //     this_thread_num_attemps_standard_task++;
         //     #pragma omp taskyield
         // }
-        #endif
 
         // ========== Prio 5: check whether to abort procedure
-        #if THREAD_ACTIVATION
         // only abort if 
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
         //      - all threads entered the taskwait function (on all processes) and are idling
+
         if(_num_threads_idle >= num_threads_in_tw) {
-            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle;
+            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
             if(exit_condition_met(1,0)) {
                 // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
@@ -746,12 +815,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             //     }
             // }
         }
-        #else
-        //only abort if load exchange has happened at least once and there are no outstanding jobs left
-        if(_comm_thread_load_exchange_happend && _outstanding_jobs_sum == 0) {
-            break;
-        }
-        #endif
     }
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -772,6 +835,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     _time_taskwait_count++;
     #endif /* CHAM_STATS_RECORD */
 
+    #if ENABLE_COMM_THREAD
     #if THREAD_ACTIVATION
     // put threads to sleep again after sync cycle
     put_comm_threads_to_sleep();
@@ -779,10 +843,15 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     // stop threads here - actually the last thread will do that
     stop_communication_threads();
     #endif
+    #endif /* ENABLE_COMM_THREAD */
 
 #ifdef TRACE
     VT_END_W_CONSTRAINED(event_taskwait);
 #endif
+
+    // tear down actions of distributed taskwait
+    dtw_teardown();
+
     _num_threads_active_in_taskwait--;
     DBP("chameleon_distributed_taskwait (exit)\n");
     return CHAM_SUCCESS;

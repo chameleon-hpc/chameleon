@@ -88,9 +88,6 @@ std::atomic<int32_t> _outstanding_jobs_sum(0);
 
 // ====== Info about real load that is open or is beeing processed ======
 std::vector<int32_t> _load_info_ranks;
-// for now use a single mutex for box info
-std::mutex _mtx_load_exchange;
-
 std::mutex _mtx_cancellation;
 
 // === Constants
@@ -406,12 +403,8 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         	_cancelled_task_ids.erase(task->task_id);
         	free_migratable_task(task, 1);
         	_num_replicated_remote_tasks_outstanding--;
-            _mtx_load_exchange.lock();
             _num_remote_tasks_outstanding --;
             DBP("receive_handler_data - late cancel, decrement stolen outstanding for task id: %d  new count %d\n", task->task_id, _num_remote_tasks_outstanding.load());
-            trigger_update_outstanding();
-            _mtx_load_exchange.unlock();
-
             DBP("receive_handler_data - conducted late cancel for task id: %d\n", task->task_id);
 
             #if CHAM_STATS_RECORD
@@ -449,11 +442,8 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #endif
 
     // add stolen load as soon as possible to avoid wrong decision making
-    _mtx_load_exchange.lock();
     _num_remote_tasks_outstanding += n_tasks;
     DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
 
     // set mpi source + copy pointers to separate array
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(n_tasks*sizeof(cham_migratable_task_t*));
@@ -611,11 +601,8 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
             cham_migratable_task_t *task = tasks[i_task];
             if(task->is_replicated_task)
             	_num_replicated_remote_tasks_outstanding--;
-            _mtx_load_exchange.lock();
             _num_remote_tasks_outstanding--;
             DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", task->task_id, _num_remote_tasks_outstanding.load());
-            trigger_update_outstanding();
-            _mtx_load_exchange.unlock();
             free_migratable_task(task, true);
         }
         free(tasks);
@@ -665,13 +652,9 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         _unfinished_locally_created_tasks.remove(task_entry->task_id);
         #endif
         _map_overall_tasks.erase(task_entry->task_id);
-
-          _mtx_load_exchange.lock();
-          _num_local_tasks_outstanding--;
-          assert(_num_local_tasks_outstanding>=0);
-          DBP("receive_back_handler -  local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
-          trigger_update_outstanding();
-          _mtx_load_exchange.unlock();
+        _num_local_tasks_outstanding--;
+        assert(_num_local_tasks_outstanding>=0);
+        DBP("receive_back_handler -  local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
 
         //if(task_entry->num_outstanding_recvbacks==0)
         //  free_migratable_task(task_entry, false);
@@ -1375,11 +1358,6 @@ int exit_condition_met(int from_taskwait, int print) {
     return 0;
 }
 
-void trigger_update_outstanding() {
-    _outstanding_jobs_local     = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load()
-    		                    + _num_replicated_local_tasks_outstanding.load() + _num_replicated_remote_tasks_outstanding.load();
-}
-
 void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx) {
     int64_t tmp_type    = task->arg_types[idx];
     int is_lit          = tmp_type & CHAM_OMP_TGT_MAPTYPE_LITERAL;
@@ -1460,9 +1438,8 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     int tmp_val = _num_threads_idle.load() < *num_threads_in_tw ? 1 : 0;
     // DBP("action_create_gather_request - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
     transported_load_values[0] = tmp_val;
-    _mtx_load_exchange.lock();
-    transported_load_values[1] = _outstanding_jobs_local.load();
-    _mtx_load_exchange.unlock();
+    // transported_load_values[1] = _outstanding_jobs_local.load();
+    transported_load_values[1] = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load() + _num_replicated_local_tasks_outstanding.load() + _num_replicated_remote_tasks_outstanding.load();
     transported_load_values[2] = local_load_representation;
     //transported_load_values[3] = _num_outstanding_comm_requests.load();
     
@@ -1848,11 +1825,8 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     delete[] requests;
     #endif /* OFFLOAD_DATA_PACKING_TYPE */
 
-    //_mtx_load_exchange.lock();
     //_num_remote_tasks_outstanding--;
     //DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
-    //trigger_update_outstanding();
-    //_mtx_load_exchange.unlock();
 
     #ifdef TRACE
     VT_END_W_CONSTRAINED(*event_send_back);
@@ -1875,11 +1849,8 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
 
         _num_replicated_remote_tasks_outstanding--;
         // decrement load counter and ignore send back
-        _mtx_load_exchange.lock();
         _num_remote_tasks_outstanding--;
         DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld new %d\n", task_id, _num_remote_tasks_outstanding.load());
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
 
         free_migratable_task(res);
         #if CHAM_STATS_RECORD

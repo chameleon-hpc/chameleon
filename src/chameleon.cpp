@@ -357,7 +357,6 @@ int32_t chameleon_init() {
     cham_t_init();
 #endif
 
-    _mtx_load_exchange.lock();
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
     _active_migrations_per_target_rank.resize(chameleon_comm_size);
     _load_info_ranks.resize(chameleon_comm_size);
@@ -367,7 +366,6 @@ int32_t chameleon_init() {
         _active_migrations_per_target_rank[i] = 0;
     }
     _outstanding_jobs_sum = 0;
-    _mtx_load_exchange.unlock();
     _task_id_counter = 0;
 
     // dummy target region to force binary loading, use host offloading for that purpose
@@ -451,6 +449,10 @@ int32_t chameleon_finalize() {
 
     #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
     stop_communication_threads();
+    #endif
+
+    #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
+    cham_stats_print_stats();
     #endif
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -584,7 +586,7 @@ void dtw_teardown() {
         _task_id_counter                        = 0;
         _num_ranks_not_completely_idle          = INT_MAX;
 
-        #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
+        #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && CHAM_STATS_PER_SYNC_INTERVAL
         cham_stats_print_stats();
         #endif
 
@@ -975,11 +977,8 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
 #endif
     assert(task->num_outstanding_recvbacks==0);
 
-    _mtx_load_exchange.lock();
     _num_local_tasks_outstanding++;
     DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
     
     _local_tasks.push_back(task);
     // add to queue
@@ -1269,12 +1268,9 @@ inline int32_t process_replicated_local_task() {
         _map_overall_tasks.erase(replicated_task->task_id);
 
 //#if CHAM_REPLICATION_MODE==2
-        _mtx_load_exchange.lock();
         _num_local_tasks_outstanding--;
         assert(_num_local_tasks_outstanding>=0);
         DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
 //#endif
 
 #ifdef TRACE
@@ -1344,11 +1340,8 @@ inline int32_t process_replicated_remote_task() {
             _remote_tasks_send_back.push_back(replicated_task);
         }
         else {
-            _mtx_load_exchange.lock();
             _num_remote_tasks_outstanding--;
             DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
-            trigger_update_outstanding();
-            _mtx_load_exchange.unlock();
         }
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_remote);
@@ -1401,11 +1394,8 @@ inline int32_t process_remote_task() {
         _remote_tasks_send_back.push_back(task);
     } else {
         // we can now decrement outstanding counter because there is nothing to send back
-        _mtx_load_exchange.lock();
         _num_remote_tasks_outstanding--;
         DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
-        trigger_update_outstanding();
-        _mtx_load_exchange.unlock();
 
         free_migratable_task(task, true);
     }
@@ -1457,12 +1447,9 @@ inline int32_t process_local_task() {
     _map_overall_tasks.erase(task->task_id);
 
     // it is save to decrement counter after local execution
-    _mtx_load_exchange.lock();
     _num_local_tasks_outstanding--;
     assert(_num_local_tasks_outstanding>=0);
     DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding.load());
-    trigger_update_outstanding();
-    _mtx_load_exchange.unlock();
 
 #if CHAM_STATS_RECORD
     _num_executed_tasks_local++;

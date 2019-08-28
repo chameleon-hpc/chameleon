@@ -61,8 +61,6 @@ extern thread_safe_task_map_t _map_overall_tasks;
 
 extern std::unordered_set<TYPE_TASK_ID> _cancelled_task_ids;
 
-// for now use a single mutex for box info
-extern std::mutex _mtx_load_exchange;
 // ====== Info about outstanding jobs (local & stolen & offloaded (communication)) ======
 extern std::vector<int32_t> _outstanding_jobs_ranks;
 extern std::atomic<int32_t> _outstanding_jobs_local;
@@ -106,8 +104,6 @@ int32_t start_communication_threads();
 int32_t stop_communication_threads();
 
 int32_t put_comm_threads_to_sleep();
-
-void trigger_update_outstanding();
 
 int exit_condition_met(int from_taskwait, int print);
 

@@ -2465,6 +2465,7 @@ void* comm_thread_action(void* arg) {
     #endif
 
     while(true) {
+        #if ENABLE_TASK_MIGRATION
         #if CHAM_REPLICATION_MODE==2
     	_mtx_cancellation.lock();
         request_manager_cancel.progressRequests();
@@ -2482,6 +2483,7 @@ void* comm_thread_action(void* arg) {
         #ifdef TRACE
         VT_END_W_CONSTRAINED(event_progress_recv);
         #endif
+        #endif /* ENABLE_TASK_MIGRATION */
 
         #if THREAD_ACTIVATION
         while (_flag_comm_thread_sleeping) {
@@ -2629,7 +2631,7 @@ void* comm_thread_action(void* arg) {
         }
 
         #if CHAM_REPLICATION_MODE>0
-        if(has_not_replicated && _num_threads_involved_in_taskwait == _num_threads_active_in_taskwait) {
+        if(has_not_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
            has_not_replicated = !action_task_replication();
         }
         else{
@@ -2665,6 +2667,7 @@ void* comm_thread_action(void* arg) {
         MPI_Status cur_status_receiveBack;
         int flag_open_request_receiveBack = 0;
 
+        #if ENABLE_TASK_MIGRATION
         #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
         cur_time = omp_get_wtime();
         #endif
@@ -2691,6 +2694,7 @@ void* comm_thread_action(void* arg) {
           action_handle_cancel_request(&cur_status_cancel);
         }
         #endif
+        #endif /* ENABLE_TASK_MIGRATION */
 
         if ( flag_open_request_receive ) {
 

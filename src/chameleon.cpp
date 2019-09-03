@@ -599,7 +599,7 @@ void dtw_teardown() {
         _mtx_taskwait.unlock();
     }
     
-    // currently barrier here to ensure correctness
+    // currently barrier here to ensure correctness and avoid race condition between startup and teardown
     #pragma omp barrier
 }
 

@@ -558,6 +558,7 @@ void dtw_startup() {
     }
     #endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
 
+    //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
@@ -577,9 +578,11 @@ void dtw_startup() {
 
 void dtw_teardown() {
     // last thread should perform the teardown
-    int tmp_num = _num_threads_finished_dtw++;
+    int tmp_num = ++_num_threads_finished_dtw;
+    //DBP("chameleon_distributed_taskwait - attempt teardown, finished: %d, involved: %d\n", tmp_num, _num_threads_involved_in_taskwait.load());
     if(tmp_num >= _num_threads_involved_in_taskwait.load()) {
         _mtx_taskwait.lock();
+        //DBP("chameleon_distributed_taskwait - teardown, resetting counters\n");
         _comm_thread_load_exchange_happend      = 0;
         _num_threads_involved_in_taskwait       = INT_MAX;
         _num_threads_idle                       = 0;
@@ -788,7 +791,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(!this_thread_idle) {
                 // increment idle counter again
                 my_idle_order = ++_num_threads_idle;
-                // DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
+                //DBP("chameleon_distributed_taskwait - _num_threads_idle incre: %d\n", my_idle_order);
                 this_thread_idle = true;
             }
         // } else {

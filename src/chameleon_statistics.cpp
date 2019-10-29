@@ -227,16 +227,16 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean(cur_file, "_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
 
-    _stats_throughput_send.print_stats(cur_file);
+    // _stats_throughput_send.print_stats(cur_file);
     _stats_bytes_send_per_message.print_stats(cur_file);
-    _stats_throughput_recv.print_stats(cur_file);
+    // _stats_throughput_recv.print_stats(cur_file);
     _stats_bytes_recv_per_message.print_stats(cur_file);
     _stats_time_comm_send.print_stats(cur_file);
     _stats_time_comm_recv.print_stats(cur_file);
 
-    cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load());
-    cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, (int)_stats_bytes_recv_per_message.val_sum.load());
-    cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load() + (int)_stats_bytes_recv_per_message.val_sum.load());
+    // cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load());
+    // cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, (int)_stats_bytes_recv_per_message.val_sum.load());
+    // cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load() + (int)_stats_bytes_recv_per_message.val_sum.load());
 
     if(file_prefix) {
         fclose(cur_file);

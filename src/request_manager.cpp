@@ -38,6 +38,15 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
 
 
     #endif
+
+#if CHAM_STATS_RECORD
+    // time measurement for phase with communication (regardless whether it is send or recv)
+    int tmp_active_comms = _num_active_communications_overall++;
+    // DBP("_num_active_communications_overall is now\t%d\n", tmp_active_comms+1);
+    if(tmp_active_comms == 0) {
+        atomic_add_dbl(_time_communication_ongoing_sum, -1.0 * startStamp);
+    }
+#endif /* CHAM_STATS_RECORD */
   
     //_num_outstanding_comm_requests ++;
 
@@ -60,8 +69,9 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
     assert(ierr==MPI_SUCCESS);
     
     if(canFinish) {
-#if CHAM_STATS_RECORD   
-    double elapsed = omp_get_wtime()-startStamp;
+#if CHAM_STATS_RECORD
+    double cur_time = omp_get_wtime();
+    double elapsed = cur_time-startStamp;
     if(type == send || type == sendBack) {
         add_throughput_send(elapsed, sum_bytes);
     } else {
@@ -69,6 +79,11 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
         if(type != recv)
     #endif
             add_throughput_recv(elapsed, sum_bytes);
+    }
+    int tmp_active_comms = --_num_active_communications_overall;
+    // DBP("_num_active_communications_overall is now\t%d\n", tmp_active_comms);
+    if(tmp_active_comms == 0) {
+        atomic_add_dbl(_time_communication_ongoing_sum, cur_time);
     }
 #endif 
       _num_completed_requests[type]+= n_requests;
@@ -220,6 +235,11 @@ void RequestManager::progressRequests() {
             if(type != recv)
             #endif
                 add_throughput_recv(finishedStamp-startStamp, request_group_data.sum_bytes);
+       }
+       int tmp_active_comms = --_num_active_communications_overall;
+       // DBP("_num_active_communications_overall is now\t%d\n", tmp_active_comms);
+       if(tmp_active_comms == 0) {
+            atomic_add_dbl(_time_communication_ongoing_sum, finishedStamp);
        }
 #endif
       try{

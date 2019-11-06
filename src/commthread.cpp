@@ -39,6 +39,9 @@ RequestManager request_manager_receive;
 RequestManager request_manager_send;
 RequestManager request_manager_cancel;
 
+// Communication tracking
+std::atomic<int32_t> _num_active_communications_overall(0);
+
 // array that holds image base addresses
 std::vector<intptr_t> _image_base_addresses;
 
@@ -2493,6 +2496,7 @@ void* comm_thread_action(void* arg) {
                 double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
                 atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
                 _time_commthread_active_count++;
+                assert(_num_active_communications_overall.load()==0);
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
                 assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
@@ -2602,6 +2606,7 @@ void* comm_thread_action(void* arg) {
                 double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
                 atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
                 _time_commthread_active_count++;
+                assert(_num_active_communications_overall.load()==0);
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
                 assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);

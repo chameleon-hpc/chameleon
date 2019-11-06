@@ -95,12 +95,14 @@ std::atomic<double>  _time_taskwait_sum(0.0);
 std::atomic<int>     _time_taskwait_count(0);
 
 std::atomic<double>  _time_commthread_active_sum(0.0);
-std::atomic<int>     _time_commthread_active_count(0.0);
+std::atomic<int>     _time_commthread_active_count(0);
+
+std::atomic<double>  _time_communication_ongoing_sum(0.0);
 
 MinMaxAvgStats       _stats_bytes_send_per_message("_bytes_send_per_message", "Bytes");
 MinMaxAvgStats       _stats_bytes_recv_per_message("_bytes_recv_per_message", "Bytes");
-MinMaxAvgStats       _stats_time_comm_send("_time_comm_send", "sec, not reliable");
-MinMaxAvgStats       _stats_time_comm_recv("_time_comm_recv", "sec, not reliable");
+MinMaxAvgStats       _stats_time_comm_send("_time_comm_send", "s, not reliable");
+MinMaxAvgStats       _stats_time_comm_recv("_time_comm_recv", "s, not reliable");
 MinMaxAvgStats       _stats_throughput_send("_throughput_send", "MB/s, not reliable");
 MinMaxAvgStats       _stats_throughput_recv("_throughput_recv", "MB/s, not reliable");
 
@@ -151,6 +153,8 @@ void cham_stats_reset_for_sync_cycle() {
     _time_commthread_active_sum = 0.0;
     _time_commthread_active_count = 0;
 
+    _time_communication_ongoing_sum = 0.0;
+
     _stats_bytes_send_per_message.reset();
     _stats_throughput_send.reset();
     _stats_bytes_recv_per_message.reset();
@@ -171,10 +175,8 @@ void cham_stats_print_stats_w_mean(FILE *cur_file, std::string name, double sum,
     }
 }
 
-void cham_stats_print_communication_stats(FILE *cur_file, std::string name, double time_avg, int nbytes) {
-    std::string prefix = "Stats";
- 
-    fprintf(cur_file, "%s R#%d:\t%s\teffective throughput=\t%.3f MB/s\n", prefix.c_str(), chameleon_comm_rank, name.c_str(), nbytes/(1e06*time_avg));
+void cham_stats_print_communication_stats(FILE *cur_file, std::string name, double time_avg, double nbytes) {
+    fprintf(cur_file, "Stats R#%d:\t%s\teffective throughput=\t%.3f MB/s\n", chameleon_comm_rank, name.c_str(), nbytes/(1e06*time_avg));
 }
 
 void cham_stats_print_stats() {
@@ -222,21 +224,22 @@ void cham_stats_print_stats() {
     cham_stats_print_stats_w_mean(cur_file, "_time_taskwait_sum", _time_taskwait_sum, _time_taskwait_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_taskwait_idling_sum", _time_taskwait_sum-(_time_task_execution_replicated_sum+_time_task_execution_local_sum+_time_task_execution_stolen_sum), _time_taskwait_count);
     cham_stats_print_stats_w_mean(cur_file, "_time_commthread_active_sum", _time_commthread_active_sum, _time_commthread_active_count);
+    cham_stats_print_stats_w_mean(cur_file, "_time_communication_ongoing_sum", _time_communication_ongoing_sum, 1);
     cham_stats_print_stats_w_mean(cur_file, "_time_data_submit_sum", _time_data_submit_sum, _time_data_submit_count);
 #if CHAMELEON_TOOL_SUPPORT
     cham_stats_print_stats_w_mean(cur_file, "_time_tool_get_thread_data_sum", _time_tool_get_thread_data_sum, _time_tool_get_thread_data_count, true);
 #endif
 
-    // _stats_throughput_send.print_stats(cur_file);
+    _stats_throughput_send.print_stats(cur_file);
     _stats_bytes_send_per_message.print_stats(cur_file);
-    // _stats_throughput_recv.print_stats(cur_file);
+    _stats_throughput_recv.print_stats(cur_file);
     _stats_bytes_recv_per_message.print_stats(cur_file);
     _stats_time_comm_send.print_stats(cur_file);
     _stats_time_comm_recv.print_stats(cur_file);
 
-    // cham_stats_print_communication_stats(cur_file, "sending", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load());
-    // cham_stats_print_communication_stats(cur_file, "receiving", _time_commthread_active_sum, (int)_stats_bytes_recv_per_message.val_sum.load());
-    // cham_stats_print_communication_stats(cur_file, "total", _time_commthread_active_sum, (int)_stats_bytes_send_per_message.val_sum.load() + (int)_stats_bytes_recv_per_message.val_sum.load());
+    cham_stats_print_communication_stats(cur_file, "total", _time_communication_ongoing_sum, _stats_bytes_send_per_message.val_sum.load() + _stats_bytes_recv_per_message.val_sum.load());
+    fprintf(cur_file, "Stats R#%d:\ttask_migration_rate (tasks/s)\t%f\n", chameleon_comm_rank, (double)_num_tasks_offloaded.load() / _time_communication_ongoing_sum.load());
+    fprintf(cur_file, "Stats R#%d:\ttask_processing_rate (tasks/s)\t%f\n", chameleon_comm_rank, (double)(_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()) / (_time_taskwait_sum.load() / (double)_time_taskwait_count.load()));
 
     if(file_prefix) {
         fclose(cur_file);

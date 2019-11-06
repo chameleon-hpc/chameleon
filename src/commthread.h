@@ -26,6 +26,9 @@ extern RequestManager request_manager_cancel;
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
+// Communication tracking
+extern std::atomic<int32_t> _num_active_communications_overall;
+
 extern std::vector<intptr_t> _image_base_addresses;
 
 // list with local task entries

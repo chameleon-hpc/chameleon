@@ -2596,6 +2596,11 @@ void* comm_thread_action(void* arg) {
                 _comm_thread_load_exchange_happend = 1;
             }
 
+            #if CHAM_STATS_RECORD
+            // save last time load exchange happend for current sync cycle
+            time_last_load_exchange = omp_get_wtime();
+            #endif /* CHAM_STATS_RECORD */
+
             // Handle exit condition here to avoid that iallgather is posted after iteration finished
             bool exit_true = exit_condition_met(0,1);
             if(exit_true){
@@ -2620,19 +2625,20 @@ void* comm_thread_action(void* arg) {
                 DBP("comm_thread_action - thread went to sleep again due to exit condition\n");
                 continue;
             }
-            // post Iallgather asap!
-           // else if(!request_gather_created) {
-           //     action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
-           //     request_gather_created = 1;
-           //     #if CHAM_STATS_RECORD
-           //     time_gather_posted = omp_get_wtime();
-           //     #endif /* CHAM_STATS_RECORD */
-           // }
-
-            #if CHAM_STATS_RECORD
-            // save last time load exchange happend for current sync cycle
-            time_last_load_exchange = omp_get_wtime();
-            #endif /* CHAM_STATS_RECORD */
+            // else if(!request_gather_created) {
+            //     // post Iallgather asap!
+            //     #ifdef TRACE
+            //     VT_BEGIN_CONSTRAINED(event_create_gather_request);
+            //     #endif
+            //     action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
+            //     #ifdef TRACE
+            //     VT_END_W_CONSTRAINED(event_create_gather_request);
+            //     #endif
+            //     request_gather_created = 1;
+            //     #if CHAM_STATS_RECORD
+            //     time_gather_posted = omp_get_wtime();
+            //     #endif /* CHAM_STATS_RECORD */
+            // }
         }
 
         #if CHAM_REPLICATION_MODE>0

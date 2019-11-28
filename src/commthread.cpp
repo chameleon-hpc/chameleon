@@ -82,7 +82,6 @@ thread_safe_task_map_t _map_overall_tasks;
 std::unordered_set<TYPE_TASK_ID> _cancelled_task_ids;
 
 // ====== Info about outstanding jobs (local & stolen) ======
-// extern std::mutex _mtx_outstanding_jobs;
 std::vector<int32_t> _outstanding_jobs_ranks;
 std::atomic<int32_t> _outstanding_jobs_local(0);
 std::atomic<int32_t> _outstanding_jobs_sum(0);
@@ -126,6 +125,19 @@ pthread_t           _th_service_actions;
 std::atomic<int>    _th_service_actions_created(0);
 pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_service_actions_mutex   = PTHREAD_MUTEX_INITIALIZER;
+
+// ============== Tracing Section ===========
+std::atomic<bool> _trace_events_initialized(false);
+
+static int event_receive_tasks          = -1;
+static int event_recv_back              = -1;
+static int event_create_gather_request  = -1;
+static int event_exchange_outstanding   = -1;
+static int event_offload_decision       = -1;
+static int event_send_back              = -1;
+static int event_progress_send          = -1;
+static int event_progress_recv          = -1;
+
 #pragma endregion Variables
 
 #ifdef __cplusplus
@@ -1460,9 +1472,9 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     MPI_Iallgather(transported_load_values, 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, request_gather_out);
 }
 
-inline void action_handle_gather_request(int *event_exchange_outstanding, int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
+inline void action_handle_gather_request(int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_exchange_outstanding);
+    VT_BEGIN_CONSTRAINED(event_exchange_outstanding);
     #endif
     // sum up that stuff
     // DBP("action_handle_gather_request - gathered new load info\n");
@@ -1511,11 +1523,11 @@ inline void action_handle_gather_request(int *event_exchange_outstanding, int *b
     #endif /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
 
     #ifdef TRACE
-    VT_END_W_CONSTRAINED(*event_exchange_outstanding);
+    VT_END_W_CONSTRAINED(event_exchange_outstanding);
     #endif
 }
 
-inline void action_task_migration(int *event_offload_decision, int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
+inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
     if(_comm_thread_load_exchange_happend && *offload_triggered == 0) {
@@ -1532,7 +1544,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
         // - Be careful about balance between computational complexity of calculating the offload target and performance gain that can be achieved
         
             #ifdef TRACE
-            VT_BEGIN_CONSTRAINED(*event_offload_decision);
+            VT_BEGIN_CONSTRAINED(event_offload_decision);
             #endif
 
             int strategy_type;
@@ -1574,7 +1586,7 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
             #endif
 
             #ifdef TRACE
-            VT_END_W_CONSTRAINED(*event_offload_decision);
+            VT_END_W_CONSTRAINED(event_offload_decision);
             #endif
 
             bool offload_done = false;
@@ -1698,9 +1710,9 @@ inline void action_task_migration(int *event_offload_decision, int *offload_trig
     }
 }
 
-inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_task_t *cur_task, RequestManager *request_manager_send) {
+inline void action_send_back_stolen_tasks(cham_migratable_task_t *cur_task, RequestManager *request_manager_send) {
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_send_back);
+    VT_BEGIN_CONSTRAINED(event_send_back);
     #endif
 
     DBP("send_back_stolen_tasks - sending back data to rank %d with tag %d for (task_id=%ld)\n", cur_task->source_mpi_rank, cur_task->task_id, cur_task->task_id);
@@ -1843,7 +1855,7 @@ inline void action_send_back_stolen_tasks(int *event_send_back, cham_migratable_
     //DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", cur_task->task_id, _num_remote_tasks_outstanding.load());
 
     #ifdef TRACE
-    VT_END_W_CONSTRAINED(*event_send_back);
+    VT_END_W_CONSTRAINED(event_send_back);
     #endif
 }
 
@@ -1897,7 +1909,7 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     void * buffer = malloc(recv_buff_size);
     
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_recv_back);
+    VT_BEGIN_CONSTRAINED(event_recv_back);
     #endif
 
     #if CHAM_STATS_RECORD
@@ -1936,13 +1948,13 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     #endif
 
     #ifdef TRACE
-    VT_END_W_CONSTRAINED(*event_recv_back);
+    VT_END_W_CONSTRAINED(event_recv_back);
     #endif
 
     #elif OFFLOAD_DATA_PACKING_TYPE == 1
 
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_recv_back);
+    VT_BEGIN_CONSTRAINED(event_recv_back);
     #endif
 
     MPI_Request *requests = new MPI_Request[task_entry->arg_num];  
@@ -1991,12 +2003,12 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     delete[] requests;
     
     #ifdef TRACE
-    VT_END_W_CONSTRAINED(*event_recv_back);
+    VT_END_W_CONSTRAINED(event_recv_back);
     #endif
 
     #elif OFFLOAD_DATA_PACKING_TYPE == 2
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_recv_back);
+    VT_BEGIN_CONSTRAINED(event_recv_back);
     #endif
 
     MPI_Request *requests = new MPI_Request[1];
@@ -2072,12 +2084,12 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     delete[] requests;
 
     #ifdef TRACE 
-    VT_END_W_CONSTRAINED(*event_recv_back);
+    VT_END_W_CONSTRAINED(event_recv_back);
     #endif
     #endif /* OFFLOAD_DATA_PACKING_TYPE */
 }
 
-inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, RequestManager *request_manager_receive, int *event_recv_back) {
+inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, RequestManager *request_manager_receive) {
 	DBP("action_handle_recvback_request - looking for task for tag %ld\n", cur_status_receiveBack->MPI_TAG);
 	cham_migratable_task_t *task_entry = _map_offloaded_tasks_with_outputs.find(cur_status_receiveBack->MPI_TAG);
 	assert(task_entry!=nullptr);
@@ -2282,9 +2294,9 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
     } //match
 }
 
-inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur_status_receive, RequestManager *request_manager_receive) {
+inline void action_handle_recv_request(MPI_Status *cur_status_receive, RequestManager *request_manager_receive) {
     #ifdef TRACE
-    VT_BEGIN_CONSTRAINED(*event_receive_tasks);
+    VT_BEGIN_CONSTRAINED(event_receive_tasks);
     #endif
 
     DBP("Incoming receive request for task id %d from rank %d\n", cur_status_receive->MPI_TAG, cur_status_receive->MPI_SOURCE);
@@ -2334,7 +2346,7 @@ inline void action_handle_recv_request(int *event_receive_tasks, MPI_Status *cur
                                     buffer);
     #endif
     #ifdef TRACE
-    VT_END_W_CONSTRAINED(*event_receive_tasks);
+    VT_END_W_CONSTRAINED(event_receive_tasks);
     #endif
 }
 
@@ -2407,47 +2419,36 @@ void* comm_thread_action(void* arg) {
     pthread_cond_signal( &_th_service_actions_cond );
     pthread_mutex_unlock( &_th_service_actions_mutex );
 
-    static int event_receive_tasks          = -1;
-    static int event_recv_back              = -1;
-    static int event_create_gather_request  = -1;
-    static int event_exchange_outstanding   = -1;
-    static int event_offload_decision       = -1;
-    static int event_send_back              = -1;
-    static int event_progress_send          = -1;
-    static int event_progress_recv          = -1;
+    #ifdef TRACE
+    if(!_trace_events_initialized.load()) {
+        int ierr = 0;
+        
+        std::string event_receive_tasks_name = "receive_task";
+        ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
 
-    #ifdef TRACE    
-    std::string event_receive_tasks_name = "receive_task";
-    if(event_receive_tasks == -1) 
-        int ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
-    
-    std::string event_recv_back_name = "receive_back";
-    if(event_recv_back == -1) 
-        int ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
-    
-    std::string create_gather_request_name = "create_gather_request";
-    if(event_create_gather_request == -1)
-        int ierr = VT_funcdef(create_gather_request_name.c_str(), VT_NOCLASS, &event_create_gather_request);
+        std::string event_recv_back_name = "receive_back";
+        ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
 
-    std::string exchange_outstanding_name = "exchange_outstanding";
-    if(event_exchange_outstanding == -1)
-        int ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);    
-    
-    std::string event_offload_decision_name = "offload_decision";
-    if(event_offload_decision == -1)
-        int ierr = VT_funcdef(event_offload_decision_name.c_str(), VT_NOCLASS, &event_offload_decision);
+        std::string create_gather_request_name = "create_gather_request";
+        ierr = VT_funcdef(create_gather_request_name.c_str(), VT_NOCLASS, &event_create_gather_request);
 
-    std::string event_send_back_name = "send_back";
-    if(event_send_back == -1)
-        int ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
+        std::string exchange_outstanding_name = "exchange_outstanding";
+        ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);
 
-    std::string event_progress_send_name = "progress_send";
-    if(event_progress_send == -1) 
-        int ierr = VT_funcdef(event_progress_send_name.c_str(), VT_NOCLASS, &event_progress_send);
+        std::string event_offload_decision_name = "offload_decision";
+        ierr = VT_funcdef(event_offload_decision_name.c_str(), VT_NOCLASS, &event_offload_decision);
 
-    std::string event_progress_recv_name = "progress_recv";
-    if(event_progress_recv == -1) 
-        int ierr = VT_funcdef(event_progress_recv_name.c_str(), VT_NOCLASS, &event_progress_recv);
+        std::string event_send_back_name = "send_back";
+        ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
+
+        std::string event_progress_send_name = "progress_send";
+        ierr = VT_funcdef(event_progress_send_name.c_str(), VT_NOCLASS, &event_progress_send);
+
+        std::string event_progress_recv_name = "progress_recv";
+        ierr = VT_funcdef(event_progress_recv_name.c_str(), VT_NOCLASS, &event_progress_recv);
+
+        _trace_events_initialized = true;
+    }
     #endif
 
     // =============== General Vars
@@ -2605,7 +2606,7 @@ void* comm_thread_action(void* arg) {
             }
             #endif /* CHAM_STATS_RECORD */
 
-            action_handle_gather_request(&event_exchange_outstanding, buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
+            action_handle_gather_request(buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
 
             // set flag that exchange has happend
             if(!_comm_thread_load_exchange_happend) {
@@ -2664,7 +2665,7 @@ void* comm_thread_action(void* arg) {
         else{
         #endif
             #if ENABLE_TASK_MIGRATION
-            action_task_migration(&event_offload_decision, &offload_triggered, &num_threads_in_tw, tasksToOffload);
+            action_task_migration(&offload_triggered, &num_threads_in_tw, tasksToOffload);
             #endif /* ENABLE_TASK_MIGRATION */
         #if CHAM_REPLICATION_MODE>0
         }
@@ -2674,7 +2675,7 @@ void* comm_thread_action(void* arg) {
         for (int i_sb = 0; i_sb < n_task_send_at_once; i_sb++) {
             cham_migratable_task_t* cur_task = _remote_tasks_send_back.pop_front();
             if(cur_task) {
-                action_send_back_stolen_tasks(&event_send_back, cur_task, &request_manager_send);
+                action_send_back_stolen_tasks(cur_task, &request_manager_send);
             }
             else {
                 break;
@@ -2724,7 +2725,7 @@ void* comm_thread_action(void* arg) {
                 // track last id recevied for source rank
                 _tracked_last_req_recv[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
                 // create requests to receive task
-                action_handle_recv_request(&event_receive_tasks, &cur_status_receive, &request_manager_receive);
+                action_handle_recv_request(&cur_status_receive, &request_manager_receive);
             }
         }
 
@@ -2741,7 +2742,7 @@ void* comm_thread_action(void* arg) {
             _num_slow_communication_operations++;
             #endif
             if( flag_open_request_receiveBack ) {
-                action_handle_recvback_request(&cur_status_receiveBack, &request_manager_receive, &event_recv_back);
+                action_handle_recvback_request(&cur_status_receiveBack, &request_manager_receive);
             } else {
                 break;
             }

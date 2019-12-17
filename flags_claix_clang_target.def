@@ -3,7 +3,7 @@ MPIF90=
 #used with manual API
 #CH_OMP_FLAGS='-fopenmp'
 CH_OMP_FLAGS='-fopenmp -fopenmp-targets=x86_64-unknown-linux-gnu'
-CH_CXX_COMPILE_FLAGS='-std=c++11 -fpic $(CH_OMP_FLAGS) -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT'
+CH_CXX_COMPILE_FLAGS='-std=c++11 -fpic $(CH_OMP_FLAGS)'
 CH_F90_COMPILE_FLAGS=
 CH_LINKER_FLAGS='-shared -lffi -lpthread -lhwloc -ldl -fopenmp-targets=x86_64-unknown-linux-gnu'
 

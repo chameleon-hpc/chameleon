@@ -44,6 +44,10 @@
 #define ENABLE_TASK_MIGRATION 1
 #endif
 
+#ifndef ENABLE_EARLY_IRECVS
+#define ENABLE_EARLY_IRECVS 0
+#endif
+
 // No communication thread implies also not migration
 #if !ENABLE_COMM_THREAD
 #undef ENABLE_TASK_MIGRATION
@@ -325,8 +329,9 @@ typedef struct cham_migratable_task_t {
     int32_t num_outstanding_replication_sends = 0;
 
     // Some special settings for stolen tasks
-    int32_t source_mpi_rank     = 0;
-    int32_t target_mpi_rank     = -1;
+    int32_t source_mpi_rank             = 0;
+    int32_t target_mpi_rank             = -1;
+    int64_t buffer_size_output_data     = 0;
 
     // Mutex for either execution or receiving back/cancellation of a replicated task
     std::atomic<bool> result_in_progress;
@@ -859,6 +864,7 @@ static void load_config_values() {
 static void print_config_values() {
     RELP("ENABLE_COMM_THREAD=%d\n", ENABLE_COMM_THREAD);
     RELP("ENABLE_TASK_MIGRATION=%d\n", ENABLE_TASK_MIGRATION);
+    RELP("ENABLE_EARLY_IRECVS=%d\n", ENABLE_EARLY_IRECVS);
     RELP("OFFLOAD_DATA_PACKING_TYPE=%d\n", OFFLOAD_DATA_PACKING_TYPE);
     RELP("MPI_BLOCKING=%d\n", MPI_BLOCKING);
     RELP("OMP_NUM_THREADS=%d\n", OMP_NUM_THREADS_VAR.load());

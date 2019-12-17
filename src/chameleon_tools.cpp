@@ -51,7 +51,7 @@ static cham_t_start_tool_result_t * cham_t_try_start_tool(unsigned int cham_vers
     // Try tool-libraries-var ICV
     const char *tool_libs = getenv("CHAMELEON_TOOL_LIBRARIES");
     if (tool_libs) {
-        printf("CHAMELEON_TOOL_LIBRARIES = %s\n", tool_libs);
+        RELP("CHAMELEON_TOOL_LIBRARIES = %s\n", tool_libs);
         std::string str(tool_libs);
         std::vector<std::string> libs;
         split_string(str, libs, sep);

@@ -3,7 +3,7 @@ MPIF90='I_MPI_F90=ifort mpiifort -mt_mpi'
 
 
 CH_OMP_FLAGS='-qopenmp -qno-openmp-offload'
-CH_CXX_COMPILE_FLAGS='-std=c++11 -fpic ${CH_OMP_FLAGS} -Wno-unknown-pragmas -DCHAM_STATS_RECORD -DCHAM_STATS_PRINT '
+CH_CXX_COMPILE_FLAGS='-std=c++11 -fpic ${CH_OMP_FLAGS} -Wno-unknown-pragmas'
 CH_F90_COMPILE_FLAGS='-fpic ${CH_OMP_FLAGS}'
 CH_LINKER_FLAGS='-shared -lffi -lpthread -lhwloc -ldl -lifcore'
 

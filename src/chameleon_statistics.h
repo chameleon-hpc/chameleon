@@ -82,6 +82,8 @@ extern std::atomic<int>     _time_taskwait_count;
 extern std::atomic<double>  _time_commthread_active_sum;
 extern std::atomic<int>     _time_commthread_active_count;
 
+extern std::atomic<double>  _time_communication_ongoing_sum;
+
 extern MinMaxAvgStats       _stats_bytes_send_per_message;
 extern MinMaxAvgStats       _stats_bytes_recv_per_message;
 

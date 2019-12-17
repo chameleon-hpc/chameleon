@@ -43,7 +43,8 @@ extern std::atomic<int>     _num_printed_sync_cycles;
 
 extern std::atomic<int>     _num_executed_tasks_local;
 extern std::atomic<int>     _num_executed_tasks_stolen;
-extern std::atomic<int>     _num_executed_tasks_replicated;
+extern std::atomic<int>     _num_executed_tasks_replicated_remote;
+extern std::atomic<int>     _num_executed_tasks_replicated_local;
 extern std::atomic<int>     _num_tasks_offloaded;
 extern std::atomic<int>     _num_tasks_canceled;
 extern std::atomic<int>     _num_migration_decision_performed;

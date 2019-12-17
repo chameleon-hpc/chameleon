@@ -1261,7 +1261,7 @@ inline int32_t process_replicated_local_task() {
 #endif
 
 #if CHAM_STATS_RECORD
-        _num_executed_tasks_replicated++;
+        _num_executed_tasks_replicated_local++;
 #endif
 
         // mark locally created task finished
@@ -1332,7 +1332,7 @@ inline int32_t process_replicated_remote_task() {
 #endif
 
 #if CHAM_STATS_RECORD
-        _num_executed_tasks_replicated++;
+        _num_executed_tasks_replicated_remote++;
 #endif
 
         //_map_tag_to_remote_task.erase(replicated_task->task_id);

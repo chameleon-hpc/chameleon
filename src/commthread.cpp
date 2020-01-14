@@ -2558,12 +2558,6 @@ void* comm_thread_action(void* arg) {
         // ========== SEND / EXCHANGE
         // ==============================
 
-        #if CHAM_REPLICATION_MODE>0
-        // replicate tasks
-        if(has_replicated)
-          action_task_replication_send();
-        #endif
-
         int request_gather_avail = 0;
         // avoid overwriting request and keep it up to date
         if(!request_gather_created) {
@@ -2662,14 +2656,23 @@ void* comm_thread_action(void* arg) {
         if(!has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
            has_replicated = action_task_replication();
         }
-        else{
         #endif
-            #if ENABLE_TASK_MIGRATION
-            action_task_migration(&offload_triggered, &num_threads_in_tw, tasksToOffload);
-            #endif /* ENABLE_TASK_MIGRATION */
+
+        #if ENABLE_TASK_MIGRATION
+        action_task_migration(&offload_triggered, &num_threads_in_tw, tasksToOffload);
+        #endif /* ENABLE_TASK_MIGRATION */
+
         #if CHAM_REPLICATION_MODE>0
+        if(!has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+           has_replicated = action_task_replication();
         }
         #endif
+
+        #if CHAM_REPLICATION_MODE>0
+        if(has_replicated && !offload_triggered)
+          action_task_replication_send();
+        #endif
+
 
         // transfer back data of stolen tasks
         for (int i_sb = 0; i_sb < n_task_send_at_once; i_sb++) {

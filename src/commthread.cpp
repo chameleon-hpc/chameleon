@@ -2455,7 +2455,7 @@ void* comm_thread_action(void* arg) {
     int err;
     int flag_set                    = 0;
     int num_threads_in_tw           = _num_threads_involved_in_taskwait.load();
-    bool has_not_replicated     = true;
+    bool has_replicated     = false;
     double cur_time;
     double time_last_load_exchange  = 0;
     double time_gather_posted       = 0;
@@ -2487,9 +2487,9 @@ void* comm_thread_action(void* arg) {
     while(true) {
         #if ENABLE_TASK_MIGRATION
         #if CHAM_REPLICATION_MODE==2
-    	_mtx_cancellation.lock();
+    	  _mtx_cancellation.lock();
         request_manager_cancel.progressRequests();
-    	_mtx_cancellation.unlock();
+    	  _mtx_cancellation.unlock();
         #endif
         #ifdef TRACE
         VT_BEGIN_CONSTRAINED(event_progress_send);
@@ -2542,7 +2542,7 @@ void* comm_thread_action(void* arg) {
             #endif
             flag_set = 0;
             tag_counter_send_tasks = 0;
-            has_not_replicated = true;
+            has_replicated = false;
             assert(_remote_tasks_send_back.empty());
             assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
             _cancelled_task_ids.clear();
@@ -2560,7 +2560,7 @@ void* comm_thread_action(void* arg) {
 
         #if CHAM_REPLICATION_MODE>0
         // replicate tasks
-        if(!has_not_replicated)
+        if(has_replicated)
           action_task_replication_send();
         #endif
 
@@ -2659,8 +2659,8 @@ void* comm_thread_action(void* arg) {
         }
 
         #if CHAM_REPLICATION_MODE>0
-        if(has_not_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
-           has_not_replicated = !action_task_replication();
+        if(!has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+           has_replicated = action_task_replication();
         }
         else{
         #endif

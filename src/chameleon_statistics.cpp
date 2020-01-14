@@ -242,7 +242,7 @@ void cham_stats_print_stats() {
 
     cham_stats_print_communication_stats(cur_file, "total", _time_communication_ongoing_sum, _stats_bytes_send_per_message.val_sum.load() + _stats_bytes_recv_per_message.val_sum.load());
     fprintf(cur_file, "Stats R#%d:\ttask_migration_rate (tasks/s)\t%f\n", chameleon_comm_rank, (double)_num_tasks_offloaded.load() / _time_communication_ongoing_sum.load());
-    fprintf(cur_file, "Stats R#%d:\ttask_processing_rate (tasks/s)\t%f\n", chameleon_comm_rank, (double)(_num_executed_tasks_replicated.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()) / (_time_taskwait_sum.load() / (double)_time_taskwait_count.load()));
+    fprintf(cur_file, "Stats R#%d:\ttask_processing_rate (tasks/s)\t%f\n", chameleon_comm_rank, (double)(_num_executed_tasks_replicated_local.load() + _num_executed_tasks_replicated_remote.load() + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()) / (_time_taskwait_sum.load() / (double)_time_taskwait_count.load()));
 
     if(file_prefix) {
         fclose(cur_file);

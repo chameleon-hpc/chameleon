@@ -1246,7 +1246,7 @@ inline int32_t process_replicated_local_task() {
         double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE==2
+#if CHAM_REPLICATION_MODE>=2
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif
@@ -1259,6 +1259,9 @@ inline int32_t process_replicated_local_task() {
         atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
         _time_task_execution_replicated_count++;
 #endif
+
+        if(!replicated_task->is_migrated_task)
+          _num_replicated_local_tasks_outstanding_compute--;
 
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated_local++;

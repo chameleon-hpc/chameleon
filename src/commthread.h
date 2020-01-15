@@ -43,7 +43,8 @@ extern std::atomic<int32_t> _num_remote_tasks_outstanding;
 // list of replicated (i.e. offloaded) tasks
 // they can be executed either on the remote rank or on the local rank
 extern thread_safe_task_list_t _replicated_local_tasks;
-extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding;
+extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_send;
+extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_compute;
 
 //extern std::atomic<int32_t> _num_outstanding_comm_requests;
 

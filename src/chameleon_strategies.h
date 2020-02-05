@@ -9,7 +9,7 @@
 #include "chameleon_tools.h"
 #include "chameleon_tools_internal.h"
 
-void compute_num_tasks_to_offload( std::vector<int32_t>& tasks_to_offload_per_rank, std::vector<int32_t>& load_info_ranks, int32_t num_tasks_local, int32_t num_tasks_stolen);
+void compute_num_tasks_to_offload(std::vector<int32_t>& tasks_to_offload_per_rank, std::vector<int32_t>& load_info_ranks, int32_t num_tasks_local, int32_t num_tasks_stolen);
 
 cham_t_replication_info_t * compute_num_tasks_to_replicate( std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t *num_rep_infos);
 

@@ -46,8 +46,6 @@ extern thread_safe_task_list_t _replicated_local_tasks;
 extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_send;
 extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_compute;
 
-//extern std::atomic<int32_t> _num_outstanding_comm_requests;
-
 extern thread_safe_task_list_t _replicated_remote_tasks;
 extern std::atomic<int32_t> _num_replicated_remote_tasks_outstanding;
 
@@ -89,9 +87,60 @@ extern std::atomic<int> _num_ranks_not_completely_idle;
 // desired: should block new migration to target as long as there are still active migrations ongoing
 extern std::vector<int> _active_migrations_per_target_rank;
 
+extern std::atomic<bool> _trace_events_initialized;
+extern int event_receive_tasks;
+extern int event_recv_back;
+extern int event_create_gather_request;
+extern int event_exchange_outstanding;
+extern int event_offload_decision;
+extern int event_send_back;
+extern int event_progress_send;
+extern int event_progress_recv;
+
+class chameleon_comm_thread_session_data_t {
+    public:
+    // =============== General Vars
+    std::atomic<int> flag_set;
+    std::atomic<int> num_threads_in_tw;
+    // std::atomic<bool> has_not_replicated(true);
+    std::atomic<double> time_last_load_exchange;
+    std::atomic<double> time_gather_posted;
+    std::atomic<bool> has_replicated;
+
+    #if CHAM_STATS_RECORD
+    std::atomic<double> time_start_comm;
+    #endif
+
+    // =============== Send Thread Vars
+    //int request_gather_created      = 0;
+    std::atomic<int> request_gather_created;
+    MPI_Request request_gather_out;
+    MPI_Status  status_gather_out;
+    std::atomic<int> offload_triggered;
+    std::atomic<int> last_known_sum_outstanding;
+    
+    int transported_load_values[3];
+    int * buffer_load_values;
+    std::vector<int32_t> tasks_to_offload;
+
+    int n_task_send_at_once = 1;
+
+    // =============== Recv Thread Vars
+    std::vector<int> tracked_last_req_recv;
+
+    // =============== Constructor
+    chameleon_comm_thread_session_data_t() {
+        
+    }
+};
+
+extern chameleon_comm_thread_session_data_t _session_data;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void chameleon_comm_thread_session_data_t_init();
 
 void print_arg_info(std::string prefix, cham_migratable_task_t *task, int idx);
 
@@ -108,6 +157,8 @@ int32_t start_communication_threads();
 int32_t stop_communication_threads();
 
 int32_t put_comm_threads_to_sleep();
+
+void cleanup_work_phase();
 
 int exit_condition_met(int from_taskwait, int print);
 

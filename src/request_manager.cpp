@@ -47,8 +47,6 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
         atomic_add_dbl(_time_communication_ongoing_sum, -1.0 * startStamp);
     }
 #endif /* CHAM_STATS_RECORD */
-  
-    //_num_outstanding_comm_requests ++;
 
     _num_posted_requests[type]+= n_requests; 
     _num_posted_request_groups[type]+=1;
@@ -95,7 +93,6 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
      catch(std::bad_function_call& e) {
       assert(false);
      }
-      //_num_outstanding_comm_requests --;
       return;
     }
 
@@ -248,7 +245,6 @@ void RequestManager::progressRequests() {
       catch (std::bad_function_call& e) {
        assert(false);
       }
-       //_num_outstanding_comm_requests --;
        _map_id_to_request_group_data.erase(gid);
     }
   }

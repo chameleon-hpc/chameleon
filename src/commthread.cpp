@@ -60,12 +60,8 @@ thread_safe_task_list_t _replicated_local_tasks;
 std::atomic<int32_t> _num_replicated_local_tasks_outstanding_sends(0);
 std::atomic<int32_t> _num_replicated_local_tasks_outstanding_compute(0);
 
-
 thread_safe_task_list_t _replicated_remote_tasks;
 std::atomic<int32_t> _num_replicated_remote_tasks_outstanding(0);
-
-//std::atomic<int32_t> _num_outstanding_comm_requests(0);
-//std::atomic<int32_t> _outstanding_comm_requests_sum(0);
 
 // list with stolen task entries that need output data transfer
 thread_safe_task_list_t _remote_tasks_send_back;
@@ -130,15 +126,16 @@ pthread_mutex_t     _th_service_actions_mutex   = PTHREAD_MUTEX_INITIALIZER;
 
 // ============== Tracing Section ===========
 std::atomic<bool> _trace_events_initialized(false);
+int event_receive_tasks          = -1;
+int event_recv_back              = -1;
+int event_create_gather_request  = -1;
+int event_exchange_outstanding   = -1;
+int event_offload_decision       = -1;
+int event_send_back              = -1;
+int event_progress_send          = -1;
+int event_progress_recv          = -1;
 
-static int event_receive_tasks          = -1;
-static int event_recv_back              = -1;
-static int event_create_gather_request  = -1;
-static int event_exchange_outstanding   = -1;
-static int event_offload_decision       = -1;
-static int event_send_back              = -1;
-static int event_progress_send          = -1;
-static int event_progress_recv          = -1;
+chameleon_comm_thread_session_data_t _session_data;
 
 #pragma endregion Variables
 
@@ -256,7 +253,9 @@ int32_t stop_communication_threads() {
     #endif
     
     DBP("stop_communication_threads (exit)\n");
+    #if !THREAD_ACTIVATION
     _mtx_comm_threads_ended.unlock();
+    #endif
     return CHAM_SUCCESS;
 }
 
@@ -288,6 +287,25 @@ int32_t put_comm_threads_to_sleep() {
     DBP("put_comm_threads_to_sleep (exit)\n");
     _mtx_comm_threads_ended.unlock();
     return CHAM_SUCCESS;
+}
+
+void cleanup_work_phase() {
+    while(!_tasks_to_deallocate.empty()) {
+        cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
+        free_migratable_task(task);
+    }
+    _cancelled_task_ids.clear();
+    _map_offloaded_tasks_with_outputs.clear();
+
+    DBP("cleanup_work_phase - cleared map_offloaded_tasks_with_outputs\n");
+
+    if(_flag_abort_comm_thread) {
+        DBP("comm_thread_action (abort)\n");
+        if(_session_data.buffer_load_values) {
+            free(_session_data.buffer_load_values);
+            _session_data.buffer_load_values = nullptr;
+        }
+    }
 }
 
 void print_cpu_set(cpu_set_t set) {
@@ -1361,7 +1379,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
 int exit_condition_met(int from_taskwait, int print) {
     if(from_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
-        if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {//&& _outstanding_comm_requests_sum==0) {
+        if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {
             // if(print)
                 // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
                 //     _comm_thread_load_exchange_happend.load(), 
@@ -1372,7 +1390,7 @@ int exit_condition_met(int from_taskwait, int print) {
     } else {
         if( _num_threads_idle >= _num_threads_involved_in_taskwait) {
             int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
-            if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {//&& _outstanding_comm_requests_sum==0) {
+            if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {
                 // if(print)
                     // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
                     //     _comm_thread_load_exchange_happend.load(), 
@@ -1419,10 +1437,62 @@ void print_arg_info_w_tgt(std::string prefix, cham_migratable_task_t *task, int 
             is_lit,
             is_from);
 }
+
+void chameleon_comm_thread_session_data_t_init() {
+    #ifdef TRACE
+    if(!_trace_events_initialized.load()) {
+        int ierr = 0;
+        
+        std::string event_receive_tasks_name = "receive_task";
+        ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
+
+        std::string event_recv_back_name = "receive_back";
+        ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
+
+        std::string create_gather_request_name = "create_gather_request";
+        ierr = VT_funcdef(create_gather_request_name.c_str(), VT_NOCLASS, &event_create_gather_request);
+
+        std::string exchange_outstanding_name = "exchange_outstanding";
+        ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);
+
+        std::string event_offload_decision_name = "offload_decision";
+        ierr = VT_funcdef(event_offload_decision_name.c_str(), VT_NOCLASS, &event_offload_decision);
+
+        std::string event_send_back_name = "send_back";
+        ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
+
+        std::string event_progress_send_name = "progress_send";
+        ierr = VT_funcdef(event_progress_send_name.c_str(), VT_NOCLASS, &event_progress_send);
+
+        std::string event_progress_recv_name = "progress_recv";
+        ierr = VT_funcdef(event_progress_recv_name.c_str(), VT_NOCLASS, &event_progress_recv);
+
+        _trace_events_initialized = true;
+    }
+    #endif
+
+    _session_data.flag_set = 0;
+    _session_data.num_threads_in_tw = _num_threads_involved_in_taskwait.load();
+    _session_data.time_last_load_exchange = 0;
+    _session_data.time_gather_posted = 0;
+    _session_data.has_replicated = false;
+    _session_data.request_gather_created = 0;
+    _session_data.offload_triggered = 0;
+    _session_data.last_known_sum_outstanding = -1;
+
+    _session_data.tasks_to_offload.resize(chameleon_comm_size);
+    _session_data.tracked_last_req_recv.resize(chameleon_comm_size);
+    _session_data.buffer_load_values = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
+    _session_data.n_task_send_at_once = MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load();
+
+    for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
+        _session_data.tracked_last_req_recv[tmp_i] = -1;
+    
+}
 #pragma endregion Helper Functions
 
 #pragma region CommThread
-inline void action_create_gather_request(int *num_threads_in_tw, int *transported_load_values, int* buffer_load_values, MPI_Request *request_gather_out) {
+inline void action_create_gather_request() {
     int32_t local_load_representation;
     int32_t num_tasks_local = _local_tasks.dup_size();
     int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
@@ -1468,18 +1538,17 @@ inline void action_create_gather_request(int *num_threads_in_tw, int *transporte
     												  ids_stolen_rep, num_tasks_replicated_remote);
     #endif
 
-    int tmp_val = _num_threads_idle.load() < *num_threads_in_tw ? 1 : 0;
+    int tmp_val = _num_threads_idle.load() < _session_data.num_threads_in_tw.load() ? 1 : 0;
     // DBP("action_create_gather_request - my current value for rank_not_completely_in_taskwait: %d\n", tmp_val);
-    transported_load_values[0] = tmp_val;
+    _session_data.transported_load_values[0] = tmp_val;
     // transported_load_values[1] = _outstanding_jobs_local.load();
-    transported_load_values[1] = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load() + _num_replicated_local_tasks_outstanding_sends.load() + _num_replicated_remote_tasks_outstanding.load();
-    transported_load_values[2] = local_load_representation;
-    //transported_load_values[3] = _num_outstanding_comm_requests.load();
-    
-    MPI_Iallgather(transported_load_values, 3, MPI_INT, buffer_load_values, 3, MPI_INT, chameleon_comm_load, request_gather_out);
+    _session_data.transported_load_values[1] = _num_local_tasks_outstanding.load() + _num_remote_tasks_outstanding.load() + _num_replicated_local_tasks_outstanding_sends.load() + _num_replicated_remote_tasks_outstanding.load();
+    _session_data.transported_load_values[2] = local_load_representation;
+        
+    MPI_Iallgather(&(_session_data.transported_load_values[0]), 3, MPI_INT, _session_data.buffer_load_values, 3, MPI_INT, chameleon_comm_load, &(_session_data.request_gather_out));
 }
 
-inline void action_handle_gather_request(int *buffer_load_values, int *request_gather_created, int *last_known_sum_outstanding, int *offload_triggered) {
+inline void action_handle_gather_request() {
     #ifdef TRACE
     VT_BEGIN_CONSTRAINED(event_exchange_outstanding);
     #endif
@@ -1490,16 +1559,13 @@ inline void action_handle_gather_request(int *buffer_load_values, int *request_g
     int32_t sum_ranks_not_completely_idle   = 0;
     int32_t sum_outstanding                 = 0;
 
-    //_outstanding_comm_requests_sum = 0;
-
     for(int j = 0; j < chameleon_comm_size; j++) {
-        //DBP("action_handle_gather_request - values for rank %d: all_in_tw=%d, outstanding_jobs=%d, load=%d\n", j, buffer_load_values[j*3], buffer_load_values[(j*3)+1], buffer_load_values[(j*3)+2]);
-        int tmp_tw                              = buffer_load_values[j*3];
-        _outstanding_jobs_ranks[j]              = buffer_load_values[(j*3)+1];
-        _load_info_ranks[j]                     = buffer_load_values[(j*3)+2];
+        //DBP("action_handle_gather_request - values for rank %d: all_in_tw=%d, outstanding_jobs=%d, load=%d\n", j, _session_data.buffer_load_values[j*3], buffer_load_values[(j*3)+1], buffer_load_values[(j*3)+2]);
+        int tmp_tw                              = _session_data.buffer_load_values[j*3];
+        _outstanding_jobs_ranks[j]              = _session_data.buffer_load_values[(j*3)+1];
+        _load_info_ranks[j]                     = _session_data.buffer_load_values[(j*3)+2];
         sum_outstanding                         += _outstanding_jobs_ranks[j];
         sum_ranks_not_completely_idle           += tmp_tw;
-        //_outstanding_comm_requests_sum          += buffer_load_values[(j*4)+3];
         // DBP("load info from rank %d = %d\n", j, _load_info_ranks[j]);
     }
     _num_ranks_not_completely_idle      = sum_ranks_not_completely_idle;
@@ -1510,18 +1576,18 @@ inline void action_handle_gather_request(int *buffer_load_values, int *request_g
     _outstanding_jobs_sum               = sum_outstanding;
 
     // reset flag
-    *request_gather_created = 0;
+    _session_data.request_gather_created = 0;
     
     #if OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED
-    if(*last_known_sum_outstanding == -1) {
-        *last_known_sum_outstanding = sum_outstanding;
-        *offload_triggered = 0;
+    if(_session_data.last_known_sum_outstanding == -1) {
+        _session_data.last_known_sum_outstanding = sum_outstanding;
+        _session_data.offload_triggered = 0;
         // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
     } else {
         // check whether changed.. only allow new offload after change
-        if(*last_known_sum_outstanding != sum_outstanding) {
-            *last_known_sum_outstanding = sum_outstanding;
-            *offload_triggered = 0;
+        if(_session_data.last_known_sum_outstanding != sum_outstanding) {
+            _session_data.last_known_sum_outstanding = sum_outstanding;
+            _session_data.offload_triggered = 0;
             // DBP("action_handle_gather_request - sum outstanding operations=%d, nr_open_requests_send=%d\n", *last_known_sum_outstanding, request_manager_send.getNumberOfOutstandingRequests());
         }
     }
@@ -1534,13 +1600,13 @@ inline void action_handle_gather_request(int *buffer_load_values, int *request_g
     #endif
 }
 
-inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw, std::vector<int32_t> &tasksToOffload) {
+inline void action_task_migration() {
     // only check for offloading if enough local tasks available and exchange has happend at least once
     #if FORCE_MIGRATION
-    if(_comm_thread_load_exchange_happend && *offload_triggered == 0) {
+    if(_comm_thread_load_exchange_happend && _session_data.offload_triggered.load() == 0) {
     #else
     // also only proceed if offloading not already performed.. wait for new load exchange
-    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && *offload_triggered == 0) {
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && _session_data.offload_triggered.load() == 0) {
     #endif
 
         // Strategies for speculative load exchange
@@ -1557,7 +1623,7 @@ inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw
             int strategy_type;
 
             // reset values to zero
-            std::fill(tasksToOffload.begin(), tasksToOffload.end(), 0);
+            std::fill(_session_data.tasks_to_offload.begin(), _session_data.tasks_to_offload.end(), 0);
             int32_t num_tasks_local = 0;
             TYPE_TASK_ID* ids_local;
             cham_t_migration_tupel_t* migration_tupels = nullptr;
@@ -1576,16 +1642,16 @@ inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw
             } else if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_offload) {
                 strategy_type = 0;
                 num_tasks_local     = _local_tasks.dup_size();
-                cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(tasksToOffload[0]), &(_load_info_ranks[0]), num_tasks_local, num_tasks_stolen);
+                cham_t_status.cham_t_callback_select_num_tasks_to_offload(&(_session_data.tasks_to_offload[0]), &(_load_info_ranks[0]), num_tasks_local, num_tasks_stolen);
             } else {
                 strategy_type = 0;
                 num_tasks_local     = _local_tasks.dup_size();
-                compute_num_tasks_to_offload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
+                compute_num_tasks_to_offload(_session_data.tasks_to_offload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             }
             #else
             strategy_type = 0;
             num_tasks_local     = _local_tasks.dup_size();
-            compute_num_tasks_to_offload( tasksToOffload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
+            compute_num_tasks_to_offload(_session_data.tasks_to_offload, _load_info_ranks, num_tasks_local, num_tasks_stolen);
             #endif
 
             #if CHAM_STATS_RECORD
@@ -1669,11 +1735,11 @@ inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw
                     free(migration_tupels);
                 }
             } else {
-                for(int r=0; r<tasksToOffload.size(); r++) {
+                for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
                         // block until no active offload for rank any more
                         if(_active_migrations_per_target_rank[r] == 0) {
-                            int num_tasks_to_migrate = tasksToOffload[r];
+                            int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
                            
                             if(num_tasks_to_migrate==0) continue;
  
@@ -1721,7 +1787,7 @@ inline void action_task_migration(int *offload_triggered, int *num_threads_in_tw
                 }
             }
             if(offload_done) {
-                *offload_triggered = 1;
+                _session_data.offload_triggered = 1;
                 #if CHAM_STATS_RECORD
                 _num_migration_done++;
                 #endif /* CHAM_STATS_RECORD */    
@@ -2431,6 +2497,222 @@ inline void action_task_replication_send() {
     	_replication_infos_list.push_back(rep_info);
 }
 
+void action_communication_progression() {
+    #if ENABLE_TASK_MIGRATION
+    #if CHAM_REPLICATION_MODE>=2
+    _mtx_cancellation.lock();
+    request_manager_cancel.progressRequests();
+    _mtx_cancellation.unlock();
+    #endif
+    #ifdef TRACE
+    VT_BEGIN_CONSTRAINED(event_progress_send);
+    #endif
+    request_manager_send.progressRequests();
+    #ifdef TRACE
+    VT_END_W_CONSTRAINED(event_progress_send);
+    VT_BEGIN_CONSTRAINED(event_progress_recv);
+    #endif
+    request_manager_receive.progressRequests();
+    #ifdef TRACE
+    VT_END_W_CONSTRAINED(event_progress_recv);
+    #endif
+    #endif /* ENABLE_TASK_MIGRATION */
+
+    // ==============================
+    // ========== SEND / EXCHANGE
+    // ==============================
+
+    int request_gather_avail = 0;
+    // avoid overwriting request and keep it up to date
+    if(!_session_data.request_gather_created) {
+        #ifdef TRACE
+        VT_BEGIN_CONSTRAINED(event_create_gather_request);
+        #endif
+        action_create_gather_request();
+        #ifdef TRACE
+        VT_END_W_CONSTRAINED(event_create_gather_request);
+        #endif
+        _session_data.request_gather_created = 1;
+        #if CHAM_STATS_RECORD
+        _session_data.time_gather_posted = omp_get_wtime();
+        #endif /* CHAM_STATS_RECORD */
+    }
+
+    #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+    double cur_time = omp_get_wtime();
+    #endif
+    MPI_Test(&_session_data.request_gather_out, &request_gather_avail, &_session_data.status_gather_out);
+    #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+    cur_time = omp_get_wtime()-cur_time;
+    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+        _num_slow_communication_operations++;
+    #endif
+
+    if(request_gather_avail) {
+        #if CHAM_STATS_RECORD
+        _num_load_exchanges_performed++;
+
+        double cur_diff = omp_get_wtime()-_session_data.time_gather_posted;
+        atomic_add_dbl(_time_between_allgather_and_exchange_sum, cur_diff);
+        _time_between_allgather_and_exchange_count++;
+
+        // calculate time between two load exchanges discarding sleep times
+        if(_comm_thread_load_exchange_happend) {
+            cur_diff = omp_get_wtime()-_session_data.time_last_load_exchange;
+            atomic_add_dbl(_time_between_load_exchange_sum, cur_diff);
+            _time_between_load_exchange_count++;
+        }
+        #endif /* CHAM_STATS_RECORD */
+
+        action_handle_gather_request();
+
+        // set flag that exchange has happend
+        if(!_comm_thread_load_exchange_happend) {
+            _comm_thread_load_exchange_happend = 1;
+        }
+
+        #if CHAM_STATS_RECORD
+        // save last time load exchange happend for current sync cycle
+        _session_data.time_last_load_exchange = omp_get_wtime();
+        #endif /* CHAM_STATS_RECORD */
+
+        // Handle exit condition here to avoid that iallgather is posted after iteration finished
+        bool exit_true = exit_condition_met(0,1);
+        if(exit_true){
+            _flag_comm_thread_sleeping      = 1;
+            _comm_thread_service_stopped    = 1;
+            _session_data.flag_set          = 1;
+            #if CHAM_STATS_RECORD
+            double time_commthread_elapsed = omp_get_wtime()-_session_data.time_start_comm;
+            atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
+            _time_commthread_active_count++;
+            assert(_num_active_communications_overall.load()==0);
+            #endif /* CHAM_STATS_RECORD */
+            assert(_remote_tasks_send_back.empty());
+            assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
+
+            // run routine to cleanup all things for current work phase
+            cleanup_work_phase();
+
+            DBP("action_communication_progression - thread went to sleep again due to exit condition\n");
+            return;
+        }
+        // else if(!request_gather_created) {
+        //     // post Iallgather asap!
+        //     #ifdef TRACE
+        //     VT_BEGIN_CONSTRAINED(event_create_gather_request);
+        //     #endif
+        //     action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
+        //     #ifdef TRACE
+        //     VT_END_W_CONSTRAINED(event_create_gather_request);
+        //     #endif
+        //     request_gather_created = 1;
+        //     #if CHAM_STATS_RECORD
+        //     time_gather_posted = omp_get_wtime();
+        //     #endif /* CHAM_STATS_RECORD */
+        // }
+    }
+
+    #if CHAM_REPLICATION_MODE>0
+    if(!_session_data.has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+        _session_data.has_replicated = action_task_replication();
+    }
+    #endif
+
+    #if ENABLE_TASK_MIGRATION
+    action_task_migration();
+    #endif /* ENABLE_TASK_MIGRATION */
+
+    #if CHAM_REPLICATION_MODE>0
+    if(!_session_data.has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+        _session_data.has_replicated = action_task_replication();
+    }
+    #endif
+
+    #if CHAM_REPLICATION_MODE>0
+    if(_session_data.has_replicated && !offload_triggered)
+        action_task_replication_send();
+    #endif
+
+    // transfer back data of stolen tasks
+    for (int i_sb = 0; i_sb < _session_data.n_task_send_at_once; i_sb++) {
+        cham_migratable_task_t* cur_task = _remote_tasks_send_back.pop_front();
+        if(cur_task) {
+            action_send_back_stolen_tasks(cur_task, &request_manager_send);
+        }
+        else {
+            break;
+        }
+    }
+
+    // ==============================
+    // ========== RECV
+    // ==============================
+
+    MPI_Status cur_status_receive;
+    int flag_open_request_receive = 0;
+
+    MPI_Status cur_status_cancel;
+    int flag_open_request_cancel = 0;
+
+    MPI_Status cur_status_receiveBack;
+    int flag_open_request_receiveBack = 0;
+
+    #if ENABLE_TASK_MIGRATION
+    #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+    cur_time = omp_get_wtime();
+    #endif
+    MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
+    #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+    cur_time = omp_get_wtime()-cur_time;
+    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+        _num_slow_communication_operations++;
+    #endif
+    
+    #if CHAM_REPLICATION_MODE>=2
+    MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
+    if( flag_open_request_cancel ) {
+        action_handle_cancel_request(&cur_status_cancel);
+    }
+    #endif
+    #endif /* ENABLE_TASK_MIGRATION */
+
+    if ( flag_open_request_receive ) {
+
+        // check last recv id for source rank
+        int last_id_handled = _session_data.tracked_last_req_recv[cur_status_receive.MPI_SOURCE];
+        bool handle_req = last_id_handled != cur_status_receive.MPI_TAG;
+
+        // only handle request if not already done for current phase
+        if (handle_req) {
+            // track last id recevied for source rank
+            _session_data.tracked_last_req_recv[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
+            // create requests to receive task
+            action_handle_recv_request(&cur_status_receive, &request_manager_receive);
+        }
+    }
+
+    #if CHAM_REPLICATION_MODE>0 || ENABLE_EARLY_IRECVS==0
+    for (int i_sb = 0; i_sb < _session_data.n_task_send_at_once; i_sb++) {
+        flag_open_request_receiveBack = 0;
+        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+        cur_time = omp_get_wtime();
+        #endif
+        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
+        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
+        cur_time = omp_get_wtime()-cur_time;
+        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
+        _num_slow_communication_operations++;
+        #endif
+        if( flag_open_request_receiveBack ) {
+            action_handle_recvback_request(&cur_status_receiveBack, &request_manager_receive);
+        } else {
+            break;
+        }
+    }
+    #endif
+}
+
 void* comm_thread_action(void* arg) {
     pin_thread_to_last_core(1);
     // trigger signal to tell that thread is running now
@@ -2439,333 +2721,63 @@ void* comm_thread_action(void* arg) {
     pthread_cond_signal( &_th_service_actions_cond );
     pthread_mutex_unlock( &_th_service_actions_mutex );
 
-    #ifdef TRACE
-    if(!_trace_events_initialized.load()) {
-        int ierr = 0;
-        
-        std::string event_receive_tasks_name = "receive_task";
-        ierr = VT_funcdef(event_receive_tasks_name.c_str(), VT_NOCLASS, &event_receive_tasks);
-
-        std::string event_recv_back_name = "receive_back";
-        ierr = VT_funcdef(event_recv_back_name.c_str(), VT_NOCLASS, &event_recv_back);
-
-        std::string create_gather_request_name = "create_gather_request";
-        ierr = VT_funcdef(create_gather_request_name.c_str(), VT_NOCLASS, &event_create_gather_request);
-
-        std::string exchange_outstanding_name = "exchange_outstanding";
-        ierr = VT_funcdef(exchange_outstanding_name.c_str(), VT_NOCLASS, &event_exchange_outstanding);
-
-        std::string event_offload_decision_name = "offload_decision";
-        ierr = VT_funcdef(event_offload_decision_name.c_str(), VT_NOCLASS, &event_offload_decision);
-
-        std::string event_send_back_name = "send_back";
-        ierr = VT_funcdef(event_send_back_name.c_str(), VT_NOCLASS, &event_send_back);
-
-        std::string event_progress_send_name = "progress_send";
-        ierr = VT_funcdef(event_progress_send_name.c_str(), VT_NOCLASS, &event_progress_send);
-
-        std::string event_progress_recv_name = "progress_recv";
-        ierr = VT_funcdef(event_progress_recv_name.c_str(), VT_NOCLASS, &event_progress_recv);
-
-        _trace_events_initialized = true;
-    }
-    #endif
-
-    // =============== General Vars
-    int err;
-    int flag_set                    = 0;
-    int num_threads_in_tw           = _num_threads_involved_in_taskwait.load();
-    bool has_replicated     = false;
-    double cur_time;
-    double time_last_load_exchange  = 0;
-    double time_gather_posted       = 0;
-
-    // =============== Send Thread Vars
-    int request_gather_created      = 0;
-    MPI_Request request_gather_out;
-    MPI_Status  status_gather_out;
-    int offload_triggered           = 0;
-    int last_known_sum_outstanding  = -1;
-    
-    int transported_load_values[3];
-    int * buffer_load_values        = (int*) malloc(sizeof(int)*3*chameleon_comm_size);
-    std::vector<int32_t> tasksToOffload(chameleon_comm_size);
-
-    int n_task_send_at_once = MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load();
-
-    // =============== Recv Thread Vars
-    std::vector<int> _tracked_last_req_recv(chameleon_comm_size);
-    for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
-        _tracked_last_req_recv[tmp_i] = -1;
-
     DBP("comm_thread_action (enter)\n");
 
     #if CHAM_STATS_RECORD
-    double time_start_comm = omp_get_wtime(); 
+    _session_data.time_start_comm = omp_get_wtime();
     #endif
 
     while(true) {
-        #if ENABLE_TASK_MIGRATION
-        #if CHAM_REPLICATION_MODE>=2
-    	  _mtx_cancellation.lock();
-        request_manager_cancel.progressRequests();
-    	  _mtx_cancellation.unlock();
-        #endif
-        #ifdef TRACE
-        VT_BEGIN_CONSTRAINED(event_progress_send);
-        #endif
-        request_manager_send.progressRequests();
-        #ifdef TRACE
-        VT_END_W_CONSTRAINED(event_progress_send);
-        VT_BEGIN_CONSTRAINED(event_progress_recv);
-        #endif
-        request_manager_receive.progressRequests();
-        #ifdef TRACE
-        VT_END_W_CONSTRAINED(event_progress_recv);
-        #endif
-        #endif /* ENABLE_TASK_MIGRATION */
-
         #if THREAD_ACTIVATION
         while (_flag_comm_thread_sleeping) {
-            if(!flag_set) {
-                flag_set = 1;
+            if(!_session_data.flag_set) {
+                _session_data.flag_set = 1;
                 #if CHAM_STATS_RECORD
-                double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
+                double time_commthread_elapsed = omp_get_wtime()-_session_data.time_start_comm;
                 atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
                 _time_commthread_active_count++;
                 assert(_num_active_communications_overall.load()==0);
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
                 assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
-                while(!_tasks_to_deallocate.empty()) {
-                	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
-                	free_migratable_task(task);
-                }
-                _cancelled_task_ids.clear();
-                _map_offloaded_tasks_with_outputs.clear();
-                DBP("comm_thread_action - cleared map_offloaded_tasks_with_outputs\n");
+                
+                // run routine to cleanup all things for current work phase
+                cleanup_work_phase();
+
                 DBP("comm_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped.load());
             }
             // dont do anything if the thread is sleeping
             usleep(CHAM_SLEEP_TIME_MICRO_SECS);
             if(_flag_abort_comm_thread) {
                 DBP("comm_thread_action (abort)\n");
-                free(buffer_load_values);
+                if(_session_data.buffer_load_values) {
+                    free(_session_data.buffer_load_values);
+                    _session_data.buffer_load_values = nullptr;
+                }
                 int ret_val = 0;
                 pthread_exit(&ret_val);
             }
         }
-        if(flag_set) {
+        if(_session_data.flag_set) {
             DBP("comm_thread_action - woke up again\n");
             #if CHAM_STATS_RECORD
-            time_start_comm = omp_get_wtime();
+            _session_data.time_start_comm = omp_get_wtime();
             #endif
-            flag_set = 0;
+            _session_data.flag_set = 0;
             tag_counter_send_tasks = 0;
-            has_replicated = false;
+            _session_data.has_replicated = false;
             assert(_remote_tasks_send_back.empty());
             assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
             _cancelled_task_ids.clear();
             _map_offloaded_tasks_with_outputs.clear();
             // reset last received ids
             for(int tmp_i = 0; tmp_i < chameleon_comm_size; tmp_i++)
-                _tracked_last_req_recv[tmp_i] = -1;
-            num_threads_in_tw = _num_threads_involved_in_taskwait.load();
+                _session_data.tracked_last_req_recv[tmp_i] = -1;
+            _session_data.num_threads_in_tw = _num_threads_involved_in_taskwait.load();
         }
         #endif
 
-        // ==============================
-        // ========== SEND / EXCHANGE
-        // ==============================
-
-        int request_gather_avail = 0;
-        // avoid overwriting request and keep it up to date
-        if(!request_gather_created) {
-            #ifdef TRACE
-            VT_BEGIN_CONSTRAINED(event_create_gather_request);
-            #endif
-            action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
-            #ifdef TRACE
-            VT_END_W_CONSTRAINED(event_create_gather_request);
-            #endif
-            request_gather_created = 1;
-            #if CHAM_STATS_RECORD
-            time_gather_posted = omp_get_wtime();
-            #endif /* CHAM_STATS_RECORD */
-        }
-
-        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-        double cur_time = omp_get_wtime();
-        #endif
-        MPI_Test(&request_gather_out, &request_gather_avail, &status_gather_out);
-        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-        cur_time = omp_get_wtime()-cur_time;
-        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
-          _num_slow_communication_operations++;
-        #endif
-
-        if(request_gather_avail) {
-            #if CHAM_STATS_RECORD
-            _num_load_exchanges_performed++;
-
-            double cur_diff = omp_get_wtime()-time_gather_posted;
-            atomic_add_dbl(_time_between_allgather_and_exchange_sum, cur_diff);
-            _time_between_allgather_and_exchange_count++;
-
-            // calculate time between two load exchanges discarding sleep times
-            if(_comm_thread_load_exchange_happend) {
-                cur_diff = omp_get_wtime()-time_last_load_exchange;
-                atomic_add_dbl(_time_between_load_exchange_sum, cur_diff);
-                _time_between_load_exchange_count++;
-            }
-            #endif /* CHAM_STATS_RECORD */
-
-            action_handle_gather_request(buffer_load_values, &request_gather_created, &last_known_sum_outstanding, &offload_triggered);
-
-            // set flag that exchange has happend
-            if(!_comm_thread_load_exchange_happend) {
-                _comm_thread_load_exchange_happend = 1;
-            }
-
-            #if CHAM_STATS_RECORD
-            // save last time load exchange happend for current sync cycle
-            time_last_load_exchange = omp_get_wtime();
-            #endif /* CHAM_STATS_RECORD */
-
-            // Handle exit condition here to avoid that iallgather is posted after iteration finished
-            bool exit_true = exit_condition_met(0,1);
-            if(exit_true){
-                _flag_comm_thread_sleeping      = 1;
-                _comm_thread_service_stopped    = 1;
-                flag_set                        = 1;
-                #if CHAM_STATS_RECORD
-                double time_commthread_elapsed = omp_get_wtime()-time_start_comm;
-                atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
-                _time_commthread_active_count++;
-                assert(_num_active_communications_overall.load()==0);
-                #endif /* CHAM_STATS_RECORD */
-                assert(_remote_tasks_send_back.empty());
-                assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
-                while(!_tasks_to_deallocate.empty()) {
-                   	cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
-                   	free_migratable_task(task);
-                }
-                _cancelled_task_ids.clear();
-                _map_offloaded_tasks_with_outputs.clear();
-                DBP("comm_thread_action - cleared map_offloaded_tasks_with_outputs\n");
-                DBP("comm_thread_action - thread went to sleep again due to exit condition\n");
-                continue;
-            }
-            // else if(!request_gather_created) {
-            //     // post Iallgather asap!
-            //     #ifdef TRACE
-            //     VT_BEGIN_CONSTRAINED(event_create_gather_request);
-            //     #endif
-            //     action_create_gather_request(&num_threads_in_tw, &(transported_load_values[0]), buffer_load_values, &request_gather_out);
-            //     #ifdef TRACE
-            //     VT_END_W_CONSTRAINED(event_create_gather_request);
-            //     #endif
-            //     request_gather_created = 1;
-            //     #if CHAM_STATS_RECORD
-            //     time_gather_posted = omp_get_wtime();
-            //     #endif /* CHAM_STATS_RECORD */
-            // }
-        }
-
-
-        #if ENABLE_TASK_MIGRATION
-        action_task_migration(&offload_triggered, &num_threads_in_tw, tasksToOffload);
-        #endif /* ENABLE_TASK_MIGRATION */
-
-        #if CHAM_REPLICATION_MODE>0
-        if(!has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
-          has_replicated = action_task_replication();
-        }
-        #endif
-
-        #if CHAM_REPLICATION_MODE>0
-        if(has_replicated && !offload_triggered)
-          action_task_replication_send();
-        #endif
-
-
-        // transfer back data of stolen tasks
-        for (int i_sb = 0; i_sb < n_task_send_at_once; i_sb++) {
-            cham_migratable_task_t* cur_task = _remote_tasks_send_back.pop_front();
-            if(cur_task) {
-                action_send_back_stolen_tasks(cur_task, &request_manager_send);
-            }
-            else {
-                break;
-            }
-        }
-
-        // ==============================
-        // ========== RECV
-        // ==============================
-
-        MPI_Status cur_status_receive;
-        int flag_open_request_receive = 0;
- 
-        MPI_Status cur_status_cancel;
-        int flag_open_request_cancel = 0;
-
-        MPI_Status cur_status_receiveBack;
-        int flag_open_request_receiveBack = 0;
-
-        #if ENABLE_TASK_MIGRATION
-        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-        cur_time = omp_get_wtime();
-        #endif
-        MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm, &flag_open_request_receive, &cur_status_receive);
-        #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-        cur_time = omp_get_wtime()-cur_time;
-        if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
-          _num_slow_communication_operations++;
-        #endif
-        
-        #if CHAM_REPLICATION_MODE>=2
-        MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_cancel, &flag_open_request_cancel, &cur_status_cancel);
-        if( flag_open_request_cancel ) {
-          action_handle_cancel_request(&cur_status_cancel);
-        }
-        #endif
-        #endif /* ENABLE_TASK_MIGRATION */
-
-        if ( flag_open_request_receive ) {
-
-            // check last recv id for source rank
-            int last_id_handled = _tracked_last_req_recv[cur_status_receive.MPI_SOURCE];
-            bool handle_req = last_id_handled != cur_status_receive.MPI_TAG;
-
-            // only handle request if not already done for current phase
-            if (handle_req) {
-                // track last id recevied for source rank
-                _tracked_last_req_recv[cur_status_receive.MPI_SOURCE] = cur_status_receive.MPI_TAG;
-                // create requests to receive task
-                action_handle_recv_request(&cur_status_receive, &request_manager_receive);
-            }
-        }
-
-        #if CHAM_REPLICATION_MODE>0 || ENABLE_EARLY_IRECVS==0
-        for (int i_sb = 0; i_sb < n_task_send_at_once; i_sb++) {
-            flag_open_request_receiveBack = 0;
-            #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-            cur_time = omp_get_wtime();
-            #endif
-            MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, chameleon_comm_mapped, &flag_open_request_receiveBack, &cur_status_receiveBack);
-            #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
-            cur_time = omp_get_wtime()-cur_time;
-            if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
-            _num_slow_communication_operations++;
-            #endif
-            if( flag_open_request_receiveBack ) {
-                action_handle_recvback_request(&cur_status_receiveBack, &request_manager_receive);
-            } else {
-                break;
-            }
-        }
-        #endif
+        action_communication_progression();
     }
 }
 #pragma endregion CommThread

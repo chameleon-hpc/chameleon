@@ -23,7 +23,7 @@ std::vector<size_t> sort_indexes(const std::vector<T> &v) {
 #pragma endregion Local Helpers
 
 #pragma region Strategies
-void compute_num_tasks_to_offload( std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t num_tasks_stolen) {
+void compute_num_tasks_to_offload(std::vector<int32_t>& tasksToOffloadPerRank, std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t num_tasks_stolen) {
 #if OFFLOADING_STRATEGY_AGGRESSIVE
     int input_r = 0, input_l = 0;
     int output_r = 0, output_l = 0;

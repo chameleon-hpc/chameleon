@@ -375,6 +375,9 @@ int32_t chameleon_init() {
         printf("chameleon_init - dummy region\n");
     }
 
+    // initialize communication session data
+    chameleon_comm_thread_session_data_t_init();
+
     #if ENABLE_COMM_THREAD
     #if THREAD_ACTIVATION
     // start comm threads but in sleep mode
@@ -450,6 +453,9 @@ int32_t chameleon_finalize() {
     #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
     stop_communication_threads();
     #endif
+
+    // run routine to cleanup all things for work phase
+    cleanup_work_phase();
 
     #if CHAM_STATS_RECORD && CHAM_STATS_PRINT && !CHAM_STATS_PER_SYNC_INTERVAL
     cham_stats_print_stats();

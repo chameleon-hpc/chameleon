@@ -44,14 +44,14 @@
 #define ENABLE_TASK_MIGRATION 1
 #endif
 
-#ifndef ENABLE_EARLY_IRECVS
-#define ENABLE_EARLY_IRECVS 0
-#endif
-
 // No communication thread implies also not migration
 #if !ENABLE_COMM_THREAD
 #undef ENABLE_TASK_MIGRATION
 #define ENABLE_TASK_MIGRATION 0
+#endif
+
+#ifndef ENABLE_EARLY_IRECVS
+#define ENABLE_EARLY_IRECVS 0
 #endif
 
 // Flag whether task migration is forced. That means no locally created task are executed locally
@@ -66,7 +66,7 @@
 
 // determines how data (arguments) is packed and send during offloading
 #ifndef OFFLOAD_DATA_PACKING_TYPE
-// #define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
+//#define OFFLOAD_DATA_PACKING_TYPE 0     // 0 = pack meta data and arguments together and send it with a single message (requires copy to buffer)
 //#define OFFLOAD_DATA_PACKING_TYPE 1     // 1 = zero copy approach, only pack meta data (num_args, arg types ...) + separat send for each mapped argument
 #define OFFLOAD_DATA_PACKING_TYPE 2     // 2 = zero copy approach, only pack meta data (num_args, arg types ...) + ONE separat send for with mapped arguments
 #endif
@@ -99,11 +99,6 @@
 
 #ifndef CHAMELEON_TOOL_SUPPORT
 #define CHAMELEON_TOOL_SUPPORT 0
-#endif
-
-// obsolete?
-#ifndef CHAMELEON_TOOL_USE_MAP
-#define CHAMELEON_TOOL_USE_MAP 0
 #endif
 
 #ifndef SHOW_WARNING_DEADLOCK

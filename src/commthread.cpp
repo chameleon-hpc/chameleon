@@ -2436,7 +2436,6 @@ inline void action_handle_recv_request(MPI_Status *cur_status_receive, RequestMa
 }
 
 inline bool action_task_replication() {
-
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION ) {
     	DBP("action_task_replication - selecting tasks to replicate\n");
         //clean up replication infos from previous distributed taskwait
@@ -2448,7 +2447,7 @@ inline bool action_task_replication() {
 
         cham_t_replication_info_t* replication_infos = nullptr;
         int num_rep_infos = 0;
-#if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
+        #if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
         if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_replicate) {
                replication_infos = cham_t_status.cham_t_callback_select_num_tasks_to_replicate(
             		             &(_load_info_ranks[0]), num_tasks_local, &num_rep_infos);
@@ -2456,9 +2455,9 @@ inline bool action_task_replication() {
         } else {
         	   replication_infos = compute_num_tasks_to_replicate( _load_info_ranks, num_tasks_local, &num_rep_infos);
         }
-#else
+        #else
         replication_infos = compute_num_tasks_to_replicate( _load_info_ranks, num_tasks_local, &num_rep_infos);
-#endif
+        #endif
 
         for( int r=0; r<num_rep_infos; r++) {
            _replication_infos_list.push_back(&replication_infos[r]);
@@ -2614,7 +2613,7 @@ void action_communication_progression() {
     }
 
     #if CHAM_REPLICATION_MODE>0
-    if(!_session_data.has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+    if(!_session_data.has_replicated && _session_data.num_threads_in_tw == _num_threads_active_in_taskwait) {
         _session_data.has_replicated = action_task_replication();
     }
     #endif
@@ -2624,13 +2623,13 @@ void action_communication_progression() {
     #endif /* ENABLE_TASK_MIGRATION */
 
     #if CHAM_REPLICATION_MODE>0
-    if(!_session_data.has_replicated && num_threads_in_tw == _num_threads_active_in_taskwait) {
+    if(!_session_data.has_replicated && _session_data.num_threads_in_tw == _num_threads_active_in_taskwait) {
         _session_data.has_replicated = action_task_replication();
     }
     #endif
 
     #if CHAM_REPLICATION_MODE>0
-    if(_session_data.has_replicated && !offload_triggered)
+    if(_session_data.has_replicated && !_session_data.offload_triggered)
         action_task_replication_send();
     #endif
 

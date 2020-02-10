@@ -1471,7 +1471,7 @@ void chameleon_comm_thread_session_data_t_init() {
     }
     #endif
 
-    _session_data.flag_set = 0;
+    _session_data.flag_thread_sleeping_set = 0;
     _session_data.num_threads_in_tw = _num_threads_involved_in_taskwait.load();
     _session_data.time_last_load_exchange = 0;
     _session_data.time_gather_posted = 0;
@@ -2578,9 +2578,9 @@ void action_communication_progression() {
         // Handle exit condition here to avoid that iallgather is posted after iteration finished
         bool exit_true = exit_condition_met(0,1);
         if(exit_true){
-            _flag_comm_thread_sleeping      = 1;
-            _comm_thread_service_stopped    = 1;
-            _session_data.flag_set          = 1;
+            _flag_comm_thread_sleeping              = 1;
+            _comm_thread_service_stopped            = 1;
+            _session_data.flag_thread_sleeping_set  = 1;
             #if CHAM_STATS_RECORD
             double time_commthread_elapsed = omp_get_wtime()-_session_data.time_start_comm;
             atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
@@ -2729,8 +2729,9 @@ void* comm_thread_action(void* arg) {
     while(true) {
         #if THREAD_ACTIVATION
         while (_flag_comm_thread_sleeping) {
-            if(!_session_data.flag_set) {
-                _session_data.flag_set = 1;
+            // TODO: not 100% sure if we need that duplication, but it also doesn't hurt much in terms of performance as only happening in comm thread idle state
+            if(!_session_data.flag_thread_sleeping_set) {
+                _session_data.flag_thread_sleeping_set = 1;
                 #if CHAM_STATS_RECORD
                 double time_commthread_elapsed = omp_get_wtime()-_session_data.time_start_comm;
                 atomic_add_dbl(_time_commthread_active_sum, time_commthread_elapsed);
@@ -2757,12 +2758,12 @@ void* comm_thread_action(void* arg) {
                 pthread_exit(&ret_val);
             }
         }
-        if(_session_data.flag_set) {
+        if(_session_data.flag_thread_sleeping_set) {
             DBP("comm_thread_action - woke up again\n");
             #if CHAM_STATS_RECORD
             _session_data.time_start_comm = omp_get_wtime();
             #endif
-            _session_data.flag_set = 0;
+            _session_data.flag_thread_sleeping_set = 0;
             tag_counter_send_tasks = 0;
             _session_data.has_replicated = false;
             assert(_remote_tasks_send_back.empty());
@@ -2776,6 +2777,7 @@ void* comm_thread_action(void* arg) {
         }
         #endif
 
+        // call function for communication progression
         action_communication_progression();
     }
 }

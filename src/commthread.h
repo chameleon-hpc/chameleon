@@ -100,7 +100,7 @@ extern int event_progress_recv;
 class chameleon_comm_thread_session_data_t {
     public:
     // =============== General Vars
-    std::atomic<int> flag_set;
+    std::atomic<int> flag_thread_sleeping_set;
     std::atomic<int> num_threads_in_tw;
     // std::atomic<bool> has_not_replicated(true);
     std::atomic<double> time_last_load_exchange;
@@ -157,6 +157,8 @@ int32_t start_communication_threads();
 int32_t stop_communication_threads();
 
 int32_t put_comm_threads_to_sleep();
+
+void action_communication_progression();
 
 void cleanup_work_phase();
 

@@ -34,18 +34,31 @@
 
 #include "chameleon.h"
 
+// flag which communication should be applied (load exchange & migration)
+#ifndef COMMUNICATION_MODE
+#define COMMUNICATION_MODE 0 // communication performed by communication thread (default)
+//#define COMMUNICATION_MODE 1 // communication performed by threads inside distributed taskwait
+//TODO: COMMUNICATION_MODE 2: Hybrid. Which parts should be done by comm thread which should be done by threads?
+//TODO: COMMUNICATION_MODE 3: all thread can do progress. What kind of progress? all? only progress requests?
+#endif
+
 // flag whether communication thread will be launched or not
 #ifndef ENABLE_COMM_THREAD
 #define ENABLE_COMM_THREAD 1
 #endif
 
-// Flag wether migration in general is enabled or disabled
+// flag wether migration in general is enabled or disabled
 #ifndef ENABLE_TASK_MIGRATION
 #define ENABLE_TASK_MIGRATION 1
 #endif
 
+#if COMMUNICATION_MODE == 1
+#undef ENABLE_COMM_THREAD
+#define ENABLE_COMM_THREAD 0
+#endif
+
 // No communication thread implies also not migration
-#if !ENABLE_COMM_THREAD
+#if !ENABLE_COMM_THREAD && COMMUNICATION_MODE == 0
 #undef ENABLE_TASK_MIGRATION
 #define ENABLE_TASK_MIGRATION 0
 #endif
@@ -859,6 +872,7 @@ static void load_config_values() {
 }
 
 static void print_config_values() {
+    RELP("COMMUNICATION_MODE=%d\n", COMMUNICATION_MODE);
     RELP("ENABLE_COMM_THREAD=%d\n", ENABLE_COMM_THREAD);
     RELP("ENABLE_TASK_MIGRATION=%d\n", ENABLE_TASK_MIGRATION);
     RELP("ENABLE_EARLY_IRECVS=%d\n", ENABLE_EARLY_IRECVS);

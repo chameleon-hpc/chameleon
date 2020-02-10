@@ -51,6 +51,9 @@ thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 std::atomic<int> _flag_dtw_active(0);
 std::atomic<int> _num_threads_finished_dtw(0);
 
+// lock used to ensure that currently only a single thread is doing communication progression
+std::mutex _mtx_comm_progression;
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -566,15 +569,16 @@ void dtw_startup() {
 
     //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
+    _session_data.num_threads_in_tw     = omp_get_num_threads();
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 
-    #if ENABLE_COMM_THREAD
+    #if ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION
     // indicating that this has not happend yet for the current sync cycle
     _comm_thread_load_exchange_happend  = 0;
     #else
-    // need to set flags to ensure that exit condition is working with deactivated comm thread
-    _comm_thread_load_exchange_happend  = 1;
+    // need to set flags to ensure that exit condition is working with deactivated comm thread and migration
+    _comm_thread_load_exchange_happend  = 1; 
     _num_ranks_not_completely_idle      = 0;
     #endif /* ENABLE_COMM_THREAD */
 
@@ -591,6 +595,7 @@ void dtw_teardown() {
         //DBP("chameleon_distributed_taskwait - teardown, resetting counters\n");
         _comm_thread_load_exchange_happend      = 0;
         _num_threads_involved_in_taskwait       = INT_MAX;
+        _session_data.num_threads_in_tw         = INT_MAX;
         _num_threads_idle                       = 0;
         _task_id_counter                        = 0;
         _num_ranks_not_completely_idle          = INT_MAX;
@@ -676,8 +681,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     #endif
  
     // as long as there are local tasks run this loop
+    int32_t res = CHAM_SUCCESS;
+
     while(true) {
-        int32_t res = CHAM_SUCCESS;
+        res = CHAM_SUCCESS;
 
         #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
@@ -691,9 +698,20 @@ int32_t chameleon_distributed_taskwait(int nowait) {
            request_manager_send.printRequestInformation();
            last_time_doing_sth_useful = omp_get_wtime(); 
         }
-        #endif
+        #endif /* SHOW_WARNING_DEADLOCK */
 
-#if ENABLE_COMM_THREAD && ENABLE_TASK_MIGRATION
+        #if COMMUNICATION_MODE == 1
+        if (_mtx_comm_progression.try_lock()) {
+            //for (int rep = 0; rep < 2; rep++) {
+            // need to check whether exit condition already met
+            //if (!exit_condition_met(1,0))
+            action_communication_progression();
+            //}
+            _mtx_comm_progression.unlock();
+        }
+        #endif /* COMMUNICATION_MODE */
+
+        #if ENABLE_TASK_MIGRATION
         // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
         if(!_stolen_remote_tasks.empty()) {
      
@@ -715,9 +733,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res == CHAM_REMOTE_TASK_SUCCESS)
                 continue;
         }
-#endif
+        #endif /* ENABLE_TASK_MIGRATION */
 
-#if !FORCE_MIGRATION
+        #if !FORCE_MIGRATION
         // ========== Prio 2: work on local tasks
         if(!_local_tasks.empty()) {
    
@@ -740,9 +758,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res == CHAM_LOCAL_TASK_SUCCESS)
                 continue;
         }
-#endif
+        #endif /* !FORCE_MIGRATION */
 
-#if ENABLE_COMM_THREAD && ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0
+        #if ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0
         // ========== Prio 3: work on replicated local tasks
         if(!_replicated_local_tasks.empty()) {
             
@@ -786,7 +804,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res != CHAM_REPLICATED_TASK_NONE)
                 continue;
         }
-#endif
+        #endif /* ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0 */
 
         // ========== Prio 4: work on a regular OpenMP task
         // make sure that we get info about outstanding tasks with dependences
@@ -828,13 +846,13 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
     }
 
-#if CHAMELEON_TOOL_SUPPORT
+    #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
         void *codeptr_ra = __builtin_return_address(0);
         int32_t gtid = __ch_get_gtid();
         cham_t_status.cham_t_callback_sync_region(cham_t_sync_region_taskwait, cham_t_sync_region_end, &(__thread_data[gtid].thread_tool_data) , codeptr_ra);
     }
-#endif
+    #endif /* CHAMELEON_TOOL_SUPPORT */
     
     if(!nowait) {
         #pragma omp barrier

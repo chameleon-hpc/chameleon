@@ -570,6 +570,11 @@ void dtw_startup() {
     //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _session_data.num_threads_in_tw     = omp_get_num_threads();
+    
+    request_manager_send._num_threads_in_dtw    = omp_get_num_threads();
+    request_manager_receive._num_threads_in_dtw = omp_get_num_threads();
+    request_manager_cancel._num_threads_in_dtw  = omp_get_num_threads();
+
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 

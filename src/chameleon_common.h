@@ -28,11 +28,18 @@
 #include <cmath>
 #include <list>
 #include <mutex>
+#include <deque>
 #include <vector>
 #include <atomic>
 #include <unordered_map>
 
 #include "chameleon.h"
+
+// flag whether communication thread will be launched or not
+#ifndef REQUEST_MANAGER_PROGRESS_MODE
+//#define REQUEST_MANAGER_PROGRESS_MODE 0 // default for comm thread
+#define REQUEST_MANAGER_PROGRESS_MODE 1 // new version to split progress (partially requires thread safe containers)
+#endif
 
 // flag which communication should be applied (load exchange & migration)
 #ifndef COMMUNICATION_MODE
@@ -666,6 +673,57 @@ class thread_safe_list_t {
     bool find(T entry) {
         bool found = (std::find(this->list.begin(), this->list.end(), entry) != this->list.end());
         return found;
+    }
+};
+
+template<class T>
+class thread_safe_deque_t {
+    private:
+    
+    std::deque<T> list;
+    std::mutex m;
+    std::atomic<size_t> list_size;
+
+    public:
+
+    thread_safe_deque_t() { list_size = 0; }
+
+    size_t size() {
+        return this->list_size.load();
+    }
+
+    bool empty() {
+        return this->list_size <= 0;
+    }
+
+    void push_back(T entry) {
+        this->m.lock();
+        this->list.push_back(entry);
+        this->list_size++;
+        this->m.unlock();
+    }
+
+    void push_front(T entry) {
+        this->m.lock();
+        this->list.push_front(entry);
+        this->list_size++;
+        this->m.unlock();
+    }
+
+    T pop_front() {
+        if(this->empty())
+            return NULL;
+
+        T ret_val;
+
+        this->m.lock();
+        if(!this->empty()) {
+            this->list_size--;
+            ret_val = this->list.front();
+            this->list.pop_front();
+        }
+        this->m.unlock();
+        return ret_val;
     }
 };
 #pragma endregion

@@ -5,7 +5,8 @@
 
 #include <mpi.h>
 #include <vector>
-#include <queue>
+// #include <queue>
+#include <deque>
 #include <unordered_map>
 #include <atomic>
 #include <functional>
@@ -32,6 +33,8 @@ static const char* RequestType_values[] = {
 
 class RequestManager {
   public:
+
+    int _num_threads_in_dtw;
     RequestManager();
     void submitRequests( double startStamp, int tag, int rank, int n_requests, 
                          MPI_Request *requests,
@@ -66,13 +69,13 @@ class RequestManager {
 
     std::atomic<int> _id;
     std::atomic<int> _groupId;
-    std::queue<int> _request_queue;
+    thread_safe_deque_t<int> _request_queue;
     std::vector<MPI_Request> _current_request_array;
     std::unordered_map<int, int> _current_vecid_to_rid;
     std::atomic<int> _current_num_finished_requests;
     std::unordered_map<int, RequestGroupData> _map_id_to_request_group_data;
     std::unordered_map<int, RequestData> _map_rid_to_request_data;
-    std::unordered_map<int, int> _outstanding_reqs_for_group;
+    std::unordered_map<int, std::atomic<int>> _outstanding_reqs_for_group;
 
     std::atomic<int> _num_posted_requests[5];
     std::atomic<int> _num_completed_requests[5];

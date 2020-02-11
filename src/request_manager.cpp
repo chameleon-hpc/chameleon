@@ -10,6 +10,7 @@
 RequestManager::RequestManager()
  : _id(0), _groupId(0), _current_request_array(0), _current_num_finished_requests(0) {
  
+  _num_threads_in_dtw = -1;
   std::fill(&_num_posted_requests[0], &_num_posted_requests[5], 0);
   std::fill(&_num_completed_requests[0], &_num_completed_requests[5], 0);
   std::fill(&_num_posted_request_groups[0], &_num_posted_request_groups[5], 0);
@@ -133,47 +134,62 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
  
     RequestData request_data = {gid, requests[i]};
 
+    DBP("Submitting request %d with type %s\n", rid, RequestType_values[type]);
     _map_rid_to_request_data.insert(std::make_pair(rid, request_data));
-    _request_queue.push(rid);
+    _request_queue.push_back(rid);    
   }
 }
 
 void RequestManager::progressRequests() {
-  //std::vector<MPI_Request> requests;
-  //std::unordered_map<int, int> vecid_to_rid;
+  #if REQUEST_MANAGER_PROGRESS_MODE==1
+  // calc number of requests to get from queue
+  int num_req_grab = MAX_REQUESTS;
+  //int num_req_grab = (_request_queue.size() / _num_threads_in_dtw) + 1;
+  // grab min 2 requests for progress
+  if (num_req_grab < 2)
+    num_req_grab = 2;  
+  std::vector<MPI_Request> tmp_req_array;
+  std::unordered_map<int, int> cur_vecid_to_rid;
 
-    /*int i = 0;
-    while(!_request_queue.empty()) {
-        int rid = _request_queue.front();
-        _request_queue.pop();
-        MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
-        _current_request_array.push_back(request);
-        vecid_to_rid.insert(std::make_pair(i, rid));
-        i++;
-    }*/
- 
+  for(int i=0; i<num_req_grab && !_request_queue.empty(); i++) {
+    int rid = _request_queue.pop_front();
+    DBP("Checking request %d ... \n", rid);
+    MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
+    tmp_req_array.push_back(request);  
+    cur_vecid_to_rid.insert(std::make_pair(i, rid));
+  }
+  int n_requests = tmp_req_array.size();
+  #else
   if(_current_request_array.size()==0) {
     for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
-      int rid = _request_queue.front();
-      _request_queue.pop();
+      int rid = _request_queue.pop_front();
+      // int rid = _request_queue.front();
+      // _request_queue.pop();
       MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
       _current_request_array.push_back(request);  
       _current_vecid_to_rid.insert(std::make_pair(i, rid));
     }
   }
-
   int n_requests = _current_request_array.size();
+  #endif
  
-  if(n_requests==0) return;  
+  if(n_requests==0) return;
 
   int outcount = 0;
   std::vector<int> arr_of_indices(n_requests);
   std::vector<MPI_Status> arr_of_statuses(n_requests);
 
+  DBP("Checking %d requests in total\n", n_requests);
+
 #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
    double cur_time = omp_get_wtime();
 #endif
+
+  #if REQUEST_MANAGER_PROGRESS_MODE == 1
+  int ierr = MPI_Testsome(n_requests, &tmp_req_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+  #else
   int ierr = MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+  #endif
   if(ierr!=MPI_SUCCESS) {
      int eclass, len;
      char estring[MPI_MAX_ERROR_STRING];
@@ -181,7 +197,11 @@ void RequestManager::progressRequests() {
      MPI_Error_string(ierr, estring, &len);
      fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
      for(int i=0; i<n_requests;i++) {
+        #if REQUEST_MANAGER_PROGRESS_MODE == 1
+        fprintf(stderr, "Request : %ld\n", tmp_req_array[i]);
+        #else
         fprintf(stderr, "Request : %ld\n", _current_request_array[i]);
+        #endif
         MPI_Error_class(arr_of_statuses[i].MPI_ERROR, &eclass);
         MPI_Error_string(arr_of_statuses[i].MPI_ERROR, estring, &len);
         fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
@@ -193,27 +213,40 @@ void RequestManager::progressRequests() {
    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
      _num_slow_communication_operations++; 
 #endif
-  _current_num_finished_requests += outcount;
+  if(outcount >= 0) {
+    #if REQUEST_MANAGER_PROGRESS_MODE == 1
+    DBP("Finished %d requests in total out of %d\n", outcount, n_requests);
+    #else
+    _current_num_finished_requests += outcount;  
+    #endif
+  }
 
   for(int i=0; i<outcount; i++) {
     int idx = arr_of_indices[i];
+
+    #if REQUEST_MANAGER_PROGRESS_MODE == 1
+    int rid = cur_vecid_to_rid[idx];
+    #else
     int rid = _current_vecid_to_rid[idx];
+    #endif
 
     RequestData request_data = _map_rid_to_request_data[rid];
     int gid = request_data.gid;
     
-    RequestGroupData rg_data = _map_id_to_request_group_data[gid];
-    _num_completed_requests[rg_data.type]++;
+    RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
+    _num_completed_requests[request_group_data.type]++;
 
-     _outstanding_reqs_for_group[gid]--;
+    DBP("Finished request %d with type %s and tag %ld\n", rid, RequestType_values[request_group_data.type], request_group_data.tag);
+
+    _outstanding_reqs_for_group[gid]--;
     _map_rid_to_request_data.erase(rid);
    
-    if(_outstanding_reqs_for_group[gid]==0) {
+    if(_outstanding_reqs_for_group[gid].load()==0) {
 #if CHAM_STATS_RECORD 
        double finishedStamp = omp_get_wtime();
 #endif
        _outstanding_reqs_for_group.erase(gid);
-       RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
+       //RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
        std::function<void(void*, int, int, cham_migratable_task_t**, int)> handler = request_group_data.handler;
        void* buffer = request_group_data.buffer;
        cham_migratable_task_t** tasks = request_group_data.tasks;
@@ -249,14 +282,27 @@ void RequestManager::progressRequests() {
     }
   }
 
+  #if REQUEST_MANAGER_PROGRESS_MODE == 1
+  // need to insert remaining request ids to global list again that they can be grabbed by any other progress thread
+  for(int i=0; i<n_requests; i++) {
+    // if (std::find(arr_of_indices.begin(), arr_of_indices.end(), i) != arr_of_indices.end())
+		//   continue;
+    if(tmp_req_array[i]!=MPI_REQUEST_NULL) {
+      int rid = cur_vecid_to_rid[i];
+      DBP("Reentered request %d with tag ...\n", rid);
+      _request_queue.push_front(rid);
+    }
+  }
+  #else
   if(_current_num_finished_requests==n_requests) {
     _current_request_array.clear();
     _current_vecid_to_rid.clear();
-    _current_num_finished_requests=0; 
+    _current_num_finished_requests=0;
   }
+  #endif
   //for(int i=0; i<n_requests; i++) {
   //  if(requests[i]!=MPI_REQUEST_NULL) {
-  //    _request_queue.push(vecid_to_rid[i]);
+  //    _request_queue.push_front(vecid_to_rid[i]);
   //  }
   //}
 }

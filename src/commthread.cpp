@@ -297,6 +297,10 @@ void cleanup_work_phase() {
     _cancelled_task_ids.clear();
     _map_offloaded_tasks_with_outputs.clear();
 
+#if CHAM_REPLICATION_MODE==4
+    _map_overall_tasks.clear();
+#endif
+
     DBP("cleanup_work_phase - cleared map_offloaded_tasks_with_outputs\n");
 
     if(_flag_abort_comm_thread) {
@@ -478,16 +482,25 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #endif
 
     // add stolen load as soon as possible to avoid wrong decision making
+#if CHAM_REPLICATION_MODE!=4
     _num_remote_tasks_outstanding += n_tasks;
     DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
+#endif
 
     // set mpi source + copy pointers to separate array
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(n_tasks*sizeof(cham_migratable_task_t*));
     for(int i_task = 0; i_task < n_tasks; i_task++) {
         list_tasks[i_task]->source_mpi_rank = source;
         p_tasks[i_task] = list_tasks[i_task];
+#if CHAM_REPLICATION_MODE!=4
         if(p_tasks[i_task]->is_replicated_task)
         	_num_replicated_remote_tasks_outstanding++;
+#else // CHAM_REPLICATION_MODE==4
+        if(p_tasks[i_task]->is_migrated_task) {
+            DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
+        	_num_remote_tasks_outstanding++;
+        }
+#endif
     }
 #if OFFLOAD_DATA_PACKING_TYPE == 0
     receive_handler_data(NULL, tag, source, p_tasks, n_tasks);
@@ -635,8 +648,10 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
     if(tasks) {
         for(int i_task = 0; i_task < num_tasks; i_task++) {
             cham_migratable_task_t *task = tasks[i_task];
+#if CHAM_REPLICATION_MODE!=4
             if(task->is_replicated_task)
             	_num_replicated_remote_tasks_outstanding--;
+#endif
             _num_remote_tasks_outstanding--;
             DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", task->task_id, _num_remote_tasks_outstanding.load());
             free_migratable_task(task, true);
@@ -809,8 +824,10 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
 
     // store target rank in task
     for(int i = 0; i < num_tasks; i++) {
-      if(!tasks[i]->is_replicated_task)
+      if(!tasks[i]->is_replicated_task) {
+    	DBP("offloading_action - offloading migrated task\n"); assert(tasks[i]->is_migrated_task);
         tasks[i]->target_mpi_rank = target_rank;
+      }
       else {
     	  DBP("offload_action - offloading replicated task\n");
     	  _num_replicated_local_tasks_outstanding_sends += tasks[i]->replication_ranks.size();
@@ -1715,7 +1732,7 @@ inline void action_task_migration() {
                         cham_migratable_task_t **cur_tasks = (cham_migratable_task_t**) malloc(num_tasks*sizeof(cham_migratable_task_t*));
                         for(int i=0; i <num_tasks; i++) {
                           cur_tasks[i]= map_task_vec[r_id][i];
-                          #if CHAM_REPLICATION_MODE == 3
+                          #if CHAM_REPLICATION_MODE >= 3
                           cur_tasks[i]->is_migrated_task = 1;
                           cur_tasks[i]->is_replicated_task = 1;
                           cur_tasks[i]->replication_ranks.push_back(r_id);
@@ -1750,7 +1767,7 @@ inline void action_task_migration() {
                                 cham_migratable_task_t *task = _local_tasks.pop_front();
                                 if(task) {
                                     cur_tasks[num_tasks] = task;
-                                    #if CHAM_REPLICATION_MODE == 3
+                                    #if CHAM_REPLICATION_MODE >= 3
                                     cur_tasks[num_tasks]->is_migrated_task = 1;
                                     cur_tasks[num_tasks]->is_replicated_task = 1;
                                     cur_tasks[num_tasks]->replication_ranks.push_back(r);

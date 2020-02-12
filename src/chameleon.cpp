@@ -689,10 +689,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
-           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
+           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local compute: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
                                                                   _num_remote_tasks_outstanding.load(),
-                                                                  _num_replicated_local_tasks_outstanding.load(),
+                                                                  _num_replicated_local_tasks_outstanding_compute.load(),
                                                                   _num_replicated_remote_tasks_outstanding.load());
            request_manager_receive.printRequestInformation();
            request_manager_send.printRequestInformation();
@@ -783,6 +783,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 continue;
         }
 
+        #if CHAM_REPLICATION_MODE<4
         // ========== Prio 4: work on replicated remote tasks
         if(!_replicated_remote_tasks.empty()) {
 
@@ -804,6 +805,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res != CHAM_REPLICATED_TASK_NONE)
                 continue;
         }
+        #endif
         #endif /* ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0 */
 
         // ========== Prio 4: work on a regular OpenMP task
@@ -1270,7 +1272,7 @@ inline int32_t process_replicated_local_task() {
         double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE>=2
+#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif
@@ -1344,10 +1346,10 @@ inline int32_t process_replicated_remote_task() {
         double cur_time = omp_get_wtime();
 #endif 
 
-/*#if CHAM_REPLICATION_MODE==2
+#if CHAM_REPLICATION_MODE==2
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
-#endif*/
+#endif
 
         int32_t res = execute_target_task(replicated_task);
         if(res != CHAM_SUCCESS)

@@ -35,18 +35,12 @@
 
 #include "chameleon.h"
 
-// flag whether communication thread will be launched or not
-#ifndef REQUEST_MANAGER_PROGRESS_MODE
-//#define REQUEST_MANAGER_PROGRESS_MODE 0 // default for comm thread
-#define REQUEST_MANAGER_PROGRESS_MODE 1 // new version to split progress (partially requires thread safe containers)
-#endif
-
 // flag which communication should be applied (load exchange & migration)
 #ifndef COMMUNICATION_MODE
 #define COMMUNICATION_MODE 0 // communication performed by communication thread (default)
-//#define COMMUNICATION_MODE 1 // communication performed by threads inside distributed taskwait
-//TODO: COMMUNICATION_MODE 2: Hybrid. Which parts should be done by comm thread which should be done by threads?
-//TODO: COMMUNICATION_MODE 3: all thread can do progress. What kind of progress? all? only progress requests?
+//#define COMMUNICATION_MODE 1 // communication performed only by threads inside distributed taskwait. Only a single thread active at once.
+//#define COMMUNICATION_MODE 3 // communication performed only by threads inside distributed taskwait. All can do progress. What kind of progress? all? only progress requests?
+//#define COMMUNICATION_MODE 2 // Hybrid. Which parts should be done by comm thread which should be done by threads?
 #endif
 
 // flag whether communication thread will be launched or not
@@ -59,7 +53,7 @@
 #define ENABLE_TASK_MIGRATION 1
 #endif
 
-#if COMMUNICATION_MODE == 1
+#if COMMUNICATION_MODE == 1 || COMMUNICATION_MODE == 3
 #undef ENABLE_COMM_THREAD
 #define ENABLE_COMM_THREAD 0
 #endif
@@ -721,9 +715,105 @@ class thread_safe_deque_t {
             this->list_size--;
             ret_val = this->list.front();
             this->list.pop_front();
+        } else {
+            this->m.unlock();
+            return NULL;
         }
         this->m.unlock();
         return ret_val;
+    }
+
+    T pop_front_b(bool *success) {
+        *success = true;
+        if(this->empty()) {
+            *success = false;
+            return NULL;
+        }
+
+        T ret_val;
+
+        this->m.lock();
+        if(!this->empty()) {
+            this->list_size--;
+            ret_val = this->list.front();
+            this->list.pop_front();
+        } else {
+            this->m.unlock();
+            *success = false;
+            return NULL;
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+};
+
+template <typename K,typename V>
+class thread_safe_unordered_map {
+    private:
+    
+    std::unordered_map<K, V> map;
+    std::mutex m;
+
+    public:
+
+    thread_safe_unordered_map() { }
+
+    void insert(const std::pair<K, V> &inPair) {
+        this->m.lock();
+        this->map.insert(inPair);
+        this->m.unlock();
+    }
+
+    V& get(K key) {
+        this->m.lock();
+        V& ret_val = this->map[key];
+        this->m.unlock();
+        return ret_val;
+    }
+
+    void erase(K key) {
+        this->m.lock();
+        this->map.erase(key);
+        this->m.unlock();
+    }
+};
+
+template <typename K, typename V>
+class thread_safe_unordered_map_atomic {
+    private:
+    
+    std::unordered_map<K, std::atomic<V>> map;
+    std::mutex m;
+
+    public:
+
+    thread_safe_unordered_map_atomic() { }
+
+    void insert(K key, V val) {
+        this->m.lock();
+        this->map.insert(std::make_pair(key, val));
+        this->m.unlock();
+    }
+
+    std::atomic<V>& get(K key) {
+        this->m.lock();
+        std::atomic<V> &ret_val = this->map[key];
+        this->m.unlock();
+        return ret_val;
+    }
+
+    V decrement(K key) {
+        this->m.lock();
+        std::atomic<V> &ret_val = this->map[key];
+        V ret_v = --ret_val;
+        this->m.unlock();
+        return ret_v;
+    }
+
+    void erase(K key) {
+        this->m.lock();
+        this->map.erase(key);
+        this->m.unlock();
     }
 };
 #pragma endregion

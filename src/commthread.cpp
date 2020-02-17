@@ -135,6 +135,9 @@ int event_send_back              = -1;
 int event_progress_send          = -1;
 int event_progress_recv          = -1;
 
+// lock used to ensure that currently only a single thread is doing communication progression
+std::mutex _mtx_comm_progression;
+
 chameleon_comm_thread_session_data_t _session_data;
 
 #pragma endregion Variables
@@ -2496,7 +2499,7 @@ inline void action_task_replication_send() {
     	_replication_infos_list.push_back(rep_info);
 }
 
-void action_communication_progression() {
+void action_communication_progression(int comm_thread) {
     #if ENABLE_TASK_MIGRATION
     #if CHAM_REPLICATION_MODE>=2
     _mtx_cancellation.lock();
@@ -2523,6 +2526,12 @@ void action_communication_progression() {
 
     int request_gather_avail = 0;
     // avoid overwriting request and keep it up to date
+    #if COMMUNICATION_MODE == 3
+    if (_mtx_comm_progression.try_lock()) {
+    #else
+    if(comm_thread) {  // only execute that code if called from communication thread
+    #endif /* COMMUNICATION_MODE */
+
     if(!_session_data.request_gather_created) {
         #ifdef TRACE
         VT_BEGIN_CONSTRAINED(event_create_gather_request);
@@ -2710,6 +2719,12 @@ void action_communication_progression() {
         }
     }
     #endif
+    #if COMMUNICATION_MODE == 3
+    _mtx_comm_progression.unlock();
+    }
+    #else
+    }
+    #endif
 }
 
 void* comm_thread_action(void* arg) {
@@ -2778,7 +2793,7 @@ void* comm_thread_action(void* arg) {
         #endif
 
         // call function for communication progression
-        action_communication_progression();
+        action_communication_progression(1);
     }
 }
 #pragma endregion CommThread

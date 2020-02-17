@@ -67,20 +67,31 @@ class RequestManager {
         MPI_Request mpi_request;
     };
 
+    struct ThreadLocalRequestInfo {
+        std::vector<MPI_Request>        current_request_array;
+        std::unordered_map<int, int>    current_vecid_to_rid;
+        std::atomic<int>                current_num_finished_requests;
+
+        ThreadLocalRequestInfo() : current_request_array(0), current_num_finished_requests(0) {
+
+        }
+    };
+
     std::atomic<int> _id;
     std::atomic<int> _groupId;
     thread_safe_deque_t<int> _request_queue;
-    std::vector<MPI_Request> _current_request_array;
-    std::unordered_map<int, int> _current_vecid_to_rid;
-    std::atomic<int> _current_num_finished_requests;
-    std::unordered_map<int, RequestGroupData> _map_id_to_request_group_data;
-    std::unordered_map<int, RequestData> _map_rid_to_request_data;
-    std::unordered_map<int, std::atomic<int>> _outstanding_reqs_for_group;
+    std::vector<ThreadLocalRequestInfo*> _thread_request_info; // currently fixed 200 to avoid locking and stuff
+
+    thread_safe_unordered_map<int, RequestGroupData>    _map_id_to_request_group_data;
+    thread_safe_unordered_map<int, RequestData>         _map_rid_to_request_data;
+    thread_safe_unordered_map_atomic<int, int>          _outstanding_reqs_for_group;
 
     std::atomic<int> _num_posted_requests[5];
     std::atomic<int> _num_completed_requests[5];
     std::atomic<int> _num_posted_request_groups[5];
     std::atomic<int> _num_completed_request_groups[5];
+
+    ThreadLocalRequestInfo* get_request_info_for_thread();
 };
 
 #endif

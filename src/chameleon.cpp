@@ -50,10 +50,6 @@ thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 // variables to indicate when it is save to break out of taskwait
 std::atomic<int> _flag_dtw_active(0);
 std::atomic<int> _num_threads_finished_dtw(0);
-
-// lock used to ensure that currently only a single thread is doing communication progression
-std::mutex _mtx_comm_progression;
-
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -707,12 +703,17 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
         #if COMMUNICATION_MODE == 1
         if (_mtx_comm_progression.try_lock()) {
+        #endif /* COMMUNICATION_MODE */
             //for (int rep = 0; rep < 2; rep++) {
             // need to check whether exit condition already met
             //if (!exit_condition_met(1,0))
-            action_communication_progression();
+            #if COMMUNICATION_MODE > 0
+            action_communication_progression(0);
+            #endif /* COMMUNICATION_MODE */
             //}
+        #if COMMUNICATION_MODE == 1
             _mtx_comm_progression.unlock();
+            
         }
         #endif /* COMMUNICATION_MODE */
 

@@ -30,6 +30,9 @@ MPI_Comm chameleon_comm_mapped;
 MPI_Comm chameleon_comm_cancel;
 // communicator for load information
 MPI_Comm chameleon_comm_load;
+// communicator for activating replicated tasks
+MPI_Comm chameleon_comm_activate;
+
 
 int chameleon_comm_rank = -1;
 int chameleon_comm_size = -1;
@@ -69,6 +72,9 @@ thread_safe_task_list_t _remote_tasks_send_back;
 thread_safe_task_list_t _tasks_to_deallocate;
 // list with local replicated task entries that need initial transfer
 thread_safe_list_t<cham_t_replication_info_t*> _replication_infos_list;
+
+std::vector<int> _num_replicated_local_tasks_per_victim;
+std::unordered_set<int> _active_replication_victims;
 
 // map that maps tag ids back to local tasks that have been offloaded and expect result data
 thread_safe_task_map_t _map_offloaded_tasks_with_outputs;
@@ -153,6 +159,7 @@ void decode_send_buffer(void *buffer, int mpi_tag, int32_t *num_tasks, std::vect
 short pin_thread_to_last_core(int n_last_core);
 void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronous_mode=false);
 int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronus_mode=false);
+void add_active_replication_victim(int rank, int ntasks);
 
 static void send_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
 static void receive_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
@@ -161,6 +168,7 @@ static void send_back_handler(void* buffer, int tag, int rank, cham_migratable_t
 static void receive_back_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
 static void receive_back_trash_handler(void* buffer, int tag, int rank, cham_migratable_task_t** tasks, int num_tasks);
 inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, int mpi_source, int mpi_tag, RequestManager *request_manager_receive);
+
 
 #pragma endregion Forward Declarations
 
@@ -296,6 +304,11 @@ void cleanup_work_phase() {
     }
     _cancelled_task_ids.clear();
     _map_offloaded_tasks_with_outputs.clear();
+
+    for(int i=0; i<_num_replicated_local_tasks_per_victim.size(); i++)
+    	_num_replicated_local_tasks_per_victim[i] = 0;
+
+    _active_migrations_per_target_rank.clear();
 
 #if CHAM_REPLICATION_MODE==4
     _map_overall_tasks.clear();
@@ -738,6 +751,30 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
 #pragma endregion
 
 #pragma region Offloading / Packing
+
+
+void add_active_replication_victim(int rank, int ntasks) {
+	DBP("add_active_replication_victim - rank %d, ntasks %d\n", rank, ntasks);
+	_active_replication_victims.insert(rank);
+	_num_replicated_local_tasks_per_victim[rank]+= ntasks;
+}
+
+int32_t activate_remote_replicated_tasks(int rank, int ntasks) {
+	int cnt = 0;
+	cham_migratable_task_t *task = nullptr;
+	DBP("activate_remote_replicated_tasks - trying to activate %d tasks from rank %d\n", ntasks, rank);
+
+	while(cnt<ntasks && !_replicated_remote_tasks.empty()) {
+		task = _replicated_remote_tasks.pop_task_by_rank(rank);
+		_stolen_remote_tasks.push_back(task);
+		_num_remote_tasks_outstanding++;
+		cnt++;
+	}
+
+	DBP("activated %d tasks\n", cnt);
+	return CHAM_SUCCESS;
+}
+
 void cancel_offloaded_task(cham_migratable_task_t *task) {
     DBP("cancel_offloaded_task - canceling offloaded task, task_id: %ld on remote ranks\n", task->task_id);
 
@@ -751,7 +788,6 @@ void cancel_offloaded_task(cham_migratable_task_t *task) {
         cancel_offloaded_task_on_rank(task, rank);
       }
     }
-
 }
 
 void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
@@ -780,6 +816,13 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
                                            nullptr);
     _mtx_cancellation.unlock();
 }
+
+void activate_replicated_tasks_on_rank(int ntasks, int rank) {
+
+    DBP("activate_replicated_tasks_on_rank - sending activation message to rank %d\n", rank);
+	int ierr = MPI_Send(&ntasks, 1, MPI_INTEGER, rank, 0, chameleon_comm_activate);
+}
+
 
 int32_t offload_tasks_to_rank(cham_migratable_task_t **tasks, int32_t num_tasks, int target_rank, bool use_synchronous_mode) {
     #ifdef TRACE
@@ -1757,6 +1800,19 @@ inline void action_task_migration() {
                         // block until no active offload for rank any more
                         if(_active_migrations_per_target_rank[r] == 0) {
                             int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
+
+							#if CHAM_REPLICATION_MODE==4
+                            //DBP("action_task_migration - looking for active replication victim %d\n", r);
+                            if(_active_replication_victims.find(r)!=_active_replication_victims.end()) {
+                        	    int tasks_to_activate = std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
+                        	    if(tasks_to_activate>0) {
+                        	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
+                        	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
+                            	   _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
+								   break;
+                        	    }
+                            }
+							#endif
                            
                             if(num_tasks_to_migrate==0) continue;
  
@@ -1989,6 +2045,13 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
         DBP("action_handle_cancel_request - received cancel request for task_id %ld but could not find task\n", task_id);
         _cancelled_task_ids.insert(task_id);
     }
+}
+
+inline void action_handle_activate_request(MPI_Status *cur_status_activate) {
+	int ntasks = 0;
+	MPI_Recv(&ntasks, 1, MPI_INTEGER, cur_status_activate->MPI_SOURCE, 0, chameleon_comm_activate, MPI_STATUS_IGNORE);
+	DBP("action_handle_activate_request - I should activate %d tasks from rank %d\n", ntasks, cur_status_activate->MPI_SOURCE);
+	activate_remote_replicated_tasks(cur_status_activate->MPI_SOURCE, ntasks);
 }
 
 inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, int mpi_source, int mpi_tag, RequestManager *request_manager_receive) {
@@ -2485,7 +2548,6 @@ inline bool action_task_replication() {
 }
 
 inline void action_task_replication_send() {
-    //DBP("action_task_replication - trying to transfer replicated task, size: %d\n", _replicated_tasks_to_transfer.size());
     cham_t_replication_info_t *rep_info;
     if(!_replication_infos_list.empty())
       rep_info = _replication_infos_list.pop_front();
@@ -2493,7 +2555,9 @@ inline void action_task_replication_send() {
       return;
       
     if(rep_info->num_tasks<=0) return;
-      
+
+    DBP("action_task_replication_send - trying to transfer replicated task, size: %d\n", _replication_infos_list.size());
+
     cham_migratable_task_t *cur_task = _local_tasks.pop_front();
 
     if(cur_task) {
@@ -2503,6 +2567,7 @@ inline void action_task_replication_send() {
       cur_task->is_migrated_task = 0;
       for(int i=0; i<rep_info->num_replication_ranks; i++) {
         cur_task->replication_ranks.push_back(rep_info->replication_ranks[i]);
+        add_active_replication_victim(rep_info->replication_ranks[i], 1);
         offload_tasks_to_rank(cur_task_list, 1, rep_info->replication_ranks[i], true);
       }
       rep_info->num_tasks--;
@@ -2519,6 +2584,9 @@ void action_communication_progression() {
     _mtx_cancellation.lock();
     request_manager_cancel.progressRequests();
     _mtx_cancellation.unlock();
+    #endif
+    #if CHAM_REPLICATION_MODE==4
+    // Todo: progress requests for activation of replicated tasks
     #endif
     #ifdef TRACE
     VT_BEGIN_CONSTRAINED(event_progress_send);
@@ -2674,6 +2742,9 @@ void action_communication_progression() {
     MPI_Status cur_status_receiveBack;
     int flag_open_request_receiveBack = 0;
 
+    MPI_Status cur_status_activate;
+    int flag_open_request_activate = 0;
+
     #if ENABLE_TASK_MIGRATION
     #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
     cur_time = omp_get_wtime();
@@ -2691,6 +2762,14 @@ void action_communication_progression() {
         action_handle_cancel_request(&cur_status_cancel);
     }
     #endif
+
+    #if CHAM_REPLICATION_MODE==4
+    MPI_Iprobe(MPI_ANY_SOURCE, 0, chameleon_comm_activate, &flag_open_request_activate, &cur_status_activate);
+    if( flag_open_request_activate ) {
+    	action_handle_activate_request(&cur_status_activate);
+    }
+    #endif
+
     #endif /* ENABLE_TASK_MIGRATION */
 
     if ( flag_open_request_receive ) {

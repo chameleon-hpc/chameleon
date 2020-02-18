@@ -1276,7 +1276,7 @@ inline int32_t process_replicated_local_task() {
         double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3
+#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 ||  CHAM_REPLICATION_MODE==4
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif

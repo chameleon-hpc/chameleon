@@ -766,8 +766,8 @@ int32_t activate_remote_replicated_tasks(int rank, int ntasks) {
 
 	while(cnt<ntasks && !_replicated_remote_tasks.empty()) {
 		task = _replicated_remote_tasks.pop_task_by_rank(rank);
+               	_num_remote_tasks_outstanding++;
 		_stolen_remote_tasks.push_back(task);
-		_num_remote_tasks_outstanding++;
 		cnt++;
 	}
 
@@ -1797,22 +1797,25 @@ inline void action_task_migration() {
             } else {
                 for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
+                        DBP("action_task_migratino, active migrations for %d = %d\n", _active_migrations_per_target_rank[r]);
                         // block until no active offload for rank any more
-                        if(_active_migrations_per_target_rank[r] == 0) {
-                            int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
 
-							#if CHAM_REPLICATION_MODE==4
-                            //DBP("action_task_migration - looking for active replication victim %d\n", r);
+                        int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
+
+							          #if CHAM_REPLICATION_MODE==4
+                            DBP("action_task_migration - looking for active replication victim %d\n", r);
                             if(_active_replication_victims.find(r)!=_active_replication_victims.end()) {
                         	    int tasks_to_activate = std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
                         	    if(tasks_to_activate>0) {
                         	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
                         	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
                             	   _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
-								   break;
+								                 break;
                         	    }
                             }
-							#endif
+                            continue;
+							          #endif
+                        if(_active_migrations_per_target_rank[r] == 0) {
                            
                             if(num_tasks_to_migrate==0) continue;
  
@@ -2024,6 +2027,17 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
     DBP("action_handle_cancel_request - received cancel request for task id %d\n", task_id);
 
     cham_migratable_task_t *res = _replicated_remote_tasks.pop_task_by_id(task_id);
+
+    bool is_active = true;
+#if CHAM_REPLICATION_MODE==4
+    is_active = false;
+#endif
+
+    if(!res) {
+      res = _stolen_remote_tasks.pop_task_by_id(task_id);
+      is_active = true;
+    }
+
     if(res) {
       DBP("action_handle_cancel_request - cancelling task with task_id %ld\n", task_id);
       _map_tag_to_remote_task.find_and_erase(task_id);
@@ -2031,9 +2045,12 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
         // we haven't processed this task yet so we can safely delete this task
         _map_overall_tasks.erase(task_id);
 
-        _num_replicated_remote_tasks_outstanding--;
+#if CHAM_REPLICATION_MODE!=4
+        _num_replicated_remote_tasks_outstanding--; assert(_num_replicated_remote_tasks_outstanding>=0);
+#endif
         // decrement load counter and ignore send back
-        _num_remote_tasks_outstanding--;
+        if(is_active)
+          _num_remote_tasks_outstanding--; assert(_num_remote_tasks_outstanding>=0);
         DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld new %d\n", task_id, _num_remote_tasks_outstanding.load());
 
         free_migratable_task(res);

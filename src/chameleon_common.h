@@ -102,8 +102,8 @@
 //#define CHAM_REPLICATION_MODE 0 //no replication
 //#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
 //#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
-//#define CHAM_REPLICATION_MODE 3 //mode 2 + migrated tasks will be kept locally as replicated tasks
-#define CHAM_REPLICATION_MODE 4
+#define CHAM_REPLICATION_MODE 3 //mode 2 + migrated tasks will be kept locally as replicated tasks
+//#define CHAM_REPLICATION_MODE 4
 #endif
 
 //Specify whether tasks should be offloaded aggressively after one performance update
@@ -573,6 +573,28 @@ class thread_safe_task_list_t {
         this->m.lock();
         if(!this->empty()) {
             ret_val = this->task_list.front();
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+
+    cham_migratable_task_t* pop_task_by_rank(int rank) {
+    	if(this->empty())
+    		return nullptr;
+
+    	cham_migratable_task_t* ret_val = nullptr;
+        this->m.lock();
+        if(!this->empty()) {
+            for (std::list<cham_migratable_task_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it) {
+                if((*it)->source_mpi_rank==rank)
+                {
+                    this->list_size--;
+                    this->dup_list_size--;
+                    ret_val = *it;
+                    this->task_list.remove(ret_val);
+                    break;
+                }
+            }
         }
         this->m.unlock();
         return ret_val;

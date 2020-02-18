@@ -92,7 +92,7 @@ extern "C" {
 
 #pragma region Forward Declarations
 // ================================================================================
-// Forward declartion of internal functions (just called inside shared library)
+// Forward declaration of internal functions (just called inside shared library)
 // ================================================================================
 int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
@@ -327,6 +327,8 @@ int32_t chameleon_init() {
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_load");
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_cancel);
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_cancel");
+    err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_activate);
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_activate");
 
     MPI_Errhandler_set(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
     MPI_Errhandler_set(chameleon_comm, MPI_ERRORS_RETURN);
@@ -359,6 +361,8 @@ int32_t chameleon_init() {
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_init();
 #endif
+
+    _num_replicated_local_tasks_per_victim.resize(chameleon_comm_size);
 
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
     _active_migrations_per_target_rank.resize(chameleon_comm_size);
@@ -1145,7 +1149,7 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
 }
 
 int32_t execute_target_task(cham_migratable_task_t *task) {
-    DBP("execute_target_task (enter) - task_entry (task_id=%ld): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
+    DBP("execute_target_task (enter) - task_entry (task_id=%ld): " DPxMOD ", is_migrated: %d, is_replicated: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->is_migrated_task, task->is_replicated_task);
     int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
     ffi_cif cif;
@@ -1346,10 +1350,10 @@ inline int32_t process_replicated_remote_task() {
         double cur_time = omp_get_wtime();
 #endif 
 
-#if CHAM_REPLICATION_MODE==2
+//#if CHAM_REPLICATION_MODE==2
         //cancel task on remote ranks
-        cancel_offloaded_task(replicated_task);
-#endif
+//        cancel_offloaded_task(replicated_task);
+//#endif
 
         int32_t res = execute_target_task(replicated_task);
         if(res != CHAM_SUCCESS)
@@ -1402,7 +1406,20 @@ inline int32_t process_remote_task() {
     static const std::string event_process_remote_name = "process_remote";
     if( event_process_remote == -1) 
         int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
-    VT_BEGIN_CONSTRAINED(event_process_remote);
+
+    static int event_process_replicated_remote_hp = -1;
+    static const std::string event_process_replicated_hp_name = "process_replicated_remote_highprio";
+    if( event_process_replicated_remote_hp == -1)
+        int ierr = VT_funcdef(event_process_replicated_hp_name.c_str(), VT_NOCLASS, &event_process_replicated_remote_hp);
+
+    if(!task->is_migrated_task) {
+        VT_BEGIN_CONSTRAINED(event_process_replicated_remote_hp);
+    }
+    else {
+        VT_BEGIN_CONSTRAINED(event_process_remote);
+    }
+
+    int is_migrated= task->is_migrated_task;
 #endif
 
     // execute region now
@@ -1436,7 +1453,12 @@ inline int32_t process_remote_task() {
     _num_executed_tasks_stolen++;
 #endif
 #ifdef TRACE
-    VT_END_W_CONSTRAINED(event_process_remote);
+    if(is_migrated) {
+        VT_END_W_CONSTRAINED(event_process_replicated_remote_hp);
+    }
+    else {
+        VT_END_W_CONSTRAINED(event_process_remote);
+    }
 #endif
     return CHAM_REMOTE_TASK_SUCCESS;
 }
@@ -1489,6 +1511,7 @@ inline int32_t process_local_task() {
     free_migratable_task(task, false);
     return CHAM_LOCAL_TASK_SUCCESS;
 }
+
 #pragma endregion Fcns for Lookups and Execution
 
 #ifdef __cplusplus

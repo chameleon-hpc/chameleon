@@ -1813,7 +1813,7 @@ inline void action_task_migration() {
 								                 break;
                         	    }
                             }
-                            continue;
+                            //continue;
 							          #endif
                         if(_active_migrations_per_target_rank[r] == 0) {
                            

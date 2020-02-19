@@ -1775,8 +1775,8 @@ inline void action_task_migration() {
                         cham_migratable_task_t **cur_tasks = (cham_migratable_task_t**) malloc(num_tasks*sizeof(cham_migratable_task_t*));
                         for(int i=0; i <num_tasks; i++) {
                           cur_tasks[i]= map_task_vec[r_id][i];
-                          #if CHAM_REPLICATION_MODE >= 3
                           cur_tasks[i]->is_migrated_task = 1;
+                          #if CHAM_REPLICATION_MODE >= 3
                           cur_tasks[i]->is_replicated_task = 1;
                           cur_tasks[i]->replication_ranks.push_back(r_id);
                           #endif  /* CHAM_REPLICATION_MODE */
@@ -1826,8 +1826,8 @@ inline void action_task_migration() {
                                 cham_migratable_task_t *task = _local_tasks.pop_front();
                                 if(task) {
                                     cur_tasks[num_tasks] = task;
-                                    #if CHAM_REPLICATION_MODE >= 3
                                     cur_tasks[num_tasks]->is_migrated_task = 1;
+                                    #if CHAM_REPLICATION_MODE >= 3
                                     cur_tasks[num_tasks]->is_replicated_task = 1;
                                     cur_tasks[num_tasks]->replication_ranks.push_back(r);
                                     #endif  /* CHAM_REPLICATION_MODE */                             

@@ -1276,7 +1276,7 @@ inline int32_t process_replicated_local_task() {
         double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 ||  CHAM_REPLICATION_MODE==4
+#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 // ||  CHAM_REPLICATION_MODE==4
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif
@@ -1290,9 +1290,10 @@ inline int32_t process_replicated_local_task() {
         _time_task_execution_replicated_count++;
 #endif
 
-        if(!replicated_task->is_migrated_task)
-          _num_replicated_local_tasks_outstanding_compute--;
-
+        if(!replicated_task->is_migrated_task) {
+          int tmp = _num_replicated_local_tasks_outstanding_compute-1;
+          _num_replicated_local_tasks_outstanding_compute = std::max(0, tmp);
+        }
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated_local++;
 #endif

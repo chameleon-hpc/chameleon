@@ -298,6 +298,14 @@ int32_t put_comm_threads_to_sleep() {
 }
 
 void cleanup_work_phase() {
+#if CHAM_REPLICATION_MODE==4
+	while(!_replicated_remote_tasks.empty()) {
+		cham_migratable_task_t *task = _replicated_remote_tasks.pop_back();
+		free_migratable_task(task);
+	}
+
+#endif
+
     while(!_tasks_to_deallocate.empty()) {
         cham_migratable_task_t *task = _tasks_to_deallocate.pop_back();
         free_migratable_task(task);
@@ -310,6 +318,7 @@ void cleanup_work_phase() {
 
     _active_migrations_per_target_rank.clear();
 
+    _num_replicated_local_tasks_outstanding_compute = 0;
 #if CHAM_REPLICATION_MODE==4
     _map_overall_tasks.clear();
 #endif
@@ -766,7 +775,7 @@ int32_t activate_remote_replicated_tasks(int rank, int ntasks) {
 
 	while(cnt<ntasks && !_replicated_remote_tasks.empty()) {
 		task = _replicated_remote_tasks.pop_task_by_rank(rank);
-               	_num_remote_tasks_outstanding++;
+       	_num_remote_tasks_outstanding++;
 		_stolen_remote_tasks.push_back(task);
 		cnt++;
 	}
@@ -821,6 +830,8 @@ void activate_replicated_tasks_on_rank(int ntasks, int rank) {
 
     DBP("activate_replicated_tasks_on_rank - sending activation message to rank %d\n", rank);
 	int ierr = MPI_Send(&ntasks, 1, MPI_INTEGER, rank, 0, chameleon_comm_activate);
+	int tmp = _num_replicated_local_tasks_outstanding_compute - ntasks;
+	_num_replicated_local_tasks_outstanding_compute = std::max(tmp, 0);
 }
 
 
@@ -1666,7 +1677,7 @@ inline void action_task_migration() {
     if(_comm_thread_load_exchange_happend && _session_data.offload_triggered.load() == 0) {
     #else
     // also only proceed if offloading not already performed.. wait for new load exchange
-    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && _session_data.offload_triggered.load() == 0) {
+    if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() + _replicated_local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && _session_data.offload_triggered.load() == 0) {
     #endif
 
         // Strategies for speculative load exchange
@@ -1797,15 +1808,18 @@ inline void action_task_migration() {
             } else {
                 for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
-                        DBP("action_task_migratino, active migrations for %d = %d\n", _active_migrations_per_target_rank[r]);
-                        // block until no active offload for rank any more
+
+                    	if(_active_migrations_per_target_rank[r] == 0) {
+
+                                                // block until no active offload for rank any more
 
                         int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
+                     	DBP("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
 
 							          #if CHAM_REPLICATION_MODE==4
                             DBP("action_task_migration - looking for active replication victim %d\n", r);
                             if(_active_replication_victims.find(r)!=_active_replication_victims.end()) {
-                        	    int tasks_to_activate = std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
+                        	    int tasks_to_activate =  std::min(1,std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate));  // std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
                         	    if(tasks_to_activate>0) {
                         	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
                         	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
@@ -1815,8 +1829,7 @@ inline void action_task_migration() {
                             }
                             //continue;
 							          #endif
-                        if(_active_migrations_per_target_rank[r] == 0) {
-                           
+
                             if(num_tasks_to_migrate==0) continue;
  
                             int num_tasks = 0;
@@ -2571,6 +2584,13 @@ inline void action_task_replication_send() {
     else
       return;
       
+    if(rep_info->num_tasks && _active_migrations_per_target_rank[rep_info->replication_ranks[0]]>0) {
+    	_replication_infos_list.push_back(rep_info);
+    	return;
+    }
+
+
+    //Todo: don't replicate if any target has active migrations
     if(rep_info->num_tasks<=0) return;
 
     DBP("action_task_replication_send - trying to transfer replicated task, size: %d\n", _replication_infos_list.size());

@@ -1823,8 +1823,9 @@ inline void action_task_migration() {
                         	    if(tasks_to_activate>0) {
                         	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
                         	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
-                            	   _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
-								                 break;
+                            	       _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
+				       _session_data.offload_triggered = 1;
+                                       break;
                         	    }
                             }
                             //continue;

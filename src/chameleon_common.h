@@ -39,8 +39,8 @@
 #ifndef COMMUNICATION_MODE
 #define COMMUNICATION_MODE 0 // communication performed by communication thread (default)
 //#define COMMUNICATION_MODE 1 // communication performed only by threads inside distributed taskwait. Only a single thread active at once.
-//#define COMMUNICATION_MODE 3 // communication performed only by threads inside distributed taskwait. All can do progress. What kind of progress? all? only progress requests?
-//#define COMMUNICATION_MODE 2 // Hybrid. Which parts should be done by comm thread which should be done by threads?
+//#define COMMUNICATION_MODE 2 // communication performed only by threads inside distributed taskwait. All can do progress. What kind of progress? all? only progress requests?
+//#define COMMUNICATION_MODE 3 // Hybrid. Which parts should be done by comm thread which should be done by threads?
 #endif
 
 // flag whether communication thread will be launched or not
@@ -53,7 +53,7 @@
 #define ENABLE_TASK_MIGRATION 1
 #endif
 
-#if COMMUNICATION_MODE == 1 || COMMUNICATION_MODE == 3
+#if COMMUNICATION_MODE == 1 || COMMUNICATION_MODE == 2
 #undef ENABLE_COMM_THREAD
 #define ENABLE_COMM_THREAD 0
 #endif

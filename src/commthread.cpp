@@ -2526,7 +2526,7 @@ void action_communication_progression(int comm_thread) {
 
     int request_gather_avail = 0;
     // avoid overwriting request and keep it up to date
-    #if COMMUNICATION_MODE == 3
+    #if COMMUNICATION_MODE == 2
     if (_mtx_comm_progression.try_lock()) {
     #else
     if(comm_thread) {  // only execute that code if called from communication thread
@@ -2719,7 +2719,7 @@ void action_communication_progression(int comm_thread) {
         }
     }
     #endif
-    #if COMMUNICATION_MODE == 3
+    #if COMMUNICATION_MODE == 2
     _mtx_comm_progression.unlock();
     }
     #else

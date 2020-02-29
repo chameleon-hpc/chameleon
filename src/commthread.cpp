@@ -2528,7 +2528,7 @@ void action_communication_progression(int comm_thread) {
     // avoid overwriting request and keep it up to date
     #if COMMUNICATION_MODE == 2
     if (_mtx_comm_progression.try_lock()) {
-    #else
+    #elif COMMUNICATION_MODE != 1
     if(comm_thread) {  // only execute that code if called from communication thread
     #endif /* COMMUNICATION_MODE */
 
@@ -2603,6 +2603,9 @@ void action_communication_progression(int comm_thread) {
             cleanup_work_phase();
 
             DBP("action_communication_progression - thread went to sleep again due to exit condition\n");
+            #if COMMUNICATION_MODE == 2
+            _mtx_comm_progression.unlock();
+            #endif
             return;
         }
         // else if(!request_gather_created) {
@@ -2722,7 +2725,7 @@ void action_communication_progression(int comm_thread) {
     #if COMMUNICATION_MODE == 2
     _mtx_comm_progression.unlock();
     }
-    #else
+    #elif COMMUNICATION_MODE != 1
     }
     #endif
 }

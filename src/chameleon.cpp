@@ -581,7 +581,7 @@ void dtw_startup() {
     // need to set flags to ensure that exit condition is working with deactivated comm thread and migration
     _comm_thread_load_exchange_happend  = 1; 
     _num_ranks_not_completely_idle      = 0;
-    #endif /* ENABLE_COMM_THREAD */
+    #endif /* ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION */
 
     _flag_dtw_active = 1;
     _mtx_taskwait.unlock();
@@ -837,7 +837,6 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - all threads entered the taskwait function (on all processes) and are idling
 
         if(_num_threads_idle >= num_threads_in_tw) {
-            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
             if(exit_condition_met(1,0)) {
                 // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;

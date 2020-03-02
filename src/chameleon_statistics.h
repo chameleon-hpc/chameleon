@@ -47,6 +47,8 @@ extern std::atomic<int>     _num_executed_tasks_replicated_remote;
 extern std::atomic<int>     _num_executed_tasks_replicated_local;
 extern std::atomic<int>     _num_tasks_offloaded;
 extern std::atomic<int>     _num_tasks_canceled;
+extern std::atomic<int>     _num_tasks_replicated;
+extern std::atomic<int>     _num_tasks_activated;
 extern std::atomic<int>     _num_migration_decision_performed;
 extern std::atomic<int>     _num_migration_done;
 extern std::atomic<int>     _num_load_exchanges_performed;

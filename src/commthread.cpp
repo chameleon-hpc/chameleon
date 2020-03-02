@@ -520,7 +520,8 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
 #else // CHAM_REPLICATION_MODE==4
         if(p_tasks[i_task]->is_migrated_task) {
             DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
-        	_num_remote_tasks_outstanding++;
+           _num_remote_tasks_outstanding++;
+           _session_data.is_migration_victim = true;
         }
 #endif
     }
@@ -769,7 +770,7 @@ void add_active_replication_victim(int rank, int ntasks) {
 }
 
 int32_t activate_remote_replicated_tasks(int rank, int ntasks) {
-	int cnt = 0;
+        int cnt = 0;
 	cham_migratable_task_t *task = nullptr;
 	DBP("activate_remote_replicated_tasks - trying to activate %d tasks from rank %d\n", ntasks, rank);
 
@@ -880,10 +881,15 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     for(int i = 0; i < num_tasks; i++) {
       if(!tasks[i]->is_replicated_task) {
     	DBP("offloading_action - offloading migrated task\n"); assert(tasks[i]->is_migrated_task);
+    	//printf("offloading_action - offloading migrated task to %d\n", tasks[i]->target_mpi_rank); assert(tasks[i]->is_migrated_task);
         tasks[i]->target_mpi_rank = target_rank;
       }
       else {
     	  DBP("offload_action - offloading replicated task\n");
+          #if CHAM_STATS_RECORD
+          _num_tasks_replicated += 1;
+          #endif
+    	  //printf("offload_action - offloading replicated task to %d, is_migrated %d\n", target_rank, tasks[i]->is_migrated_task);
     	  _num_replicated_local_tasks_outstanding_sends += tasks[i]->replication_ranks.size();
     	  tasks[i]->num_outstanding_replication_sends = tasks[i]->replication_ranks.size();
     	  if(!tasks[i]->is_migrated_task)
@@ -1809,27 +1815,40 @@ inline void action_task_migration() {
                 for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
 
+                //     	 printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], _session_data.tasks_to_offload[r]);
                     	if(_active_migrations_per_target_rank[r] == 0) {
 
-                                                // block until no active offload for rank any more
+                            // block until no active offload for rank any more
+                            int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
+                            if(num_tasks_to_migrate)
+                     	      printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d load rank 0: %d load rank 1: %d\n", r, _active_migrations_per_target_rank[r], num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
+                     	    //DBP("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
 
-                        int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
-                     	DBP("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
-
-							          #if CHAM_REPLICATION_MODE==4
+			    #if CHAM_REPLICATION_MODE==4
                             DBP("action_task_migration - looking for active replication victim %d\n", r);
                             if(_active_replication_victims.find(r)!=_active_replication_victims.end()) {
-                        	    int tasks_to_activate =  std::min(1,std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate));  // std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
+                        	    int tasks_to_activate =  std::min( (int) MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE.load(),std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate));  // std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
+            //            	    tasks_to_activate = 0;
+                                    //int tasks_to_activate =  std::min( (int) MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE.load(),std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate));  // std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
                         	    if(tasks_to_activate>0) {
+                     	               printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d, num_tasks_to_activate = %d load rank 0: %d load rank 1: %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate, tasks_to_activate, _load_info_ranks[0], _load_info_ranks[1]);
                         	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
                         	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
                             	       _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
-				       _session_data.offload_triggered = 1;
-                                       break;
+                            	       #if (CHAM_STATS_RECORD)  
+                                       _num_tasks_activated += tasks_to_activate;
+				       #endif
+                                       _session_data.offload_triggered = 1;
+                                       num_tasks_to_migrate -= tasks_to_activate; //continue with task migration if it makes sense
+                                       num_tasks_to_migrate = std::max(0, num_tasks_to_migrate);
+                                     //  break;
                         	    }
                             }
                             //continue;
-							          #endif
+			    #endif
+                     	    //        printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
+                     	    if(num_tasks_to_migrate)
+                                       printf("action_task_migration, rank %d , num_to_migrate = %d, load rank 0 = %d, load rank 1 =%d\n", r, num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
 
                             if(num_tasks_to_migrate==0) continue;
  
@@ -2547,6 +2566,8 @@ inline void action_handle_recv_request(MPI_Status *cur_status_receive, RequestMa
 }
 
 inline bool action_task_replication() {
+    //if (chameleon_comm_rank == 1) return false;
+
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION ) {
     	DBP("action_task_replication - selecting tasks to replicate\n");
         //clean up replication infos from previous distributed taskwait
@@ -2578,7 +2599,10 @@ inline bool action_task_replication() {
     return false;
 }
 
-inline void action_task_replication_send() {
+inline void action_task_replication_send() {   
+
+  if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() + _replicated_local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION && _session_data.offload_triggered.load() == 0) {
+
     cham_t_replication_info_t *rep_info;
     if(!_replication_infos_list.empty())
       rep_info = _replication_infos_list.pop_front();
@@ -2589,12 +2613,17 @@ inline void action_task_replication_send() {
     	_replication_infos_list.push_back(rep_info);
     	return;
     }
+   
 
+    //if(request_manager_receive.getNumberOfOutstandingRequests()>0) 
+    //    return;
 
     //Todo: don't replicate if any target has active migrations
     if(rep_info->num_tasks<=0) return;
 
+
     DBP("action_task_replication_send - trying to transfer replicated task, size: %d\n", _replication_infos_list.size());
+    //printf("action_task_replication_send - trying to transfer replicated task to rank %d, size: %d\n", rep_info->replication_ranks[0], _replication_infos_list.size());
 
     cham_migratable_task_t *cur_task = _local_tasks.pop_front();
 
@@ -2614,6 +2643,8 @@ inline void action_task_replication_send() {
     //round-robin through replication infos if we still need to replicate tasks
     if(rep_info->num_tasks)
     	_replication_infos_list.push_back(rep_info);
+ 
+  }
 }
 
 void action_communication_progression() {
@@ -2752,7 +2783,7 @@ void action_communication_progression() {
     #endif
 
     #if CHAM_REPLICATION_MODE>0
-    if(_session_data.has_replicated && !_session_data.offload_triggered)
+    if(_session_data.has_replicated && !_session_data.offload_triggered && !_session_data.is_migration_victim )
         action_task_replication_send();
     #endif
 
@@ -2900,6 +2931,7 @@ void* comm_thread_action(void* arg) {
             _session_data.flag_thread_sleeping_set = 0;
             tag_counter_send_tasks = 0;
             _session_data.has_replicated = false;
+            _session_data.is_migration_victim = false;
             assert(_remote_tasks_send_back.empty());
             assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
             _cancelled_task_ids.clear();

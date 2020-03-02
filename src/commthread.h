@@ -110,6 +110,7 @@ class chameleon_comm_thread_session_data_t {
     std::atomic<double> time_last_load_exchange;
     std::atomic<double> time_gather_posted;
     std::atomic<bool> has_replicated;
+    std::atomic<bool> is_migration_victim;
 
     #if CHAM_STATS_RECORD
     std::atomic<double> time_start_comm;

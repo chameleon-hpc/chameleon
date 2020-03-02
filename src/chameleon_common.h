@@ -725,6 +725,7 @@ extern std::atomic<char*> CHAMELEON_STATS_FILE_PREFIX;
 // general settings for migration
 extern std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION;
 extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
+extern std::atomic<double> MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE;
 extern std::atomic<int> TAG_NBITS_TASK_ID;
 extern std::atomic<int> TAG_MAX_TASK_ID;
 
@@ -857,6 +858,12 @@ static void load_config_values() {
     }
 
     tmp = nullptr;
+    tmp = std::getenv("MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE");
+    if(tmp) {
+        MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE = std::atof(tmp);
+    }
+    
+    tmp = nullptr;
     tmp = std::getenv("PERCENTAGE_DIFF_TASKS_TO_MIGRATE");
     if(tmp) {
         PERCENTAGE_DIFF_TASKS_TO_MIGRATE = std::atof(tmp);
@@ -907,6 +914,7 @@ static void print_config_values() {
     RELP("TAG_NBITS_TASK_ID=%d\n", TAG_NBITS_TASK_ID.load());
     RELP("MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION=%f\n", MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION.load());
     RELP("MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE.load());
+    RELP("MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE=%f\n", MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE.load());
     RELP("PERCENTAGE_DIFF_TASKS_TO_MIGRATE=%f\n", PERCENTAGE_DIFF_TASKS_TO_MIGRATE.load());
     RELP("ENABLE_TRACE_FROM_SYNC_CYCLE=%d\n", ENABLE_TRACE_FROM_SYNC_CYCLE.load());
     RELP("ENABLE_TRACE_TO_SYNC_CYCLE=%d\n", ENABLE_TRACE_TO_SYNC_CYCLE.load());

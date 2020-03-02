@@ -25,6 +25,7 @@ std::atomic<char*> CHAMELEON_STATS_FILE_PREFIX(nullptr);
 // general settings for migration
 std::atomic<double> MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION(2);
 std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE(1);
+std::atomic<double> MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE(1);
 std::atomic<int> TAG_NBITS_TASK_ID(16);
 std::atomic<int> TAG_MAX_TASK_ID(65535);
 

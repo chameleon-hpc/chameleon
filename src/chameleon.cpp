@@ -1402,6 +1402,7 @@ inline int32_t process_remote_task() {
     if(!task)
         return CHAM_REMOTE_TASK_NONE;
 
+    int is_migrated= task->is_migrated_task;
 #ifdef TRACE
     static int event_process_remote = -1;
     static const std::string event_process_remote_name = "process_remote";
@@ -1419,8 +1420,6 @@ inline int32_t process_remote_task() {
     else {
         VT_BEGIN_CONSTRAINED(event_process_remote);
     }
-
-    int is_migrated= task->is_migrated_task;
 #endif
 
     // execute region now
@@ -1432,8 +1431,14 @@ inline int32_t process_remote_task() {
         handle_error_en(1, "execute_target_task - remote");
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
-    _time_task_execution_stolen_count++;
+    if(is_migrated) {
+      atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
+      _time_task_execution_stolen_count++;
+    }
+    else {
+      atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+      _time_task_execution_replicated_count++;
+    }
 #endif
  
     _map_tag_to_remote_task.erase(task->task_id);
@@ -1451,7 +1456,10 @@ inline int32_t process_remote_task() {
     }
 
 #if CHAM_STATS_RECORD
-    _num_executed_tasks_stolen++;
+    if(is_migrated)
+      _num_executed_tasks_stolen++;
+    else
+    	_num_executed_tasks_replicated_remote++;
 #endif
 #ifdef TRACE
     if(is_migrated) {

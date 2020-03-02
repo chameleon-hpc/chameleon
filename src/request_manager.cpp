@@ -8,7 +8,7 @@
 #define MAX_REQUESTS 10000000
 
 RequestManager::RequestManager()
- : _id(0), _groupId(0), _thread_request_info(200) {
+ : _id(0), _groupId(0), _thread_request_info(200*8) {
  
   _num_threads_in_dtw = -1;
   std::fill(&_num_posted_requests[0], &_num_posted_requests[5], 0);
@@ -146,11 +146,13 @@ void RequestManager::progressRequests() {
   // calc number of requests to get from queue
   #if COMMUNICATION_MODE == 0
   int num_req_grab = MAX_REQUESTS;
-  #else
+  #elif COMMUNICATION_MODE == 1 || COMMUNICATION_MODE == 2
   int num_req_grab = (_request_queue.size() / _num_threads_in_dtw) + 1;
+  #else // COMMUNICATION_MODE == 3 or 4
+  int num_req_grab = (_request_queue.size() / (_num_threads_in_dtw+1)) + 1;
+  #endif
   // try to grab min 2 requests for making progress
   if (num_req_grab < 2) num_req_grab = 2;
-  #endif
 
   if(req_info->current_request_array.size()==0) {
     for(int i=0; i<num_req_grab && !_request_queue.empty(); i++) {
@@ -280,10 +282,10 @@ int RequestManager::getNumberOfOutstandingRequests() {
 }
 
 inline RequestManager::ThreadLocalRequestInfo* RequestManager::get_request_info_for_thread() {
-  RequestManager::ThreadLocalRequestInfo* val = _thread_request_info[__ch_get_gtid()];
+  RequestManager::ThreadLocalRequestInfo* val = _thread_request_info[__ch_get_gtid()*8]; // padding to avoid false sharing
   if(!val) {
     val = new RequestManager::ThreadLocalRequestInfo();
-    _thread_request_info[__ch_get_gtid()] = val;
+    _thread_request_info[__ch_get_gtid()*8] = val;
   }
   return val;
 }

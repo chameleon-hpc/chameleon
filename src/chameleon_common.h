@@ -38,9 +38,10 @@
 // flag which communication should be applied (load exchange & migration)
 #ifndef COMMUNICATION_MODE
 #define COMMUNICATION_MODE 0 // communication performed by communication thread (default)
-//#define COMMUNICATION_MODE 1 // communication performed only by threads inside distributed taskwait. Only a single thread active at once.
-//#define COMMUNICATION_MODE 2 // communication performed only by threads inside distributed taskwait. All can do progress. What kind of progress? all? only progress requests?
-//#define COMMUNICATION_MODE 3 // Hybrid. Which parts should be done by comm thread which should be done by threads?
+//#define COMMUNICATION_MODE 1 // communication performed only by threads inside distributed taskwait. Only a single thread active at a time.
+//#define COMMUNICATION_MODE 2 // communication performed only by threads inside distributed taskwait. All can do progress in parallel. Only one can do load exchange and migration decision at a time.
+//#define COMMUNICATION_MODE 3 // Hybrid mode. All can do progress. Only comm thread responsible for load exchange and migration decision. comm thread pinned.
+//#define COMMUNICATION_MODE 4 // Hybrid mode. All can do progress. Only comm thread responsible for load exchange and migration decision. comm thread not pinned.
 #endif
 
 // flag whether communication thread will be launched or not

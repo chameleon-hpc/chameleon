@@ -2731,7 +2731,9 @@ void action_communication_progression(int comm_thread) {
 }
 
 void* comm_thread_action(void* arg) {
+    #if COMMUNICATION_MODE != 4
     pin_thread_to_last_core(1);
+    #endif
     // trigger signal to tell that thread is running now
     pthread_mutex_lock( &_th_service_actions_mutex );
     _th_service_actions_created = 1;

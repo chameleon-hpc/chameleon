@@ -34,7 +34,11 @@ static const char* RequestType_values[] = {
 class RequestManager {
   public:
 
+    #if COMMUNICATION_MODE==0
+    int _num_threads_in_dtw; // ne need for atomic here
+    #else
     std::atomic<int> _num_threads_in_dtw;
+    #endif
     RequestManager();
     void submitRequests( double startStamp, int tag, int rank, int n_requests, 
                          MPI_Request *requests,

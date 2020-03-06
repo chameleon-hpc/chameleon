@@ -155,13 +155,19 @@ void RequestManager::progressRequests() {
   if (num_req_grab < 2) num_req_grab = 2;
 
   if(req_info->current_request_array.size()==0) {
+    int count_req_idx = 0;
     for(int i=0; i<num_req_grab && !_request_queue.empty(); i++) {
       bool succ = true;
       int rid = _request_queue.pop_front_b(&succ);
       if(succ) {
         MPI_Request request = _map_rid_to_request_data.get(rid).mpi_request;
+        // get request type
+        // int cur_gid = _map_rid_to_request_data.get(rid).gid;
+        // RequestType cur_type = _map_id_to_request_group_data.get(cur_gid).type;
+        // DBP("Grabbing request %d with type %s\n", rid, RequestType_values[cur_type]);
         req_info->current_request_array.push_back(request);  
-        req_info->current_vecid_to_rid.insert(std::make_pair(i, rid));
+        req_info->current_vecid_to_rid.insert(std::make_pair(count_req_idx, rid));
+        count_req_idx++;
       }
     }
   }

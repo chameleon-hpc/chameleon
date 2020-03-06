@@ -357,7 +357,6 @@ int32_t chameleon_init() {
 #endif
 
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
-    _active_migrations_per_target_rank.resize(chameleon_comm_size);
     _load_info_ranks.resize(chameleon_comm_size);
     for(int i = 0; i < chameleon_comm_size; i++) {
         _outstanding_jobs_ranks[i] = 0;

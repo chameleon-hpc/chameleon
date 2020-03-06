@@ -117,7 +117,7 @@ std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
 // number of active migrations per target rank
 // desired: should block new migration to target as long as there are still active migrations ongoing
-std::vector<int> _active_migrations_per_target_rank;
+std::atomic<int> _active_migrations_per_target_rank[1000];
 
 pthread_t           _th_service_actions;
 std::atomic<int>    _th_service_actions_created(0);
@@ -1741,7 +1741,7 @@ inline void action_task_migration() {
                 for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
                         // block until no active offload for rank any more
-                        if(_active_migrations_per_target_rank[r] == 0) {
+                        if(_active_migrations_per_target_rank[r].load() == 0) {
                             int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
                            
                             if(num_tasks_to_migrate==0) continue;

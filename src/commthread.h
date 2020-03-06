@@ -85,7 +85,7 @@ extern std::atomic<int> _num_ranks_not_completely_idle;
 
 // number of active migrations per target rank
 // desired: should block new migration to target as long as there are still active migrations ongoing
-extern std::vector<int> _active_migrations_per_target_rank;
+extern std::atomic<int> _active_migrations_per_target_rank[];
 
 extern std::atomic<bool> _trace_events_initialized;
 extern int event_receive_tasks;

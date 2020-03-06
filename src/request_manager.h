@@ -34,7 +34,7 @@ static const char* RequestType_values[] = {
 class RequestManager {
   public:
 
-    int _num_threads_in_dtw;
+    std::atomic<int> _num_threads_in_dtw;
     RequestManager();
     void submitRequests( double startStamp, int tag, int rank, int n_requests, 
                          MPI_Request *requests,

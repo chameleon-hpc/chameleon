@@ -49,7 +49,7 @@ class RequestManager {
                          void* buffer=NULL,
                          cham_migratable_task_t** tasks=NULL,
                          int num_tasks=0);
-    void progressRequests();
+    void progressRequests(int is_comm_thread);
     int getNumberOfOutstandingRequests();
     void printRequestInformation();
 
@@ -73,10 +73,10 @@ class RequestManager {
 
     struct ThreadLocalRequestInfo {
         std::vector<MPI_Request>        current_request_array;
-        std::unordered_map<int, int>    current_vecid_to_rid;
+        std::vector<int>                current_rids;
         std::atomic<int>                current_num_finished_requests;
 
-        ThreadLocalRequestInfo() : current_request_array(0), current_num_finished_requests(0) {
+        ThreadLocalRequestInfo() : current_request_array(0), current_rids(0), current_num_finished_requests(0) {
 
         }
     };

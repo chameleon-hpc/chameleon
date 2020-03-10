@@ -2203,7 +2203,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         bool post_receive = true;
         if(task_entry->is_replicated_task) {
           //flush sending queue as otherwise race may occur where task has been sent, but is not in replicated_local_task queue
-          request_manager_send.progressRequests();
+          request_manager_send.progressRequests(0);
           cham_migratable_task_t *task_from_queue = _replicated_local_tasks.pop_task_by_id(task_entry->task_id);
           if(task_from_queue==nullptr) post_receive=false;
         }
@@ -2503,18 +2503,18 @@ void action_communication_progression(int comm_thread) {
     #if ENABLE_TASK_MIGRATION
     #if CHAM_REPLICATION_MODE>=2
     _mtx_cancellation.lock();
-    request_manager_cancel.progressRequests();
+    request_manager_cancel.progressRequests(comm_thread);
     _mtx_cancellation.unlock();
     #endif
     #ifdef TRACE
     VT_BEGIN_CONSTRAINED(event_progress_send);
     #endif
-    request_manager_send.progressRequests();
+    request_manager_send.progressRequests(comm_thread);
     #ifdef TRACE
     VT_END_W_CONSTRAINED(event_progress_send);
     VT_BEGIN_CONSTRAINED(event_progress_recv);
     #endif
-    request_manager_receive.progressRequests();
+    request_manager_receive.progressRequests(comm_thread);
     #ifdef TRACE
     VT_END_W_CONSTRAINED(event_progress_recv);
     #endif

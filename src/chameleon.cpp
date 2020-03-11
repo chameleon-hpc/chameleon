@@ -984,6 +984,11 @@ void* chameleon_create_task_fortran(void * entry_point, int num_args, void* args
     return (void*)tmp_task;
 }
 
+void chameleon_set_callback_task_finish(cham_migratable_task_t *task, chameleon_external_callback_t func_ptr, void *func_param) {
+    task->cb_task_finish_func_ptr = func_ptr;
+    task->cb_task_finish_func_param = func_param;
+}
+
 int32_t chameleon_add_task(cham_migratable_task_t *task) {
     DBP("chameleon_add_task (enter) - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d) with arg_num: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
     verify_initialized();
@@ -1306,6 +1311,10 @@ inline int32_t process_replicated_local_task() {
         assert(_num_local_tasks_outstanding>=0);
         DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
 //#endif
+        // handle external finish callback
+        if(replicated_task->cb_task_finish_func_ptr) {
+            replicated_task->cb_task_finish_func_ptr(replicated_task->cb_task_finish_func_param);
+        }
 
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
@@ -1430,7 +1439,7 @@ inline int32_t process_remote_task() {
         // we can now decrement outstanding counter because there is nothing to send back
         _num_remote_tasks_outstanding--;
         DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
-
+        // TODO: how to handle external finish callback? maybe handshake with owner?
         free_migratable_task(task, true);
     }
 
@@ -1484,6 +1493,11 @@ inline int32_t process_local_task() {
     _num_local_tasks_outstanding--;
     assert(_num_local_tasks_outstanding>=0);
     DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding.load());
+
+    // handle external finish callback
+    if(task->cb_task_finish_func_ptr) {
+        task->cb_task_finish_func_ptr(task->cb_task_finish_func_param);
+    }
 
 #if CHAM_STATS_RECORD
     _num_executed_tasks_local++;

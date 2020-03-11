@@ -695,6 +695,10 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         assert(_num_local_tasks_outstanding>=0);
         DBP("receive_back_handler -  local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
 
+        // handle external finish callback
+        if(task_entry->cb_task_finish_func_ptr) {
+            task_entry->cb_task_finish_func_ptr(task_entry->cb_task_finish_func_param);
+        }
         //if(task_entry->num_outstanding_recvbacks==0)
         //  free_migratable_task(task_entry, false);
     }
@@ -710,13 +714,18 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
         DBP("receive_remote_tasks_trash - outstanding: %d for task id: %d\n",  task->num_outstanding_recvbacks, task->task_id);
         
         if(task->num_outstanding_recvbacks==0) {
-        	//_map_offloaded_tasks_with_outputs.erase(tag);
-                                 // mark locally created task finished
-		  _unfinished_locally_created_tasks.remove(task->task_id);
-		  _map_overall_tasks.erase(task->task_id);
+            //_map_offloaded_tasks_with_outputs.erase(tag);
+            // mark locally created task finished
+            _unfinished_locally_created_tasks.remove(task->task_id);
+            _map_overall_tasks.erase(task->task_id);
 
-		  if(!task->is_replicated_task)
-		    free_migratable_task(task, false);
+            // handle external finish callback
+            if(task->cb_task_finish_func_ptr) {
+                task->cb_task_finish_func_ptr(task->cb_task_finish_func_param);
+            }
+
+            if(!task->is_replicated_task)
+                free_migratable_task(task, false);
         }
     }
     if(buffer)

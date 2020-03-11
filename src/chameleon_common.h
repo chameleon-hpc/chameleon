@@ -353,6 +353,10 @@ typedef struct cham_migratable_task_t {
 
     chameleon_annotations_t* task_annotations = nullptr;
 
+    // external callback when task is finished
+    chameleon_external_callback_t cb_task_finish_func_ptr = nullptr;
+    void *cb_task_finish_func_param = nullptr;
+
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t task_tool_data;
 #endif

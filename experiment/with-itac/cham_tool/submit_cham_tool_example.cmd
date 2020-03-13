@@ -19,9 +19,9 @@ export IS_SEPARATE=0
 export N_PROCS=2
 export OMP_PLACES=cores
 export OMP_PROC_BIND=close
-export VT_LOGFILE_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool/experiment/with-itac/cham_tool/results/itac_traces
+export VT_LOGFILE_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/results/itac_traces
 
 # Run the program with cham_tool
-CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 1 10
+CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 1 10
  
-##mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 1 10
+##mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 1 10

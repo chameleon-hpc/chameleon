@@ -10,7 +10,7 @@ export LD_LIBRARY_PATH=/dss/dsshome1/0A/di49mew/loc-libs/libffi-3.3/build/lib64:
 export CPATH=/dss/dsshome1/0A/di49mew/loc-libs/libffi-3.3/build/include:/dss/dsshome1/lrz/sys/spack/release/19.1/opt/x86_avx512/hwloc/2.0.1-gcc-gir2kom/include:$CPATH
 
 # export ch-libs
-export LD_LIBRARY_PATH=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/$CHAM_MODE/lib:$LD_LIBRARY_PATH
-export LIBRARY_PATH=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/$CHAM_MODE/lib:$LIBRARY_PATH
-export INCLUDE=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/$CHAM_MODE/include:$INCLUDE
-export CPATH=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/$CHAM_MODE/include:$CPATH
+export LD_LIBRARY_PATH=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/$CHAM_MODE/lib:$LD_LIBRARY_PATH
+export LIBRARY_PATH=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/$CHAM_MODE/lib:$LIBRARY_PATH
+export INCLUDE=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/$CHAM_MODE/include:$INCLUDE
+export CPATH=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/$CHAM_MODE/include:$CPATH

@@ -12,7 +12,7 @@ MPIRUN = /lrz/sys/intel/impi2019u6/impi/2019.6.154/intel64/bin/mpirun
 CXX = /lrz/sys/intel/studio2019_u5/compilers_and_libraries_2019.5.281/linux/bin/intel64/icpc
 
 # Chameleon libs
-CH_HOME=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/cham_tool
+CH_HOME=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/cham_tool
 CH_LIB_TOOL=$(CH_HOME)/lib
 
 

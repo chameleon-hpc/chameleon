@@ -1,0 +1,31 @@
+INCLUDE (CheckSymbolExists)
+
+set(FFI_INCLUDE_DIR "/dss/dsshome1/0A/di49mew/loc-libs/libffi-3.3/build/include")
+set(FFI_LIBRARY_DIR "/dss/dsshome1/0A/di49mew/loc-libs/libffi-3.3/build/lib64")
+
+find_path(FFI_INCLUDE_PATH ffi.h PATHS ${FFI_INCLUDE_DIR})
+if( EXISTS "${FFI_INCLUDE_PATH}/ffi.h" )
+    set(FFI_HEADER ffi.h CACHE INTERNAL "")
+    set(HAVE_FFI_H 1 CACHE INTERNAL "")
+else()
+    find_path(FFI_INCLUDE_PATH ffi/ffi.h PATHS ${FFI_INCLUDE_DIR})
+    if( EXISTS "${FFI_INCLUDE_PATH}/ffi/ffi.h" )
+        set(FFI_HEADER ffi/ffi.h CACHE INTERNAL "")
+        set(HAVE_FFI_FFI_H 1 CACHE INTERNAL "")
+    endif()
+endif()
+
+if( NOT FFI_HEADER )
+    message(FATAL_ERROR "libffi includes are not found.")
+endif()
+
+find_library(FFI_LIBRARY_PATH ffi PATHS ${FFI_LIBRARY_DIR})
+if( NOT FFI_LIBRARY_PATH )
+    message(FATAL_ERROR "libffi is not found.")
+endif()
+
+list(APPEND CMAKE_REQUIRED_LIBRARIES ${FFI_LIBRARY_PATH})
+list(APPEND CMAKE_REQUIRED_INCLUDES ${FFI_INCLUDE_PATH})
+check_symbol_exists(ffi_call ${FFI_HEADER} HAVE_FFI_CALL)
+list(REMOVE_ITEM CMAKE_REQUIRED_INCLUDES ${FFI_INCLUDE_PATH})
+list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES ${FFI_LIBRARY_PATH})

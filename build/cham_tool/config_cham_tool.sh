@@ -33,10 +33,10 @@ export KMP_AFFINITY=verbose
 #set(FFI_LIBRARY_DIR "/dss/dsshome1/0A/di49mew/loc-libs/libffi-3.3/build/lib64")
 
 # Run cmake
-cmake -DCMAKE_INSTALL_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool/install/with_itac/cham_tool    \
+cmake -DCMAKE_INSTALL_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/install/with_itac/cham_tool    \
     -DCMAKE_C_COMPILER=/lrz/sys/intel/studio2019_u5/compilers_and_libraries_2019.5.281/linux/bin/intel64/icc    \
     -DCMAKE_CXX_COMPILER=/lrz/sys/intel/studio2019_u5/compilers_and_libraries_2019.5.281/linux/bin/intel64/icpc \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS='-DOFFLOAD_SEND_TASKS_SEPARATELY=1' \
     -DCMAKE_C_FLAGS='-DOFFLOAD_SEND_TASKS_SEPARATELY=1' \
-    /dss/dsshome1/0A/di49mew/chameleon_tool
+    /dss/dsshome1/0A/di49mew/chameleon_tool_dev

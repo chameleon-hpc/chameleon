@@ -18,7 +18,7 @@
 static int N = 10;
 static int MAX_ITERATIONS = 20000;
 static int SEED = 0;
-static double CONVERGENCE_THRESHOLD = 0.0001;
+static double CONVERGENCE_THRESHOLD = 0.001;
 
 /* Define functions */
 #define SPEC_RESTRICT __restrict__

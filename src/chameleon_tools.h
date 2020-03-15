@@ -239,6 +239,7 @@ typedef struct cham_t_task_lis_t {
                 (*it)->mig_time = m_time;
             }
         }
+        this->m.unlock();
     }
 
 } cham_t_task_lis_t;

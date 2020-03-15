@@ -183,7 +183,9 @@ typedef struct cham_t_start_tool_result_t {
     cham_t_data_t tool_data;
 } cham_t_start_tool_result_t;
 
-// data struct for the profiling tool
+/*****************************************************************************
+ * Data for the tool
+ ****************************************************************************/
 typedef struct cham_t_task_info_t {
     TYPE_TASK_ID task_id;
     int rank_belong;    // 0
@@ -191,8 +193,9 @@ typedef struct cham_t_task_info_t {
     double queue_time;  // 2
     double start_time;  // 3
     double end_time;    // 4
-    double exe_time;    // 5
-    bool migrated;      // 6
+    double mig_time;    // 5
+    double exe_time;    // 6
+    bool migrated;      // 7
 } cham_t_task_info_t;
 
 typedef struct cham_t_task_lis_t {
@@ -226,6 +229,16 @@ typedef struct cham_t_task_lis_t {
                 (*it)->start_time = s_time;
         }
         this->m.unlock();
+    }
+
+    void set_migrated_time(TYPE_TASK_ID task_id, double m_time){
+        this->m.lock();
+        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++i){
+            if ((*it)->task_id == task_id){
+                (*it)->migrated = true;
+                (*it)->mig_time = m_time;
+            }
+        }
     }
 
 } cham_t_task_lis_t;

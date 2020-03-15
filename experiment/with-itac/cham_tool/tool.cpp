@@ -154,8 +154,10 @@ on_cham_t_callback_select_tasks_for_migration(
                 double ratio = (double)(load_this_rank-other_val) / (double)load_this_rank;
                 // printf("[CHAM_T_DEBUG] R%d: oth_rank=%d,load_of_this_rank=%d,ratio=%.2f\n", pos, other_idx, other_val, ratio);
                 if(other_val < load_this_rank && ratio > 0.5) {
+                    double mig_time; TIMESTAMP(mig_time);
                     task_migration_tuples[0].task_id = task_ids_local[0];
                     task_migration_tuples[0].rank_id = other_idx;
+                    tool_task_list.set_migrated_time(task_ids_local[0], mig_time);
                     // printf("[CHAM_T_DEBUG] R%d: task_mig_tuples[0].task_id=%d,rank_id=%d\n", pos, task_migration_tuples[0].task_id, task_migration_tuples[0].rank_id);
                     *num_tuples = 1;
                 }
@@ -225,14 +227,14 @@ void cham_t_finalize(cham_t_data_t *tool_data)
     printf("------------------------- Chameleon Statistics ---------------------\n");
     int rank_info       = cham_t_get_rank_info()->comm_rank;
     if (rank_info == 0){
-        printf("Task ID \t queued_time \t start_time\n");
+        printf("Task ID \t queued_time \t start_time \t mig_time\n");
         for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
-            printf("%d \t %.3f \t %.3f \n", (*it)->task_id, (*it)->queue_time, (*it)->start_time);
+            printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
         }
     }else{
-        printf("Task ID \t queued_time \t start_time\n");
+        printf("Task ID \t queued_time \t start_time \t mig_time\n");
         for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
-            printf("%d \t %.3f \t %.3f \n", (*it)->task_id, (*it)->queue_time, (*it)->start_time);
+            printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
         }
     }
 }

@@ -233,7 +233,7 @@ typedef struct cham_t_task_lis_t {
 
     void set_migrated_time(TYPE_TASK_ID task_id, double m_time){
         this->m.lock();
-        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++i){
+        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it){
             if ((*it)->task_id == task_id){
                 (*it)->migrated = true;
                 (*it)->mig_time = m_time;

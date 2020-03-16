@@ -182,7 +182,7 @@ on_cham_t_callback_change_freq_for_execution(
     int half_processed_per_rank = total_created_tasks_per_rank / 2; // 50% processed load
     int32_t noise_time = 0;
     int rank = cham_t_get_rank_info()->comm_rank;
-    if (load_info_per_rank <= half_processed_per_rank){
+    if (load_info_per_rank <= half_processed_per_rank && load_info_per_rank != 0){
         printf("R%d, tasks_id=%d, cur_load = %d / total_created_tasks = %d\n", rank, chameleon_get_task_id(task), load_info_per_rank, total_created_tasks_per_rank);
         noise_time = 235050;    // make noise 50% slower for a mxm-task with size = 1024
         // noise_time = 507850;    // make noise 50% slower for non-uni tasks with size_range = {128, 256, 512, 1024, 2048}

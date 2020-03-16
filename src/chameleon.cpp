@@ -1154,6 +1154,16 @@ int32_t execute_target_task(cham_migratable_task_t *task) {
     // Use libffi to launch execution.
     ffi_cif cif;
 
+    // Add some noise here when executing the task
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_change_freq_for_execution && chameleon_comm_rank != 0) {
+        int32_t noise_time = cham_t_status.cham_t_callback_task_schedule(task);
+        // make the process slower by sleep
+        DBP("execute_target_task - noise_time = %d\n", noise_time);
+        usleep(noise_time);
+    }
+#endif
+
     // All args are references.
     std::vector<ffi_type *> args_types(task->arg_num, &ffi_type_pointer);
 

@@ -118,19 +118,19 @@ on_cham_t_callback_select_tasks_for_migration(
             tmp_sorted_array[i][1] = load_info_per_rank[i]; // contain load per rank
         }
         // check the values
-        for(i = 0; i < rank_info->comm_size; ++i)
-            printf("Rank-%d, load=%d\n", tmp_sorted_array[i][0], tmp_sorted_array[i][1]);
+        // for(i = 0; i < rank_info->comm_size; ++i)
+        //     printf("Rank-%d, load=%d\n", tmp_sorted_array[i][0], tmp_sorted_array[i][1]);
 
         qsort(tmp_sorted_array, rank_info->comm_size, sizeof tmp_sorted_array[0], compare);
 
         // check after sorting
-        for(i = 0; i < rank_info->comm_size; ++i)
-            printf("Rank-%d, load=%d\n", tmp_sorted_array[i][0], tmp_sorted_array[i][1]);
+        // for(i = 0; i < rank_info->comm_size; ++i)
+        //     printf("Rank-%d, load=%d\n", tmp_sorted_array[i][0], tmp_sorted_array[i][1]);
 
         int min_val = load_info_per_rank[tmp_sorted_array[0][0]];   // load rank 0
         int max_val = load_info_per_rank[tmp_sorted_array[rank_info->comm_size-1][0]];  // load rank 1
         int load_this_rank = load_info_per_rank[rank_info->comm_rank];
-        printf("min is R%d = %d, max is R%d = %d\n", tmp_sorted_array[0][0], min_val, tmp_sorted_array[rank_info->comm_size-1][0], max_val);
+        // printf("min is R%d = %d, max is R%d = %d\n", tmp_sorted_array[0][0], min_val, tmp_sorted_array[rank_info->comm_size-1][0], max_val);
 
         if (max_val > min_val){
             int pos = 0;
@@ -152,13 +152,11 @@ on_cham_t_callback_select_tasks_for_migration(
                 int other_val = load_info_per_rank[other_idx];
                 // calculate ration between those two and just move if over a certain threshold
                 double ratio = (double)(load_this_rank-other_val) / (double)load_this_rank;
-                // printf("[CHAM_T_DEBUG] R%d: oth_rank=%d,load_of_this_rank=%d,ratio=%.2f\n", pos, other_idx, other_val, ratio);
                 if(other_val < load_this_rank && ratio > 0.5) {
                     double mig_time; TIMESTAMP(mig_time);
                     task_migration_tuples[0].task_id = task_ids_local[0];
                     task_migration_tuples[0].rank_id = other_idx;
                     tool_task_list.set_migrated_time(task_ids_local[0], mig_time);
-                    // printf("[CHAM_T_DEBUG] R%d: task_mig_tuples[0].task_id=%d,rank_id=%d\n", pos, task_migration_tuples[0].task_id, task_migration_tuples[0].rank_id);
                     *num_tuples = 1;
                 }
             }
@@ -174,6 +172,14 @@ on_cham_t_callback_select_tasks_for_migration(
     return task_migration_tuples;
 }
 
+static int32_t
+on_cham_t_callback_determine_local_load(
+    cham_migratable_task_t * task
+)
+{
+    int32_t noise_time = 100000;
+    return noise_time;
+}
 
 //================================================================
 // Start Tool & Register Callbacks
@@ -209,6 +215,7 @@ int cham_t_initialize(
     // register_callback(cham_t_callback_sync_region);
     register_callback(cham_t_callback_determine_local_load);
     register_callback(cham_t_callback_select_tasks_for_migration);
+    register_callback(cham_t_callback_change_freq_for_execution);
 
     // Priority is cham_t_callback_select_tasks_for_migration (fine-grained)
     // if not registered cham_t_callback_select_num_tasks_to_offload is used (coarse-grained)

@@ -353,6 +353,10 @@ typedef cham_t_migration_tupel_t* (*cham_t_callback_select_tasks_for_migration_t
     int32_t* num_tuples
 );
 
+typedef int32_t (*cham_t_callback_change_freq_for_execution_t)(
+    cham_migratable_task_t * task
+);
+
 #pragma endregion
 
 #endif

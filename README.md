@@ -1,7 +1,8 @@
 CHAMELEON_TOOL
 ====
 
-A tool for profiling chamaleon-behaviors
+A tool for profiling chamaleon-behaviors: the tool in the same folder with mxm example (experiment/with-itac/cham_tool)
+tool.cpp & tool.h
 
 Description
 -------

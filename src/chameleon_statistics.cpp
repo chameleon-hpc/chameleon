@@ -63,6 +63,8 @@ std::atomic<int>     _num_executed_tasks_replicated_local(0);
 std::atomic<int>     _num_executed_tasks_replicated_remote(0);
 std::atomic<int>     _num_tasks_canceled(0);
 std::atomic<int>     _num_tasks_offloaded(0);
+std::atomic<int>     _num_tasks_replicated(0);
+std::atomic<int>     _num_tasks_activated(0);
 std::atomic<int>     _num_migration_decision_performed(0);
 std::atomic<int>     _num_migration_done(0);
 std::atomic<int>     _num_load_exchanges_performed(0);
@@ -123,6 +125,8 @@ void cham_stats_reset_for_sync_cycle() {
     _num_executed_tasks_replicated_remote = 0;
     _num_tasks_offloaded = 0;
     _num_tasks_canceled = 0;
+    _num_tasks_replicated = 0;
+    _num_tasks_activated = 0;
     _num_migration_decision_performed = 0;
     _num_migration_done = 0;
     _num_load_exchanges_performed = 0;
@@ -211,6 +215,8 @@ void cham_stats_print_stats() {
     fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated_local.load() + _num_executed_tasks_replicated_remote.load()  + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
     fprintf(cur_file, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
     fprintf(cur_file, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_tasks_replicated\t%d\n", chameleon_comm_rank, _num_tasks_replicated.load());
+    fprintf(cur_file, "Stats R#%d:\t_num_tasks_activated\t%d\n", chameleon_comm_rank, _num_tasks_activated.load());
     fprintf(cur_file, "Stats R#%d:\t_num_migration_decision_performed\t%d\n", chameleon_comm_rank, _num_migration_decision_performed.load());
     fprintf(cur_file, "Stats R#%d:\t_num_migration_done\t%d\n", chameleon_comm_rank, _num_migration_done.load());
     fprintf(cur_file, "Stats R#%d:\t_num_load_exchanges_performed\t%d\n", chameleon_comm_rank, _num_load_exchanges_performed.load());

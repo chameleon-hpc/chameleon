@@ -50,6 +50,10 @@ thread_safe_list_t<TYPE_TASK_ID> _unfinished_locally_created_tasks;
 // variables to indicate when it is save to break out of taskwait
 std::atomic<int> _flag_dtw_active(0);
 std::atomic<int> _num_threads_finished_dtw(0);
+
+// lock used to ensure that currently only a single thread is doing communication progression
+std::mutex _mtx_comm_progression;
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -88,7 +92,7 @@ extern "C" {
 
 #pragma region Forward Declarations
 // ================================================================================
-// Forward declartion of internal functions (just called inside shared library)
+// Forward declaration of internal functions (just called inside shared library)
 // ================================================================================
 int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
@@ -323,6 +327,8 @@ int32_t chameleon_init() {
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_load");
     err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_cancel);
     if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_cancel");
+    err = MPI_Comm_dup(MPI_COMM_WORLD, &chameleon_comm_activate);
+    if(err != 0) handle_error_en(err, "MPI_Comm_dup - chameleon_comm_activate");
 
     MPI_Errhandler_set(MPI_COMM_WORLD, MPI_ERRORS_RETURN);
     MPI_Errhandler_set(chameleon_comm, MPI_ERRORS_RETURN);
@@ -356,7 +362,10 @@ int32_t chameleon_init() {
     cham_t_init();
 #endif
 
+    _num_replicated_local_tasks_per_victim.resize(chameleon_comm_size);
+
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
+    _active_migrations_per_target_rank.resize(chameleon_comm_size);
     _load_info_ranks.resize(chameleon_comm_size);
     for(int i = 0; i < chameleon_comm_size; i++) {
         _outstanding_jobs_ranks[i] = 0;
@@ -565,11 +574,6 @@ void dtw_startup() {
     //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _session_data.num_threads_in_tw     = omp_get_num_threads();
-    
-    request_manager_send._num_threads_in_dtw    = omp_get_num_threads();
-    request_manager_receive._num_threads_in_dtw = omp_get_num_threads();
-    request_manager_cancel._num_threads_in_dtw  = omp_get_num_threads();
-
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 
@@ -580,7 +584,7 @@ void dtw_startup() {
     // need to set flags to ensure that exit condition is working with deactivated comm thread and migration
     _comm_thread_load_exchange_happend  = 1; 
     _num_ranks_not_completely_idle      = 0;
-    #endif /* ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION */
+    #endif /* ENABLE_COMM_THREAD */
 
     _flag_dtw_active = 1;
     _mtx_taskwait.unlock();
@@ -629,7 +633,7 @@ void dtw_teardown() {
 int32_t chameleon_distributed_taskwait(int nowait) {
 #ifdef TRACE
     static int event_taskwait = -1;
-    std::string event_taskwait_name = "cham_dis_taskwait";
+    std::string event_taskwait_name = "taskwait";
     if(event_taskwait == -1) 
         int ierr = VT_funcdef(event_taskwait_name.c_str(), VT_NOCLASS, &event_taskwait);
 
@@ -689,10 +693,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #if SHOW_WARNING_DEADLOCK
         if(omp_get_wtime()-last_time_doing_sth_useful>DEADLOCK_WARNING_TIMEOUT && omp_get_thread_num()==0) {
            fprintf(stderr, "R#%d:\t Deadlock WARNING: idle time above timeout %d s! \n", chameleon_comm_rank, (int)DEADLOCK_WARNING_TIMEOUT);
-           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
+           fprintf(stderr, "R#%d:\t outstanding jobs local: %d, outstanding jobs remote: %d outstanding jobs replicated local compute: %d outstanding jobs replicated remote: %d \n", chameleon_comm_rank,
                                                                   _num_local_tasks_outstanding.load(),
                                                                   _num_remote_tasks_outstanding.load(),
-                                                                  _num_replicated_local_tasks_outstanding.load(),
+                                                                  _num_replicated_local_tasks_outstanding_compute.load(),
                                                                   _num_replicated_remote_tasks_outstanding.load());
            request_manager_receive.printRequestInformation();
            request_manager_send.printRequestInformation();
@@ -702,17 +706,12 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
         #if COMMUNICATION_MODE == 1
         if (_mtx_comm_progression.try_lock()) {
-        #endif /* COMMUNICATION_MODE */
             //for (int rep = 0; rep < 2; rep++) {
             // need to check whether exit condition already met
             //if (!exit_condition_met(1,0))
-            #if COMMUNICATION_MODE > 0
-            action_communication_progression(0);
-            #endif /* COMMUNICATION_MODE */
+            action_communication_progression();
             //}
-        #if COMMUNICATION_MODE == 1
             _mtx_comm_progression.unlock();
-            
         }
         #endif /* COMMUNICATION_MODE */
 
@@ -788,6 +787,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
                 continue;
         }
 
+        #if CHAM_REPLICATION_MODE<4
         // ========== Prio 4: work on replicated remote tasks
         if(!_replicated_remote_tasks.empty()) {
 
@@ -809,6 +809,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
             if(res != CHAM_REPLICATED_TASK_NONE)
                 continue;
         }
+        #endif
         #endif /* ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0 */
 
         // ========== Prio 4: work on a regular OpenMP task
@@ -836,6 +837,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - all threads entered the taskwait function (on all processes) and are idling
 
         if(_num_threads_idle >= num_threads_in_tw) {
+            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
             if(exit_condition_met(1,0)) {
                 // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
@@ -1147,20 +1149,10 @@ int32_t lookup_hst_pointers(cham_migratable_task_t *task) {
 }
 
 int32_t execute_target_task(cham_migratable_task_t *task) {
-    DBP("execute_target_task (enter) - task_entry (task_id=%ld): " DPxMOD "\n", task->task_id, DPxPTR(task->tgt_entry_ptr));
+    DBP("execute_target_task (enter) - task_entry (task_id=%ld): " DPxMOD ", is_migrated: %d, is_replicated: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->is_migrated_task, task->is_replicated_task);
     int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
     ffi_cif cif;
-
-    // Put the noise here
-#if CHAMELEON_TOOL_SUPPORT
-    if(cham_t_status.enabled && cham_t_status.cham_t_callback_change_freq_for_execution && chameleon_comm_rank != 0) {
-        int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task);
-        DBP("execute_target_task (enter) - noise_time = %d\n", noise_time);
-        // make this process slower than normal = noise_time
-        usleep(noise_time);
-    }
-#endif
 
     // All args are references.
     std::vector<ffi_type *> args_types(task->arg_num, &ffi_type_pointer);
@@ -1284,7 +1276,7 @@ inline int32_t process_replicated_local_task() {
         double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE>=2
+#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 // ||  CHAM_REPLICATION_MODE==4
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif
@@ -1298,9 +1290,10 @@ inline int32_t process_replicated_local_task() {
         _time_task_execution_replicated_count++;
 #endif
 
-        if(!replicated_task->is_migrated_task)
-          _num_replicated_local_tasks_outstanding_compute--;
-
+        if(!replicated_task->is_migrated_task) {
+          int tmp = _num_replicated_local_tasks_outstanding_compute-1;
+          _num_replicated_local_tasks_outstanding_compute = std::max(0, tmp);
+        }
 #if CHAM_STATS_RECORD
         _num_executed_tasks_replicated_local++;
 #endif
@@ -1358,10 +1351,10 @@ inline int32_t process_replicated_remote_task() {
         double cur_time = omp_get_wtime();
 #endif 
 
-/*#if CHAM_REPLICATION_MODE==2
+//#if CHAM_REPLICATION_MODE==2
         //cancel task on remote ranks
-        cancel_offloaded_task(replicated_task);
-#endif*/
+//        cancel_offloaded_task(replicated_task);
+//#endif
 
         int32_t res = execute_target_task(replicated_task);
         if(res != CHAM_SUCCESS)
@@ -1409,12 +1402,24 @@ inline int32_t process_remote_task() {
     if(!task)
         return CHAM_REMOTE_TASK_NONE;
 
+    int is_migrated= task->is_migrated_task;
 #ifdef TRACE
     static int event_process_remote = -1;
     static const std::string event_process_remote_name = "process_remote";
     if( event_process_remote == -1) 
         int ierr = VT_funcdef(event_process_remote_name.c_str(), VT_NOCLASS, &event_process_remote);
-    VT_BEGIN_CONSTRAINED(event_process_remote);
+
+    static int event_process_replicated_remote_hp = -1;
+    static const std::string event_process_replicated_hp_name = "process_replicated_remote_highprio";
+    if( event_process_replicated_remote_hp == -1)
+        int ierr = VT_funcdef(event_process_replicated_hp_name.c_str(), VT_NOCLASS, &event_process_replicated_remote_hp);
+
+    if(!task->is_migrated_task) {
+        VT_BEGIN_CONSTRAINED(event_process_replicated_remote_hp);
+    }
+    else {
+        VT_BEGIN_CONSTRAINED(event_process_remote);
+    }
 #endif
 
     // execute region now
@@ -1426,8 +1431,14 @@ inline int32_t process_remote_task() {
         handle_error_en(1, "execute_target_task - remote");
 #if CHAM_STATS_RECORD
     cur_time = omp_get_wtime()-cur_time;
-    atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
-    _time_task_execution_stolen_count++;
+    if(is_migrated) {
+      atomic_add_dbl(_time_task_execution_stolen_sum, cur_time);
+      _time_task_execution_stolen_count++;
+    }
+    else {
+      atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+      _time_task_execution_replicated_count++;
+    }
 #endif
  
     _map_tag_to_remote_task.erase(task->task_id);
@@ -1445,10 +1456,18 @@ inline int32_t process_remote_task() {
     }
 
 #if CHAM_STATS_RECORD
-    _num_executed_tasks_stolen++;
+    if(is_migrated)
+      _num_executed_tasks_stolen++;
+    else
+    	_num_executed_tasks_replicated_remote++;
 #endif
 #ifdef TRACE
-    VT_END_W_CONSTRAINED(event_process_remote);
+    if(is_migrated) {
+        VT_END_W_CONSTRAINED(event_process_replicated_remote_hp);
+    }
+    else {
+        VT_END_W_CONSTRAINED(event_process_remote);
+    }
 #endif
     return CHAM_REMOTE_TASK_SUCCESS;
 }
@@ -1501,6 +1520,7 @@ inline int32_t process_local_task() {
     free_migratable_task(task, false);
     return CHAM_LOCAL_TASK_SUCCESS;
 }
+
 #pragma endregion Fcns for Lookups and Execution
 
 #ifdef __cplusplus

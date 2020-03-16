@@ -18,6 +18,8 @@ extern MPI_Comm chameleon_comm_mapped;
 extern MPI_Comm chameleon_comm_load;
 // communicator for task cancellation
 extern MPI_Comm chameleon_comm_cancel;
+// communicator for activating replicated tasks
+extern MPI_Comm chameleon_comm_activate;
 
 extern RequestManager request_manager_send;
 extern RequestManager request_manager_receive;
@@ -45,6 +47,8 @@ extern std::atomic<int32_t> _num_remote_tasks_outstanding;
 extern thread_safe_task_list_t _replicated_local_tasks;
 extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_send;
 extern std::atomic<int32_t> _num_replicated_local_tasks_outstanding_compute;
+
+extern std::vector<int> _num_replicated_local_tasks_per_victim;
 
 extern thread_safe_task_list_t _replicated_remote_tasks;
 extern std::atomic<int32_t> _num_replicated_remote_tasks_outstanding;
@@ -85,7 +89,7 @@ extern std::atomic<int> _num_ranks_not_completely_idle;
 
 // number of active migrations per target rank
 // desired: should block new migration to target as long as there are still active migrations ongoing
-extern std::atomic<int> _active_migrations_per_target_rank[];
+extern std::vector<int> _active_migrations_per_target_rank;
 
 extern std::atomic<bool> _trace_events_initialized;
 extern int event_receive_tasks;
@@ -97,9 +101,6 @@ extern int event_send_back;
 extern int event_progress_send;
 extern int event_progress_recv;
 
-// lock used to ensure that currently only a single thread is doing communication progression
-extern std::mutex _mtx_comm_progression;
-
 class chameleon_comm_thread_session_data_t {
     public:
     // =============== General Vars
@@ -109,6 +110,7 @@ class chameleon_comm_thread_session_data_t {
     std::atomic<double> time_last_load_exchange;
     std::atomic<double> time_gather_posted;
     std::atomic<bool> has_replicated;
+    std::atomic<bool> is_migration_victim;
 
     #if CHAM_STATS_RECORD
     std::atomic<double> time_start_comm;
@@ -132,7 +134,8 @@ class chameleon_comm_thread_session_data_t {
     std::vector<int> tracked_last_req_recv;
 
     // =============== Constructor
-    chameleon_comm_thread_session_data_t() {    
+    chameleon_comm_thread_session_data_t() {
+        
     }
 };
 
@@ -160,7 +163,7 @@ int32_t stop_communication_threads();
 
 int32_t put_comm_threads_to_sleep();
 
-void action_communication_progression(int comm_thread);
+void action_communication_progression();
 
 void cleanup_work_phase();
 

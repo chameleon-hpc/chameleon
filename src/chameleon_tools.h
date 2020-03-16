@@ -24,7 +24,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_determine_local_load        = 8,
     cham_t_callback_select_num_tasks_to_offload = 9,
     cham_t_callback_select_tasks_for_migration  = 10,
-    cham_t_callback_select_num_tasks_to_replicate= 11
+    cham_t_callback_select_num_tasks_to_replicate= 11,
+    cham_t_callback_change_freq_for_execution= 12
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,

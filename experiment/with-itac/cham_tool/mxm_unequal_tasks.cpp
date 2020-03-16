@@ -335,8 +335,8 @@ int main(int argc, char **argv)
 	for (int i = 0; i < numberOfTasks; i++) {
         // create random matrix_sizes, matrixSize is set above, just assign again
         // matrixSize[i] = range_size[(rand() % 5)];
-        // matrixSize[i] = range_size[mat_size_idx_arr[iMyRank][i]];
-        matrixSize[i] = 1024;    // just for testing the tool
+        matrixSize[i] = range_size[mat_size_idx_arr[iMyRank][i]];
+        // matrixSize[i] = 1024;    // just for testing the tool
         total_load[iMyRank] += matrixSize[i];
 
  		matrices_a[i] = new double[(long)matrixSize[i]*matrixSize[i]];

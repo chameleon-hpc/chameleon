@@ -232,18 +232,18 @@ int cham_t_initialize(
 void cham_t_finalize(cham_t_data_t *tool_data)
 {
     printf("------------------------- Chameleon Statistics ---------------------\n");
-    int rank_info       = cham_t_get_rank_info()->comm_rank;
-    if (rank_info == 0){
-        printf("Task ID \t queued_time \t start_time \t mig_time\n");
-        for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
-            printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
-        }
-    }else{
-        printf("Task ID \t queued_time \t start_time \t mig_time\n");
-        for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
-            printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
-        }
-    }
+    // int rank_info       = cham_t_get_rank_info()->comm_rank;
+    // if (rank_info == 0){
+    //     printf("Task ID \t queued_time \t start_time \t mig_time\n");
+    //     for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
+    //         printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
+    //     }
+    // }else{
+    //     printf("Task ID \t queued_time \t start_time \t mig_time\n");
+    //     for (std::list<cham_t_task_info_t*>::iterator it=tool_task_list.task_list.begin(); it!=tool_task_list.task_list.end(); ++it) {
+    //         printf("%d \t %.3f \t %.3f \t %.3f\n", (*it)->task_id, (*it)->queue_time, (*it)->start_time, (*it)->mig_time);
+    //     }
+    // }
 }
 
 #ifdef __cplusplus

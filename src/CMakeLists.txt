@@ -1,7 +1,7 @@
 project(chameleon_src)
 
 ## Build options
-option(CHAMELEON_ENABLE_DEV_OUTPUT "Enable detailed outputs" off)
+option(CHAMELEON_ENABLE_DEV_OUTPUT "Enable detailed outputs" on)
 option(CHAMELEON_STATS_RECORD "Record Chameleon internal statistics" on)
 option(CHAMELEON_STATS_PRINT "Print statistics at the end" on)
 option(CHAMELEON_TRACE_ITAC "Enable tracing with Intel Trace Analyzer " on)

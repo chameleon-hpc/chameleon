@@ -174,7 +174,8 @@ on_cham_t_callback_select_tasks_for_migration(
 
 static int32_t
 on_cham_t_callback_change_freq_for_execution(
-    cham_migratable_task_t * task
+    cham_migratable_task_t * task,
+    int32_t load_info_per_rank
 )
 {
     // int32_t noise_time = 235050;    // make noise 50% slower for a mxm-task with size = 1024

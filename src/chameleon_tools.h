@@ -355,7 +355,8 @@ typedef cham_t_migration_tupel_t* (*cham_t_callback_select_tasks_for_migration_t
 );
 
 typedef int32_t (*cham_t_callback_change_freq_for_execution_t)(
-    cham_migratable_task_t * task
+    cham_migratable_task_t * task,
+    const int32_t load_info_per_rank
 );
 
 #pragma endregion

@@ -1,9 +1,9 @@
 #!/bin/sh
 #SBATCH -J cham_tool_test
-#SBATCH -o ./results/ch-mxm_tool_10x10_%J.out
-#SBATCH -e ./results/ch-mxm_tool_10x10_%J.err
+#SBATCH -o ./results/ch-mxm_tool_100x100_%J.out
+#SBATCH -e ./results/ch-mxm_tool_100x100_%J.err
 #SBATCH -D ./
-#SBATCH --time=00:05:00
+#SBATCH --time=00:10:00
 #SBATCH --get-user-env
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
@@ -21,4 +21,4 @@ export OMP_PROC_BIND=close
 export VT_LOGFILE_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/results/itac_traces
 
 # Run the program with cham_tool
-OMP_NUM_THREADS=1 CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 10 10
+OMP_NUM_THREADS=1 CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 100 100

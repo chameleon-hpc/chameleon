@@ -22,6 +22,7 @@ typedef struct cham_t_task_info_t {
     TYPE_TASK_ID task_id;
     int rank_belong;    // 0
     size_t size_data;   // 1
+    // ... ...
 ```
 
 - chameleon_tools.cpp: add one more callback function for changing the frequency
@@ -38,11 +39,13 @@ cham_t_start_tool_result_t * cham_t_start_tool(unsigned int cham_version) {
         fprintf(stderr, "%s\n", dlerror());
         exit(EXIT_FAILURE);
     }
+    // ... ...
 ```
 ```cpp
-		case cham_t_callback_change_freq_for_execution:
-            cham_t_status.cham_t_callback_change_freq_for_execution = (cham_t_callback_change_freq_for_execution_t)callback;
-            break;
+    case cham_t_callback_change_freq_for_execution:
+        cham_t_status.cham_t_callback_change_freq_for_execution = (cham_t_callback_change_freq_for_execution_t)callback;
+        break;
+    // ...
 ```
 
 - chameleon_tools_internal.h: add the enum for this callback function

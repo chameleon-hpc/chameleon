@@ -181,6 +181,7 @@ on_cham_t_callback_change_freq_for_execution(
 {
     int half_processed_per_rank = total_created_tasks_per_rank / 2; // 50% processed load
     int32_t noise_time = 0;
+    printf("cur_load = %d / total_created_tasks = %d\n", load_info_per_rank, total_created_tasks_per_rank);
     if (load_info_per_rank <= half_processed_per_rank){
         // int32_t noise_time = 235050;    // make noise 50% slower for a mxm-task with size = 1024
         int32_t noise_time = 507850;    // make noise 50% slower for non-uni tasks with size_range = {128, 256, 512, 1024, 2048}

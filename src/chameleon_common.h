@@ -99,8 +99,8 @@
 #endif
 
 #ifndef CHAM_REPLICATION_MODE
-#define CHAM_REPLICATION_MODE 0 //no replication
-//#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
+// #define CHAM_REPLICATION_MODE 0 //no replication
+#define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
 //#define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
 //#define CHAM_REPLICATION_MODE 3 //mode 2 + migrated tasks will be kept locally as replicated tasks
 // #define CHAM_REPLICATION_MODE 4

@@ -214,7 +214,7 @@ int cham_t_initialize(
     // register_callback(cham_t_callback_decode_task_tool_data);
     // register_callback(cham_t_callback_sync_region);
     register_callback(cham_t_callback_determine_local_load);
-    register_callback(cham_t_callback_select_tasks_for_migration);
+    // register_callback(cham_t_callback_select_tasks_for_migration);
     register_callback(cham_t_callback_change_freq_for_execution);
 
     // Priority is cham_t_callback_select_tasks_for_migration (fine-grained)

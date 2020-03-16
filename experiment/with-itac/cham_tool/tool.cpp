@@ -173,7 +173,7 @@ on_cham_t_callback_select_tasks_for_migration(
 }
 
 static int32_t
-on_cham_t_callback_determine_local_load(
+on_cham_t_callback_change_freq_for_execution(
     cham_migratable_task_t * task
 )
 {

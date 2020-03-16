@@ -13,7 +13,6 @@
 
 module load slurm_setup
 
-export OMP_NUM_THREADS=2
 export IS_DISTRIBUTED=1
 export IS_SEPARATE=0
 export N_PROCS=2
@@ -22,4 +21,4 @@ export OMP_PROC_BIND=close
 export VT_LOGFILE_PREFIX=/dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/results/itac_traces
 
 # Run the program with cham_tool
-CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 10 10
+OMP_NUM_THREADS=1 CHAMELEON_TOOL=1 CHAMELEON_TOOL_LIBRARIES=1 mpirun -trace -n 2 /dss/dsshome1/0A/di49mew/chameleon_tool_dev/experiment/with-itac/cham_tool/mxm_unequal_tasks_tool 10 10

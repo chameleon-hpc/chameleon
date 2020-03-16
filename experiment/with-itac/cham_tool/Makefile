@@ -1,5 +1,5 @@
 # Some declarations
-FILE_NAMES ?= mxm_unequal_tasks.cpp
+FILE_NAMES ?= mxm_equal_tasks.cpp
 PROG ?=mxm_unequal_tasks
 TOOL ?= tool
 NUM_TASKS_R0 ?= 100	# for make run

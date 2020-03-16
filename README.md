@@ -22,6 +22,7 @@ To build CHAMELEON using CMake run: build as usual
 
 ### 2. Run & compile the tool
 As the example in /chameleon_tool_dev/experiment/with-itac, there are 2 seperate commands for compiling the tool and example.
+```cmake
 # Some declarations
 FILE_NAMES ?= mxm_unequal_tasks.cpp
 PROG ?=mxm_unequal_tasks
@@ -53,4 +54,4 @@ $(TOOL): $(TOOL).cpp $(TOOL).h
 
 clean:
 	rm -f $(PROG)_* $(TOOL).so *.o
-
+'''

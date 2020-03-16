@@ -177,7 +177,8 @@ on_cham_t_callback_change_freq_for_execution(
     cham_migratable_task_t * task
 )
 {
-    int32_t noise_time = 235050;    // make noise 50% slower for a mxm-task with size = 1024
+    // int32_t noise_time = 235050;    // make noise 50% slower for a mxm-task with size = 1024
+    int32_t noise_time = 507850;    // make noise 50% slower for non-uni tasks with size_range = {128, 256, 512, 1024, 2048}
     return noise_time;
 }
 

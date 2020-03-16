@@ -54,4 +54,6 @@ $(TOOL): $(TOOL).cpp $(TOOL).h
 
 clean:
 	rm -f $(PROG)_* $(TOOL).so *.o
-'''
+```
+
+Here we have the tool outside Chameleon's core. We can change or add more callback functions here (tool.cpp and tool.h).

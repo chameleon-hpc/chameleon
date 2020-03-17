@@ -26,7 +26,7 @@ http://www.chameleon-hpc.org/
 https://github.com/chameleon-hpc/chameleon
 
 
-Building and Installing CHEMELEON
+Building and Installing CHAMELEON
 ============
 
 CHAMELEON can be build from source using CMake.

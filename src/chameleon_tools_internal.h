@@ -19,6 +19,7 @@ typedef struct cham_t_callbacks_active_s {
     cham_t_callback_select_num_tasks_to_offload_t   cham_t_callback_select_num_tasks_to_offload = nullptr;
     cham_t_callback_select_num_tasks_to_replicate_t cham_t_callback_select_num_tasks_to_replicate = nullptr;
     cham_t_callback_select_tasks_for_migration_t    cham_t_callback_select_tasks_for_migration  = nullptr;
+    cham_t_callback_change_freq_for_execution_t     cham_t_callback_change_freq_for_execution   = nullptr;  // change frequency
 
 } cham_t_callbacks_active_t;
 

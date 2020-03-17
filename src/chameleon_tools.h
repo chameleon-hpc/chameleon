@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <dlfcn.h>
 
+#include <list>
+#include <mutex>
+#include <atomic>
+
 #pragma region Enums and Definitions
 /*****************************************************************************
  * Enums
@@ -20,7 +24,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_determine_local_load        = 8,
     cham_t_callback_select_num_tasks_to_offload = 9,
     cham_t_callback_select_tasks_for_migration  = 10,
-    cham_t_callback_select_num_tasks_to_replicate= 11
+    cham_t_callback_select_num_tasks_to_replicate= 11,
+    cham_t_callback_change_freq_for_execution= 12
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -134,7 +139,6 @@ typedef union cham_t_data_t {
 typedef struct cham_t_migration_tupel_t {
     TYPE_TASK_ID task_id;
     int32_t rank_id;
-
     // cham_t_migration_tupel_t(TYPE_TASK_ID p_task_id, int32_t p_rank_id) {
     //     task_id = p_task_id;
     //     rank_id = p_rank_id;
@@ -183,6 +187,67 @@ typedef struct cham_t_start_tool_result_t {
     cham_t_finalize_t finalize;
     cham_t_data_t tool_data;
 } cham_t_start_tool_result_t;
+
+/*****************************************************************************
+ * Data for the tool
+ ****************************************************************************/
+typedef struct cham_t_task_info_t {
+    TYPE_TASK_ID task_id;
+    int rank_belong;    // 0
+    size_t size_data;   // 1
+    double queue_time;  // 2
+    double start_time;  // 3
+    double end_time;    // 4
+    double mig_time;    // 5
+    double exe_time;    // 6
+    bool migrated;      // 7
+} cham_t_task_info_t;
+
+typedef struct cham_t_task_lis_t {
+    std::list<cham_t_task_info_t*> task_list;
+    std::mutex m;
+    std::atomic<size_t> list_size;
+
+    void cham_t_task_list(){
+        list_size = 0;
+    }
+
+    size_t size() {
+        return this->list_size.load();
+    }
+
+    bool empty() {
+        return this->list_size <= 0;
+    }
+
+    void push_back(cham_t_task_info_t* task) {
+        this->m.lock();
+        this->task_list.push_back(task);
+        this->list_size++;
+        this->m.unlock();
+    }
+
+    void set_start_time(TYPE_TASK_ID task_id, double s_time){
+        this->m.lock();
+        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it){
+            if ((*it)->task_id == task_id)
+                (*it)->start_time = s_time;
+        }
+        this->m.unlock();
+    }
+
+    void set_migrated_time(TYPE_TASK_ID task_id, double m_time){
+        this->m.lock();
+        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it){
+            if ((*it)->task_id == task_id){
+                (*it)->migrated = true;
+                (*it)->mig_time = m_time;
+            }
+        }
+        this->m.unlock();
+    }
+
+} cham_t_task_lis_t;
 
 /*****************************************************************************
  * Getter / Setter
@@ -291,6 +356,12 @@ typedef cham_t_migration_tupel_t* (*cham_t_callback_select_tasks_for_migration_t
     int32_t num_tasks_local,
     int32_t num_tasks_stolen,
     int32_t* num_tuples
+);
+
+typedef int32_t (*cham_t_callback_change_freq_for_execution_t)(
+    cham_migratable_task_t * task,
+    int32_t load_info_per_rank,
+    int32_t total_created_tasks_per_rank
 );
 
 #pragma endregion

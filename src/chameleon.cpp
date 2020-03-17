@@ -54,6 +54,9 @@ std::atomic<int> _num_threads_finished_dtw(0);
 // lock used to ensure that currently only a single thread is doing communication progression
 std::mutex _mtx_comm_progression;
 
+// total tasks created per rank
+int32_t total_created_taksed_per_rank = 0;
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -1014,6 +1017,10 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     DBP("chameleon_add_task - increment local outstanding count for task %ld\n", task->task_id);
     
     _local_tasks.push_back(task);
+
+    // update value total tasks created per rank
+    total_created_taksed_per_rank++;
+
     // add to queue
 /*#if CHAM_REPLICATION_MODE>0
     if(!task->is_replicated_task) 
@@ -1153,6 +1160,17 @@ int32_t execute_target_task(cham_migratable_task_t *task) {
     int32_t gtid = __ch_get_gtid();
     // Use libffi to launch execution.
     ffi_cif cif;
+
+    // Add some noise here when executing the task
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_change_freq_for_execution && chameleon_comm_rank != 0) {
+        int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task, _load_info_ranks[chameleon_comm_rank], total_created_taksed_per_rank);
+        // make the process slower by sleep
+        DBP("execute_target_task - noise_time = %d\n", noise_time);
+        if (noise_time != 0)
+            usleep(noise_time);
+    }
+#endif
 
     // All args are references.
     std::vector<ffi_type *> args_types(task->arg_num, &ffi_type_pointer);

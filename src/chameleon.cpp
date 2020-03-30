@@ -22,6 +22,10 @@
 #define DEADLOCK_WARNING_TIMEOUT 20
 #endif
 
+#ifndef MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK
+#define MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK 3
+#endif
+
 #pragma region Variables
 // ================================================================================
 // Variables
@@ -658,13 +662,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     #endif /* ENABLE_COMM_THREAD */
 
     bool this_thread_idle = false;
-    int my_idle_order = -1;    
-    // at least try to execute this amout of normal tasks after rank runs out of offloadable tasks before assuming idle state
-    // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 0;
+    int my_idle_order = -1;
+    // at least try to execute this amout of normal OpenMP tasks after rank runs out of offloadable tasks before assuming idle state
+    // TODO: I guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
     int this_thread_num_attemps_standard_task = 0;
-    
-    // int tmp_count_trip = 0;
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
@@ -826,7 +827,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // } else {
         //     // increment attemps that might result in more target tasks
         //     this_thread_num_attemps_standard_task++;
-        //     #pragma omp taskyield
+        //     chameleon_taskyield(); // probably necessary to extract dtw core and call that in taskyield as well to ensure proper handling of variable that control exit condition
+        //     continue;
         // }
 
         // ========== Prio 5: check whether to abort procedure
@@ -837,16 +839,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
         if(_num_threads_idle >= num_threads_in_tw) {
             if(exit_condition_met(1,0)) {
-                // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
             }
-            // else {
-            //     tmp_count_trip++;
-            //    if(tmp_count_trip % 10000 == 0) {
-            //         DBP("chameleon_distributed_taskwait - idle - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
-            //         tmp_count_trip = 0;
-            //     }
-            // }
         }
     }
 

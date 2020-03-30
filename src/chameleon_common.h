@@ -670,7 +670,9 @@ class thread_safe_list_t {
     }
 
     bool find(T entry) {
+        this->m.lock();
         bool found = (std::find(this->list.begin(), this->list.end(), entry) != this->list.end());
+        this->m.unlock();
         return found;
     }
 };

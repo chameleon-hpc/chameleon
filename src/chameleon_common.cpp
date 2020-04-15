@@ -32,7 +32,7 @@ std::atomic<int> TAG_MAX_TASK_ID(65535);
 // settings to manipulate default migration strategy
 std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION(2);
 std::atomic<double> MIN_REL_LOAD_IMBALANCE_BEFORE_MIGRATION(0.05);
-std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(1);
+std::atomic<double> PERCENTAGE_DIFF_TASKS_TO_MIGRATE(0.5);
 std::atomic<int> OMP_NUM_THREADS_VAR(1);
 
 // settings to manipulate default replication strategy

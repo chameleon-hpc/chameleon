@@ -8,8 +8,9 @@
 #define MAX_REQUESTS 10000000
 
 RequestManager::RequestManager()
- : _id(0), _groupId(0), _current_request_array(0), _current_num_finished_requests(0) {
+ : _id(0), _groupId(0), _thread_request_info(200*8) {
  
+  _num_threads_in_dtw = -1;
   std::fill(&_num_posted_requests[0], &_num_posted_requests[5], 0);
   std::fill(&_num_completed_requests[0], &_num_completed_requests[5], 0);
   std::fill(&_num_posted_request_groups[0], &_num_posted_request_groups[5], 0);
@@ -126,54 +127,68 @@ void RequestManager::submitRequests( double startStamp, int tag, int rank,
   int gid=_groupId++;
   RequestGroupData request_group_data = {buffer, handler, rank, tag, type, startStamp, sum_bytes, tasks, num_tasks};
   _map_id_to_request_group_data.insert(std::make_pair(gid, request_group_data));
-  _outstanding_reqs_for_group.insert(std::make_pair(gid, n_requests));
+  _outstanding_reqs_for_group.insert(gid, n_requests);
 
   for(int i=0; i<n_requests; i++) {
     int rid=_id++;
  
     RequestData request_data = {gid, requests[i]};
 
+    DBP("Submitting request %d with type %s\n", rid, RequestType_values[type]);
     _map_rid_to_request_data.insert(std::make_pair(rid, request_data));
-    _request_queue.push(rid);
+    _request_queue.push_back(rid);    
   }
 }
 
-void RequestManager::progressRequests() {
-  //std::vector<MPI_Request> requests;
-  //std::unordered_map<int, int> vecid_to_rid;
+void RequestManager::progressRequests(int is_comm_thread) {
+  ThreadLocalRequestInfo* req_info = get_request_info_for_thread();
+  
+  // calc number of requests to get from queue
+  #if COMMUNICATION_MODE == 0
+  int num_req_grab = MAX_REQUESTS;
+  #elif COMMUNICATION_MODE == 1 || COMMUNICATION_MODE == 2
+  int num_req_grab = (_request_queue.size() / _num_threads_in_dtw) + 1;
+  if (num_req_grab < 2) num_req_grab = 2;
+  #else // COMMUNICATION_MODE == 3 or 4
+  // worker threads should grab less than comm thread and insert it back into the queue if requests not done
+  int num_req_grab = 1;
+  if (is_comm_thread) {
+    // grab half of the current queue
+    num_req_grab = (_request_queue.size() / 2) + 1;
+    // try to grab min 2 requests for making progress
+    if (num_req_grab < 2) num_req_grab = 2;
+  }
+  #endif
 
-    /*int i = 0;
-    while(!_request_queue.empty()) {
-        int rid = _request_queue.front();
-        _request_queue.pop();
-        MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
-        _current_request_array.push_back(request);
-        vecid_to_rid.insert(std::make_pair(i, rid));
-        i++;
-    }*/
- 
-  if(_current_request_array.size()==0) {
-    for(int i=0; i<MAX_REQUESTS && !_request_queue.empty(); i++) {
-      int rid = _request_queue.front();
-      _request_queue.pop();
-      MPI_Request request = _map_rid_to_request_data[rid].mpi_request;
-      _current_request_array.push_back(request);  
-      _current_vecid_to_rid.insert(std::make_pair(i, rid));
+  if(req_info->current_request_array.size()==0) {
+    for(int i=0; i<num_req_grab && !_request_queue.empty(); i++) {
+      bool succ = true;
+      int rid = _request_queue.pop_front_b(&succ);
+      if(succ) {
+        MPI_Request request = _map_rid_to_request_data.get(rid).mpi_request;
+        // get request type
+        // int cur_gid = _map_rid_to_request_data.get(rid).gid;
+        // RequestType cur_type = _map_id_to_request_group_data.get(cur_gid).type;
+        // DBP("Grabbing request %d with type %s\n", rid, RequestType_values[cur_type]);
+        req_info->current_request_array.push_back(request);  
+        req_info->current_rids.push_back(rid);
+      }
     }
   }
 
-  int n_requests = _current_request_array.size();
- 
-  if(n_requests==0) return;  
+  int n_requests = req_info->current_request_array.size(); 
+  if(n_requests==0) return;
 
   int outcount = 0;
-  std::vector<int> arr_of_indices(n_requests);
+  std::vector<int> arr_of_indices(n_requests, n_requests+2);
   std::vector<MPI_Status> arr_of_statuses(n_requests);
+
+  // RELP("Checking %d requests in total\n", n_requests);
 
 #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
    double cur_time = omp_get_wtime();
 #endif
-  int ierr = MPI_Testsome(n_requests, &_current_request_array[0], &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
+  int ierr = MPI_Testsome(n_requests, &(req_info->current_request_array[0]), &outcount, &(arr_of_indices[0]), &(arr_of_statuses[0]) );
   if(ierr!=MPI_SUCCESS) {
      int eclass, len;
      char estring[MPI_MAX_ERROR_STRING];
@@ -181,7 +196,7 @@ void RequestManager::progressRequests() {
      MPI_Error_string(ierr, estring, &len);
      fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
      for(int i=0; i<n_requests;i++) {
-        fprintf(stderr, "Request : %ld\n", _current_request_array[i]);
+        fprintf(stderr, "Request at position %d: %ld\n", i, req_info->current_request_array[i]);
         MPI_Error_class(arr_of_statuses[i].MPI_ERROR, &eclass);
         MPI_Error_string(arr_of_statuses[i].MPI_ERROR, estring, &len);
         fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
@@ -193,27 +208,36 @@ void RequestManager::progressRequests() {
    if(cur_time>CHAM_SLOW_COMMUNICATION_THRESHOLD)
      _num_slow_communication_operations++; 
 #endif
-  _current_num_finished_requests += outcount;
+  if(outcount >= 0) {
+    DBP("Finished %d requests in total out of %d\n", outcount, n_requests);
+    req_info->current_num_finished_requests += outcount;
+  }
 
-  for(int i=0; i<outcount; i++) {
+  // sort indices once
+  sort(arr_of_indices.begin(),arr_of_indices.end());
+
+  for(int i=outcount-1; i>=0; i--) {
     int idx = arr_of_indices[i];
-    int rid = _current_vecid_to_rid[idx];
+    int rid = req_info->current_rids[idx];
 
-    RequestData request_data = _map_rid_to_request_data[rid];
+    RequestData request_data = _map_rid_to_request_data.get(rid);
     int gid = request_data.gid;
     
-    RequestGroupData rg_data = _map_id_to_request_group_data[gid];
-    _num_completed_requests[rg_data.type]++;
+    RequestGroupData request_group_data = _map_id_to_request_group_data.get(gid);
+    _num_completed_requests[request_group_data.type]++;
 
-     _outstanding_reqs_for_group[gid]--;
+    DBP("Finished request %d with type %s and tag %ld\n", rid, RequestType_values[request_group_data.type], request_group_data.tag);
+
+    int remain_outstanding = _outstanding_reqs_for_group.decrement(gid); // threadsafe decrement and get
+    // cleanup lists
     _map_rid_to_request_data.erase(rid);
+    req_info->current_request_array.erase(req_info->current_request_array.begin()+idx);
+    req_info->current_rids.erase(req_info->current_rids.begin()+idx);
    
-    if(_outstanding_reqs_for_group[gid]==0) {
+    if(remain_outstanding <= 0) {
 #if CHAM_STATS_RECORD 
        double finishedStamp = omp_get_wtime();
 #endif
-       _outstanding_reqs_for_group.erase(gid);
-       RequestGroupData request_group_data = _map_id_to_request_group_data[gid];
        std::function<void(void*, int, int, cham_migratable_task_t**, int)> handler = request_group_data.handler;
        void* buffer = request_group_data.buffer;
        cham_migratable_task_t** tasks = request_group_data.tasks;
@@ -246,19 +270,20 @@ void RequestManager::progressRequests() {
        assert(false);
       }
        _map_id_to_request_group_data.erase(gid);
+       _outstanding_reqs_for_group.erase(gid);
     }
   }
 
-  if(_current_num_finished_requests==n_requests) {
-    _current_request_array.clear();
-    _current_vecid_to_rid.clear();
-    _current_num_finished_requests=0; 
+  #if COMMUNICATION_MODE == 3 || COMMUNICATION_MODE == 4
+  // insert requests in queue again if not done
+  if(!is_comm_thread) {
+    for(int s = 0; s < req_info->current_rids.size(); s++) {
+      _request_queue.push_back(req_info->current_rids[s]);
+    }
+    req_info->current_request_array.clear();
+    req_info->current_rids.clear();
   }
-  //for(int i=0; i<n_requests; i++) {
-  //  if(requests[i]!=MPI_REQUEST_NULL) {
-  //    _request_queue.push(vecid_to_rid[i]);
-  //  }
-  //}
+  #endif
 }
 
 void RequestManager::printRequestInformation() {
@@ -273,5 +298,15 @@ void RequestManager::printRequestInformation() {
 }
 
 int RequestManager::getNumberOfOutstandingRequests() {
-  return _request_queue.size()-_current_num_finished_requests;
+  ThreadLocalRequestInfo* req_info = get_request_info_for_thread();
+  return _request_queue.size()-req_info->current_num_finished_requests;
+}
+
+inline RequestManager::ThreadLocalRequestInfo* RequestManager::get_request_info_for_thread() {
+  RequestManager::ThreadLocalRequestInfo* val = _thread_request_info[__ch_get_gtid()*8]; // padding to avoid false sharing
+  if(!val) {
+    val = new RequestManager::ThreadLocalRequestInfo();
+    _thread_request_info[__ch_get_gtid()*8] = val;
+  }
+  return val;
 }

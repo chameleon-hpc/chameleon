@@ -123,7 +123,7 @@ std::atomic<int> _num_ranks_not_completely_idle(INT_MAX);
 
 // number of active migrations per target rank
 // desired: should block new migration to target as long as there are still active migrations ongoing
-std::vector<int> _active_migrations_per_target_rank;
+std::atomic<int> _active_migrations_per_target_rank[1000];
 
 pthread_t           _th_service_actions;
 std::atomic<int>    _th_service_actions_created(0);
@@ -140,6 +140,9 @@ int event_offload_decision       = -1;
 int event_send_back              = -1;
 int event_progress_send          = -1;
 int event_progress_recv          = -1;
+
+// lock used to ensure that currently only a single thread is doing communication progression
+std::mutex _mtx_comm_progression;
 
 chameleon_comm_thread_session_data_t _session_data;
 
@@ -465,7 +468,7 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         	_cancelled_task_ids.erase(task->task_id);
         	free_migratable_task(task, 1);
         	_num_replicated_remote_tasks_outstanding--;
-            _num_remote_tasks_outstanding --;
+            _num_remote_tasks_outstanding--;
             DBP("receive_handler_data - late cancel, decrement stolen outstanding for task id: %d  new count %d\n", task->task_id, _num_remote_tasks_outstanding.load());
             DBP("receive_handler_data - conducted late cancel for task id: %d\n", task->task_id);
 
@@ -730,6 +733,10 @@ static void receive_back_handler(void* buffer, int tag, int source, cham_migrata
         assert(_num_local_tasks_outstanding>=0);
         DBP("receive_back_handler -  local outstanding count for task %ld, new count %d\n", task_entry->task_id, _num_local_tasks_outstanding.load());
 
+        // handle external finish callback
+        if(task_entry->cb_task_finish_func_ptr) {
+            task_entry->cb_task_finish_func_ptr(task_entry->cb_task_finish_func_param);
+        }
         //if(task_entry->num_outstanding_recvbacks==0)
         //  free_migratable_task(task_entry, false);
     }
@@ -745,13 +752,18 @@ static void receive_back_trash_handler(void* buffer, int tag, int source, cham_m
         DBP("receive_remote_tasks_trash - outstanding: %d for task id: %d\n",  task->num_outstanding_recvbacks, task->task_id);
         
         if(task->num_outstanding_recvbacks==0) {
-        	//_map_offloaded_tasks_with_outputs.erase(tag);
-                                 // mark locally created task finished
-		  _unfinished_locally_created_tasks.remove(task->task_id);
-		  _map_overall_tasks.erase(task->task_id);
+            //_map_offloaded_tasks_with_outputs.erase(tag);
+            // mark locally created task finished
+            _unfinished_locally_created_tasks.remove(task->task_id);
+            _map_overall_tasks.erase(task->task_id);
 
-		  if(!task->is_replicated_task)
-		    free_migratable_task(task, false);
+            // handle external finish callback
+            if(task->cb_task_finish_func_ptr) {
+                task->cb_task_finish_func_ptr(task->cb_task_finish_func_param);
+            }
+
+            if(!task->is_replicated_task)
+                free_migratable_task(task, false);
         }
     }
     if(buffer)
@@ -1131,26 +1143,29 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
     //      2. image index
     //      3. offset of entry point inside image
     //      4. task id
-    //      5. number of arguments = int32_t
-    //      6. array with argument sizes = n_args * int64_t
-    //      7. array with argument offsets = n_args * int64_t
-    //      8. array with argument types = n_args * int64_t
-    //      9. array with values (only for OFFLOAD_DATA_PACKING_TYPE == 0 )
-    //     10. annotations
-    //     11. tool data if available
+    //      5. is_replicated
+    //      6. is_replicated
+    //      7. number of arguments = int32_t
+    //      8. array with argument sizes = n_args * int64_t
+    //      9. array with argument offsets = n_args * int64_t
+    //      10. array with argument types = n_args * int64_t
+    //      11. array with values (only for OFFLOAD_DATA_PACKING_TYPE == 0 )
+    //      12. annotations
+    //      13. tool data if available
 
-    int total_size = sizeof(int32_t);                   // 0. number of tasks
+    int total_size = sizeof(int32_t);               // 0. number of tasks
 
     for (int i = 0; i < num_tasks; i++) {
-        total_size += sizeof(intptr_t)              // 1. target entry pointer
-            + sizeof(int32_t)                       // 2. img index
-            + sizeof(ptrdiff_t)                     // 3. offset inside image
-            + sizeof(TYPE_TASK_ID)                  // 4. task id
-            + sizeof(int32_t)                       // 5. number of arguments
-            + sizeof(int32_t)                       // is_replicated
-            + tasks[i]->arg_num * sizeof(int64_t)    // 6. argument sizes
-            + tasks[i]->arg_num * sizeof(ptrdiff_t)  // 7. offsets
-            + tasks[i]->arg_num * sizeof(int64_t);   // 8. argument types
+        total_size += sizeof(intptr_t)                  // 1. target entry pointer
+            + sizeof(int32_t)                           // 2. img index
+            + sizeof(ptrdiff_t)                         // 3. offset inside image
+            + sizeof(TYPE_TASK_ID)                      // 4. task id
+            + sizeof(int32_t)                           // 5. is_replicated
+            + sizeof(int32_t)                           // 6. is_migrated
+            + sizeof(int32_t)                           // 7. number of arguments
+            + tasks[i]->arg_num * sizeof(int64_t)       // 8. argument sizes
+            + tasks[i]->arg_num * sizeof(ptrdiff_t)     // 9. offsets
+            + tasks[i]->arg_num * sizeof(int64_t);      // 10. argument types
 
         #if OFFLOAD_DATA_PACKING_TYPE == 0
         tasks[i]->buffer_size_output_data = 0;
@@ -1171,9 +1186,10 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
     for (int i = 0; i < num_tasks; i++) {
         int32_t task_annotations_buf_size = 0;
         void *task_annotations_buffer = nullptr;
+        total_size += sizeof(int32_t);
         if(tasks[i]->task_annotations) {
             task_annotations_buffer = tasks[i]->task_annotations->pack(&task_annotations_buf_size);
-            total_size += sizeof(int32_t) + task_annotations_buf_size; // size information + buffer size
+            total_size += task_annotations_buf_size; // size information + buffer size
         }
         annotation_sizes[i] = task_annotations_buf_size;
         annotation_buffers[i] = task_annotations_buffer;
@@ -1225,31 +1241,32 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
         ((TYPE_TASK_ID *) cur_ptr)[0] = tasks[i]->task_id;
         cur_ptr += sizeof(TYPE_TASK_ID);
 
-        // 5. number of arguments
-        ((int32_t *) cur_ptr)[0] = tasks[i]->arg_num;
-        cur_ptr += sizeof(int32_t);
-
-        // 6. replication info
+        // 5. replication info
         ((int32_t *) cur_ptr)[0] = tasks[i]->is_replicated_task;
         cur_ptr += sizeof(int32_t);
 
+        // 6. is_migrated
         ((int32_t *) cur_ptr)[0] = tasks[i]->is_migrated_task;
-         cur_ptr += sizeof(int32_t);
+        cur_ptr += sizeof(int32_t);
 
-        // 7. argument sizes
+        // 7. number of arguments
+        ((int32_t *) cur_ptr)[0] = tasks[i]->arg_num;
+        cur_ptr += sizeof(int32_t);
+
+        // 8. argument sizes
         memcpy(cur_ptr, &(tasks[i]->arg_sizes[0]), tasks[i]->arg_num * sizeof(int64_t));
         cur_ptr += tasks[i]->arg_num * sizeof(int64_t);
 
-        // 8. offsets
+        // 9. offsets
         memcpy(cur_ptr, &(tasks[i]->arg_tgt_offsets[0]), tasks[i]->arg_num * sizeof(ptrdiff_t));
         cur_ptr += tasks[i]->arg_num * sizeof(ptrdiff_t);
 
-        // 9. argument types
+        // 10. argument types
         memcpy(cur_ptr, &(tasks[i]->arg_types[0]), tasks[i]->arg_num * sizeof(int64_t));
         cur_ptr += tasks[i]->arg_num * sizeof(int64_t);
 
         #if OFFLOAD_DATA_PACKING_TYPE == 0
-        // 10. loop through arguments and copy values
+        // 11. loop through arguments and copy values
         for(int32_t i_arg = 0; i_arg < tasks[i]->arg_num; i_arg++) {
             int is_lit      = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
             int is_to       = tasks[i]->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
@@ -1268,6 +1285,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
         #endif /* OFFLOAD_DATA_PACKING_TYPE */
 
         #if CHAM_MIGRATE_ANNOTATIONS
+        // 12. annotations
         int32_t task_annotations_buf_size = annotation_sizes[i];
         void * task_annotations_buffer = annotation_buffers[i];
 
@@ -1283,6 +1301,7 @@ void * encode_send_buffer(cham_migratable_task_t **tasks, int32_t num_tasks, int
         #endif /* CHAM_MIGRATE_ANNOTATIONS */
 
         #if CHAMELEON_TOOL_SUPPORT
+        // 13. tool data
         if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
             int32_t task_tool_buf_size  = tool_data_buffer_sizes[i];
             void * task_tool_buffer     = tool_data_buffers[i];
@@ -1351,16 +1370,17 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         task->task_id = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
 
-        // 5. number of arguments
-        task->arg_num = ((int32_t *) cur_ptr)[0];
-        cur_ptr += sizeof(int32_t);
-
-        // 6. replication info
+        // 5. replication info
         task->is_replicated_task = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
 
+        // 6. is_migrated
         task->is_migrated_task = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
+
+        // 7. number of arguments
+        task->arg_num = ((int32_t *) cur_ptr)[0];
+        cur_ptr += sizeof(int32_t);        
 
         DBP("decode_send_buffer - task_entry (task_id=%ld): " DPxMOD "(idx:%d;offset:%d), num_args: %d\n", task->task_id, DPxPTR(task->tgt_entry_ptr), task->idx_image, (int)task->entry_image_offset, task->arg_num);
 
@@ -1373,19 +1393,19 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         // resize data structure
         task->ReSizeArrays(task->arg_num);
         
-        // 7. argument sizes
+        // 8. argument sizes
         memcpy(&(task->arg_sizes[0]), cur_ptr, task->arg_num * sizeof(int64_t));
         cur_ptr += task->arg_num * sizeof(int64_t);
 
-        // 8. argument types
+        // 9. argument types
         memcpy(&(task->arg_tgt_offsets[0]), cur_ptr, task->arg_num * sizeof(ptrdiff_t));
         cur_ptr += task->arg_num * sizeof(ptrdiff_t);
 
-        // 9. offsets
+        // 10. offsets
         memcpy(&(task->arg_types[0]), cur_ptr, task->arg_num * sizeof(int64_t));
         cur_ptr += task->arg_num * sizeof(int64_t);
 
-        // 10. loop through arguments and copy values
+        // 11. loop through arguments and copy values
         for(int32_t i_arg = 0; i_arg < task->arg_num; i_arg++) {
             int is_lit      = task->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_LITERAL;
             int is_to       = task->arg_types[i_arg] & CHAM_OMP_TGT_MAPTYPE_TO;
@@ -1421,7 +1441,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         }
 
         #if CHAM_MIGRATE_ANNOTATIONS
-        // task annotations
+        // 12. task annotations
         int32_t task_annotations_buf_size = ((int32_t *) cur_ptr)[0];
         cur_ptr += sizeof(int32_t);
         if(task_annotations_buf_size > 0) {
@@ -1432,6 +1452,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
         #endif
 
         #if CHAMELEON_TOOL_SUPPORT
+        // 13. task annotations
         if(cham_t_status.enabled && cham_t_status.cham_t_callback_encode_task_tool_data && cham_t_status.cham_t_callback_decode_task_tool_data) {
             // first get size of buffer
             int32_t task_tool_buf_size = ((int32_t *) cur_ptr)[0];
@@ -1814,11 +1835,8 @@ inline void action_task_migration() {
             } else {
                 for(int r=0; r<_session_data.tasks_to_offload.size(); r++) {
                     if(r != chameleon_comm_rank) {
-
-                //     	 printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], _session_data.tasks_to_offload[r]);
-                    	if(_active_migrations_per_target_rank[r] == 0) {
-
-                            // block until no active offload for rank any more
+                        // block until no active offload for rank any more
+                        if(_active_migrations_per_target_rank[r].load() == 0) {
                             int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
                             if(num_tasks_to_migrate)
                      	      printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d load rank 0: %d load rank 1: %d\n", r, _active_migrations_per_target_rank[r], num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
@@ -2330,7 +2348,7 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
         bool post_receive = true;
         if(task_entry->is_replicated_task) {
           //flush sending queue as otherwise race may occur where task has been sent, but is not in replicated_local_task queue
-          request_manager_send.progressRequests();
+          request_manager_send.progressRequests(0);
           cham_migratable_task_t *task_from_queue = _replicated_local_tasks.pop_task_by_id(task_entry->task_id);
           if(task_from_queue==nullptr) post_receive=false;
         }
@@ -2647,11 +2665,11 @@ inline void action_task_replication_send() {
   }
 }
 
-void action_communication_progression() {
+void action_communication_progression(int comm_thread) {
     #if ENABLE_TASK_MIGRATION
     #if CHAM_REPLICATION_MODE>=2
     _mtx_cancellation.lock();
-    request_manager_cancel.progressRequests();
+    request_manager_cancel.progressRequests(comm_thread);
     _mtx_cancellation.unlock();
     #endif
     #if CHAM_REPLICATION_MODE==4
@@ -2660,12 +2678,12 @@ void action_communication_progression() {
     #ifdef TRACE
     VT_BEGIN_CONSTRAINED(event_progress_send);
     #endif
-    request_manager_send.progressRequests();
+    request_manager_send.progressRequests(comm_thread);
     #ifdef TRACE
     VT_END_W_CONSTRAINED(event_progress_send);
     VT_BEGIN_CONSTRAINED(event_progress_recv);
     #endif
-    request_manager_receive.progressRequests();
+    request_manager_receive.progressRequests(comm_thread);
     #ifdef TRACE
     VT_END_W_CONSTRAINED(event_progress_recv);
     #endif
@@ -2677,6 +2695,12 @@ void action_communication_progression() {
 
     int request_gather_avail = 0;
     // avoid overwriting request and keep it up to date
+    #if COMMUNICATION_MODE == 2
+    if (_mtx_comm_progression.try_lock()) {
+    #elif COMMUNICATION_MODE != 1
+    if(comm_thread) {  // only execute that code if called from communication thread
+    #endif /* COMMUNICATION_MODE */
+
     if(!_session_data.request_gather_created) {
         #ifdef TRACE
         VT_BEGIN_CONSTRAINED(event_create_gather_request);
@@ -2748,6 +2772,9 @@ void action_communication_progression() {
             cleanup_work_phase();
 
             DBP("action_communication_progression - thread went to sleep again due to exit condition\n");
+            #if COMMUNICATION_MODE == 2
+            _mtx_comm_progression.unlock();
+            #endif
             return;
         }
         // else if(!request_gather_created) {
@@ -2875,10 +2902,18 @@ void action_communication_progression() {
         }
     }
     #endif
+    #if COMMUNICATION_MODE == 2
+    _mtx_comm_progression.unlock();
+    }
+    #elif COMMUNICATION_MODE != 1
+    }
+    #endif
 }
 
 void* comm_thread_action(void* arg) {
+    #if COMMUNICATION_MODE != 4
     pin_thread_to_last_core(1);
+    #endif
     // trigger signal to tell that thread is running now
     pthread_mutex_lock( &_th_service_actions_mutex );
     _th_service_actions_created = 1;
@@ -2944,7 +2979,7 @@ void* comm_thread_action(void* arg) {
         #endif
 
         // call function for communication progression
-        action_communication_progression();
+        action_communication_progression(1);
     }
 }
 #pragma endregion CommThread

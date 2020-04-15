@@ -22,6 +22,10 @@
 #define DEADLOCK_WARNING_TIMEOUT 20
 #endif
 
+#ifndef MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK
+#define MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK 3
+#endif
+
 #pragma region Variables
 // ================================================================================
 // Variables
@@ -368,7 +372,6 @@ int32_t chameleon_init() {
     _num_replicated_local_tasks_per_victim.resize(chameleon_comm_size);
 
     _outstanding_jobs_ranks.resize(chameleon_comm_size);
-    _active_migrations_per_target_rank.resize(chameleon_comm_size);
     _load_info_ranks.resize(chameleon_comm_size);
     for(int i = 0; i < chameleon_comm_size; i++) {
         _outstanding_jobs_ranks[i] = 0;
@@ -577,6 +580,11 @@ void dtw_startup() {
     //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _session_data.num_threads_in_tw     = omp_get_num_threads();
+    
+    request_manager_send._num_threads_in_dtw    = omp_get_num_threads();
+    request_manager_receive._num_threads_in_dtw = omp_get_num_threads();
+    request_manager_cancel._num_threads_in_dtw  = omp_get_num_threads();
+
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 
@@ -587,7 +595,7 @@ void dtw_startup() {
     // need to set flags to ensure that exit condition is working with deactivated comm thread and migration
     _comm_thread_load_exchange_happend  = 1; 
     _num_ranks_not_completely_idle      = 0;
-    #endif /* ENABLE_COMM_THREAD */
+    #endif /* ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION */
 
     _flag_dtw_active = 1;
     _mtx_taskwait.unlock();
@@ -666,13 +674,10 @@ int32_t chameleon_distributed_taskwait(int nowait) {
     #endif /* ENABLE_COMM_THREAD */
 
     bool this_thread_idle = false;
-    int my_idle_order = -1;    
-    // at least try to execute this amout of normal tasks after rank runs out of offloadable tasks before assuming idle state
-    // TODO: i guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
-    int MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK = 0;
+    int my_idle_order = -1;
+    // at least try to execute this amout of normal OpenMP tasks after rank runs out of offloadable tasks before assuming idle state
+    // TODO: I guess a more stable way would be to have an OMP API call to get the number of outstanding tasks (with and without dependencies)
     int this_thread_num_attemps_standard_task = 0;
-    
-    // int tmp_count_trip = 0;
 
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_sync_region) {
@@ -710,12 +715,17 @@ int32_t chameleon_distributed_taskwait(int nowait) {
 
         #if COMMUNICATION_MODE == 1
         if (_mtx_comm_progression.try_lock()) {
+        #endif /* COMMUNICATION_MODE */
             //for (int rep = 0; rep < 2; rep++) {
             // need to check whether exit condition already met
             //if (!exit_condition_met(1,0))
-            action_communication_progression();
+            #if COMMUNICATION_MODE > 0
+            action_communication_progression(0);
+            #endif /* COMMUNICATION_MODE */
             //}
+        #if COMMUNICATION_MODE == 1
             _mtx_comm_progression.unlock();
+            
         }
         #endif /* COMMUNICATION_MODE */
 
@@ -831,7 +841,8 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         // } else {
         //     // increment attemps that might result in more target tasks
         //     this_thread_num_attemps_standard_task++;
-        //     #pragma omp taskyield
+        //     chameleon_taskyield(); // probably necessary to extract dtw core and call that in taskyield as well to ensure proper handling of variable that control exit condition
+        //     continue;
         // }
 
         // ========== Prio 5: check whether to abort procedure
@@ -841,18 +852,9 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //      - all threads entered the taskwait function (on all processes) and are idling
 
         if(_num_threads_idle >= num_threads_in_tw) {
-            // int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
             if(exit_condition_met(1,0)) {
-                // DBP("chameleon_distributed_taskwait - break - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
                 break;
             }
-            // else {
-            //     tmp_count_trip++;
-            //    if(tmp_count_trip % 10000 == 0) {
-            //         DBP("chameleon_distributed_taskwait - idle - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", _comm_thread_load_exchange_happend, _outstanding_jobs_sum.load(), cp_ranks_not_completely_idle);
-            //         tmp_count_trip = 0;
-            //     }
-            // }
         }
     }
 
@@ -988,6 +990,11 @@ void* chameleon_create_task_fortran(void * entry_point, int num_args, void* args
     chameleon_map_data_entry_t* tmp_args = (chameleon_map_data_entry_t*) args;
     cham_migratable_task_t* tmp_task = chameleon_create_task(entry_point, num_args, tmp_args);
     return (void*)tmp_task;
+}
+
+void chameleon_set_callback_task_finish(cham_migratable_task_t *task, chameleon_external_callback_t func_ptr, void *func_param) {
+    task->cb_task_finish_func_ptr = func_ptr;
+    task->cb_task_finish_func_param = func_param;
 }
 
 int32_t chameleon_add_task(cham_migratable_task_t *task) {
@@ -1328,6 +1335,10 @@ inline int32_t process_replicated_local_task() {
         assert(_num_local_tasks_outstanding>=0);
         DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
 //#endif
+        // handle external finish callback
+        if(replicated_task->cb_task_finish_func_ptr) {
+            replicated_task->cb_task_finish_func_ptr(replicated_task->cb_task_finish_func_param);
+        }
 
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
@@ -1470,7 +1481,7 @@ inline int32_t process_remote_task() {
         // we can now decrement outstanding counter because there is nothing to send back
         _num_remote_tasks_outstanding--;
         DBP("process_remote_task - decrement stolen outstanding count for task %ld\n", task->task_id);
-
+        // TODO: how to handle external finish callback? maybe handshake with owner?
         free_migratable_task(task, true);
     }
 
@@ -1532,6 +1543,11 @@ inline int32_t process_local_task() {
     _num_local_tasks_outstanding--;
     assert(_num_local_tasks_outstanding>=0);
     DBP("process_local_task - decrement local outstanding count for task %ld new %d\n", task->task_id, _num_local_tasks_outstanding.load());
+
+    // handle external finish callback
+    if(task->cb_task_finish_func_ptr) {
+        task->cb_task_finish_func_ptr(task->cb_task_finish_func_param);
+    }
 
 #if CHAM_STATS_RECORD
     _num_executed_tasks_local++;

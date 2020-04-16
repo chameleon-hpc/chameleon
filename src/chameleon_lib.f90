@@ -71,6 +71,18 @@ interface
    implicit none
    integer :: chameleon_finalize
  end function chameleon_finalize
+
+ !void chameleon_set_callback_task_finish(cham_migratable_task_t *task, chameleon_external_callback_t func_ptr, void *func_param);
+
+ function chameleon_set_callback_task_finish(task, func_ptr, func_param) bind(c, name="chameleon_set_callback_task_finish")
+    use iso_c_binding
+    implicit none
+    type(c_ptr), value, intent(in) :: task
+    type(c_funptr), value, intent(in) :: func_ptr
+    type(c_ptr),value, intent(in) :: func_param
+    integer :: chameleon_set_callback_task_finish
+ end function chameleon_set_callback_task_finish
+
 end interface
 
   contains
@@ -83,6 +95,7 @@ end interface
      
      chameleon_create_task = chameleon_create_task_fortran(c_funloc(entry), nargs, c_loc(args(1)))
    end function chameleon_create_task
+
 
 !  function chameleon_add_task_manual(entry, nargs, args)
 !    use iso_c_binding

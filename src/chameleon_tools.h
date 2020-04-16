@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include <dlfcn.h>
 
-#include <list>
-#include <mutex>
-#include <atomic>
+//#include <list>
+//#include <mutex>
+//#include <atomic>
 
 #pragma region Enums and Definitions
 /*****************************************************************************
@@ -200,10 +200,10 @@ typedef struct cham_t_task_info_t {
     double end_time;    // 4
     double mig_time;    // 5
     double exe_time;    // 6
-    bool migrated;      // 7
+    int migrated;      // 7
 } cham_t_task_info_t;
 
-typedef struct cham_t_task_lis_t {
+/*typedef struct cham_t_task_lis_t {
     std::list<cham_t_task_info_t*> task_list;
     std::mutex m;
     std::atomic<size_t> list_size;
@@ -247,7 +247,7 @@ typedef struct cham_t_task_lis_t {
         this->m.unlock();
     }
 
-} cham_t_task_lis_t;
+} cham_t_task_lis_t; */
 
 /*****************************************************************************
  * Getter / Setter

@@ -141,8 +141,6 @@ int event_send_back              = -1;
 int event_progress_send          = -1;
 int event_progress_recv          = -1;
 
-// lock used to ensure that currently only a single thread is doing communication progression
-std::mutex _mtx_comm_progression;
 
 chameleon_comm_thread_session_data_t _session_data;
 
@@ -319,7 +317,8 @@ void cleanup_work_phase() {
     for(int i=0; i<_num_replicated_local_tasks_per_victim.size(); i++)
     	_num_replicated_local_tasks_per_victim[i] = 0;
 
-    _active_migrations_per_target_rank.clear();
+     
+    //_active_migrations_per_target_rank.clear();
 
     _num_replicated_local_tasks_outstanding_compute = 0;
 #if CHAM_REPLICATION_MODE==4

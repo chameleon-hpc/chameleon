@@ -1838,7 +1838,7 @@ inline void action_task_migration() {
                         if(_active_migrations_per_target_rank[r].load() == 0) {
                             int num_tasks_to_migrate = _session_data.tasks_to_offload[r];
                             if(num_tasks_to_migrate)
-                     	      printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d load rank 0: %d load rank 1: %d\n", r, _active_migrations_per_target_rank[r], num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
+                     	      //printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d load rank 0: %d load rank 1: %d\n", r, _active_migrations_per_target_rank[r], num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
                      	    //DBP("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
 
 			    #if CHAM_REPLICATION_MODE==4
@@ -1848,7 +1848,7 @@ inline void action_task_migration() {
             //            	    tasks_to_activate = 0;
                                     //int tasks_to_activate =  std::min( (int) MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE.load(),std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate));  // std::min(_num_replicated_local_tasks_per_victim[r], num_tasks_to_migrate);
                         	    if(tasks_to_activate>0) {
-                     	               printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d, num_tasks_to_activate = %d load rank 0: %d load rank 1: %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate, tasks_to_activate, _load_info_ranks[0], _load_info_ranks[1]);
+                     	        //       printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d, num_tasks_to_activate = %d load rank 0: %d load rank 1: %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate, tasks_to_activate, _load_info_ranks[0], _load_info_ranks[1]);
                         	       DBP("action_task_migration - activating %d replicated tasks on rank %d\n", tasks_to_activate, r);
                         	       activate_replicated_tasks_on_rank(tasks_to_activate, r);
                             	       _num_replicated_local_tasks_per_victim[r]-= tasks_to_activate;
@@ -1864,8 +1864,8 @@ inline void action_task_migration() {
                             //continue;
 			    #endif
                      	    //        printf("action_task_migratino, active migrations for %d = %d, num_to_migrate = %d\n", r , _active_migrations_per_target_rank[r], num_tasks_to_migrate);
-                     	    if(num_tasks_to_migrate)
-                                       printf("action_task_migration, rank %d , num_to_migrate = %d, load rank 0 = %d, load rank 1 =%d\n", r, num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
+                     	    //if(num_tasks_to_migrate)
+                                  //     printf("action_task_migration, rank %d , num_to_migrate = %d, load rank 0 = %d, load rank 1 =%d\n", r, num_tasks_to_migrate, _load_info_ranks[0], _load_info_ranks[1]);
 
                             if(num_tasks_to_migrate==0) continue;
  
@@ -2103,7 +2103,7 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
           _num_remote_tasks_outstanding--; assert(_num_remote_tasks_outstanding>=0);
         DBP("receive_remote_tasks(cancel) - decrement stolen outstanding count for task %ld new %d\n", task_id, _num_remote_tasks_outstanding.load());
 
-        free_migratable_task(res);
+        free_migratable_task(res, 1);
         #if CHAM_STATS_RECORD
         _num_tasks_canceled++;
         #endif

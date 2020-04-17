@@ -89,11 +89,12 @@ end interface
    type(c_ptr) function chameleon_create_task(entry, nargs, args)
      use iso_c_binding
      implicit none
-     procedure(),pointer, intent(in) :: entry
+     !procedure(),pointer, intent(in) :: entry
+     type(c_funptr), intent(in) :: entry
      integer(kind=c_int) :: nargs
      type(map_entry),pointer,dimension(:), intent(in) :: args
      
-     chameleon_create_task = chameleon_create_task_fortran(c_funloc(entry), nargs, c_loc(args(1)))
+     chameleon_create_task = chameleon_create_task_fortran(entry, nargs, c_loc(args(1)))
    end function chameleon_create_task
 
 

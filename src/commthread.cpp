@@ -64,7 +64,9 @@ std::atomic<int32_t> _num_replicated_local_tasks_outstanding_sends(0);
 std::atomic<int32_t> _num_replicated_local_tasks_outstanding_compute(0);
 
 thread_safe_task_list_t _replicated_remote_tasks;
+thread_safe_task_list_t _replicated_migrated_tasks;
 std::atomic<int32_t> _num_replicated_remote_tasks_outstanding(0);
+std::atomic<int32_t> _num_replicated_and_migrated_remote_tasks_outstanding(0);
 
 // list with stolen task entries that need output data transfer
 thread_safe_task_list_t _remote_tasks_send_back;
@@ -464,9 +466,11 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         cham_migratable_task_t *task = tasks[i_task];
         // check if task has already been cancelled
         if(_cancelled_task_ids.find(task->task_id)!=_cancelled_task_ids.end()) {
-        	_cancelled_task_ids.erase(task->task_id);
-        	free_migratable_task(task, 1);
-        	_num_replicated_remote_tasks_outstanding--;
+            _cancelled_task_ids.erase(task->task_id);
+            if(task->is_migrated_task)
+              _num_replicated_and_migrated_remote_tasks_outstanding--;
+            free_migratable_task(task, 1);
+            _num_replicated_remote_tasks_outstanding--;
             _num_remote_tasks_outstanding--;
             DBP("receive_handler_data - late cancel, decrement stolen outstanding for task id: %d  new count %d\n", task->task_id, _num_remote_tasks_outstanding.load());
             DBP("receive_handler_data - conducted late cancel for task id: %d\n", task->task_id);
@@ -482,6 +486,8 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         else
 #if  REPLICATION_PRIORITIZE_MIGRATED==0 && CHAM_REPLICATION_MODE==3
            _replicated_remote_tasks.push_back(task);
+#elif REPLICATION_PRIORITIZE_MIGRATED==1 && CHAM_REPLICATION_MODE==3
+           _replicated_migrated_tasks.push_back(task);
 #else
            _stolen_remote_tasks.push_back(task);
 #endif
@@ -522,7 +528,10 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
         p_tasks[i_task] = list_tasks[i_task];
 #if CHAM_REPLICATION_MODE!=4
         if(p_tasks[i_task]->is_replicated_task)
-        	_num_replicated_remote_tasks_outstanding++;
+          _num_replicated_remote_tasks_outstanding++;
+        if(p_tasks[i_task]->is_migrated_task)
+          _num_replicated_and_migrated_remote_tasks_outstanding++;       
+
 #else // CHAM_REPLICATION_MODE==4
         if(p_tasks[i_task]->is_migrated_task) {
             DBP("receive_handler - increment stolen outstanding count for tag %d by %d, new count %d\n", tag, n_tasks, _num_remote_tasks_outstanding.load());
@@ -680,6 +689,8 @@ static void send_back_handler(void* buffer, int tag, int source, cham_migratable
 #if CHAM_REPLICATION_MODE!=4
             if(task->is_replicated_task)
             	_num_replicated_remote_tasks_outstanding--;
+            if(task->is_migrated_task)
+              _num_replicated_and_migrated_remote_tasks_outstanding--;
 #endif
             _num_remote_tasks_outstanding--;
             DBP("send_back_stolen_tasks - decrement stolen outstanding count for task %ld new count: %ld\n", task->task_id, _num_remote_tasks_outstanding.load());
@@ -1598,6 +1609,7 @@ inline void action_create_gather_request() {
     int32_t num_tasks_local = _local_tasks.dup_size();
     int32_t num_tasks_replicated_local = _replicated_local_tasks.dup_size();
     int32_t num_tasks_replicated_remote = _replicated_remote_tasks.dup_size();
+    int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size()+ _replicated_migrated_tasks.dup_size();
 
     assert(num_tasks_local>=0);
     assert(num_tasks_replicated_local>=0);
@@ -1605,7 +1617,6 @@ inline void action_create_gather_request() {
 
 
     TYPE_TASK_ID* ids_local = nullptr;
-    int32_t num_tasks_stolen = _stolen_remote_tasks.dup_size();
     TYPE_TASK_ID* ids_stolen = nullptr;
     TYPE_TASK_ID* ids_local_rep = nullptr;
     TYPE_TASK_ID* ids_stolen_rep = nullptr;
@@ -2092,6 +2103,11 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
       is_active = true;
     }
 
+    if(!res) {
+      res = _replicated_migrated_tasks.pop_task_by_id(task_id);
+      is_active = true;
+    }
+
     if(res) {
       DBP("action_handle_cancel_request - cancelling task with task_id %ld\n", task_id);
       _map_tag_to_remote_task.find_and_erase(task_id);
@@ -2101,6 +2117,9 @@ inline void action_handle_cancel_request(MPI_Status *cur_status_cancel) {
 
 #if CHAM_REPLICATION_MODE!=4
         _num_replicated_remote_tasks_outstanding--; assert(_num_replicated_remote_tasks_outstanding>=0);
+
+        if(res->is_migrated_task)
+            _num_replicated_and_migrated_remote_tasks_outstanding--;
 #endif
         // decrement load counter and ignore send back
         if(is_active)

@@ -142,7 +142,9 @@
 #endif
 
 #ifndef REPLICATION_PRIORITIZE_MIGRATED
-#define REPLICATION_PRIORITIZE_MIGRATED 0
+//#define REPLICATION_PRIORITIZE_MIGRATED 0 // migrated tasks have same priority as a-priori replicated tasks, Todo(Philipp): should be removed, 1 should be default
+#define REPLICATION_PRIORITIZE_MIGRATED 1 // migrated tasks have low priority but higher priority than a-priori replicated tasks
+//#define REPLICATION_PRIORITIZE_MIGRATED 2 // migrated tasks have high priority
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT

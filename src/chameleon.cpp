@@ -106,6 +106,7 @@ int32_t execute_target_task(cham_migratable_task_t *task);
 int32_t process_local_task();
 int32_t process_remote_task();
 int32_t process_replicated_local_task();
+int32_t process_replicated_migrated_task();
 int32_t process_replicated_remote_task();
 #pragma endregion Forward Declarations
 
@@ -802,7 +803,29 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
 
         #if CHAM_REPLICATION_MODE<4
-        // ========== Prio 4: work on replicated remote tasks
+        // ========== Prio 5: work on replicated migrated tasks
+		if(!_replicated_migrated_tasks.empty()) {
+
+			#if SHOW_WARNING_DEADLOCK
+			last_time_doing_sth_useful = omp_get_wtime();
+			#endif
+
+			if(this_thread_idle) {
+				// decrement counter again
+				my_idle_order = --_num_threads_idle;
+				DBP("chameleon_distributed_taskwait - _num_threads_idle decr: %d\n", my_idle_order);
+				this_thread_idle = false;
+			}
+			// this_thread_num_attemps_standard_task = 0;
+
+			// try to execute a local task
+			res = process_replicated_migrated_task();
+
+			if(res != CHAM_REPLICATED_TASK_NONE)
+				continue;
+		}
+
+        // ========== Prio 6: work on replicated remote tasks
         if(!_replicated_remote_tasks.empty()) {
 
             #if SHOW_WARNING_DEADLOCK
@@ -1173,6 +1196,7 @@ int32_t execute_target_task(cham_migratable_task_t *task) {
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_change_freq_for_execution) {
         int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task, _load_info_ranks[chameleon_comm_rank], _total_created_tasks_per_rank);
+        //int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task, _num_local_tasks_outstanding.load()-_num_replicated_and_migrated_remote_tasks_outstanding.load(), _total_created_tasks_per_rank);
         // make the process slower by sleep
         DBP("execute_target_task - noise_time = %d\n", noise_time);
         if (noise_time != 0)
@@ -1418,6 +1442,70 @@ inline int32_t process_replicated_remote_task() {
   
     DBP("process_replicated_remote_task (exit)\n");
 }
+
+inline int32_t process_replicated_migrated_task() {
+    DBP("process_replicated_remote_task (enter)\n");
+    cham_migratable_task_t *replicated_task = nullptr;
+
+    if(_replicated_migrated_tasks.empty())
+        return CHAM_REPLICATED_TASK_NONE;
+
+    replicated_task = _replicated_migrated_tasks.pop_front();
+
+    if(replicated_task==nullptr)
+        return CHAM_REPLICATED_TASK_NONE;
+
+
+#ifdef TRACE
+        static int event_process_replicated_migrated = -1;
+        static const std::string event_process_replicated_name = "process_replicated_migrated";
+        if( event_process_replicated_migrated == -1)
+            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_migrated);
+        VT_BEGIN_CONSTRAINED(event_process_replicated_migrated);
+#endif
+
+#if CHAM_STATS_RECORD
+        double cur_time = omp_get_wtime();
+#endif
+
+//#if CHAM_REPLICATION_MODE==2
+        //cancel task on remote ranks
+//        cancel_offloaded_task(replicated_task);
+//#endif
+
+        int32_t res = execute_target_task(replicated_task);
+        if(res != CHAM_SUCCESS)
+            handle_error_en(1, "execute_target_task - remote");
+#if CHAM_STATS_RECORD
+        cur_time = omp_get_wtime()-cur_time;
+        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+        _time_task_execution_replicated_count++;
+#endif
+
+#if CHAM_STATS_RECORD
+        _num_executed_tasks_replicated_remote++;
+#endif
+
+        //_map_tag_to_remote_task.erase(replicated_task->task_id);
+        _map_overall_tasks.erase(replicated_task->task_id);
+
+        if(replicated_task->HasAtLeastOneOutput()) {
+            // just schedule it for sending back results if there is at least 1 output
+            _remote_tasks_send_back.push_back(replicated_task);
+        }
+        else {
+            _num_remote_tasks_outstanding--;
+            DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
+        }
+#ifdef TRACE
+        VT_END_W_CONSTRAINED(event_process_replicated_migrated);
+#endif
+
+    return CHAM_REPLICATED_TASK_SUCCESS;
+
+    DBP("process_replicated_migrated_task (exit)\n");
+}
+
 
 inline int32_t process_remote_task() {
     DBP("process_remote_task (enter)\n");

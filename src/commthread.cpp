@@ -480,7 +480,11 @@ static void receive_handler_data(void* buffer, int tag, int source, cham_migrata
         if(task->is_replicated_task && !task->is_migrated_task)
            _replicated_remote_tasks.push_back(task);
         else
+#if  REPLICATION_PRIORITIZE_MIGRATED==0 && CHAM_REPLICATION_MODE==3
+           _replicated_remote_tasks.push_back(task);
+#else
            _stolen_remote_tasks.push_back(task);
+#endif
         _map_tag_to_remote_task.insert(task->task_id, task);
         _map_overall_tasks.insert(task->task_id, task);
     }

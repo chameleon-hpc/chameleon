@@ -128,8 +128,8 @@ void compute_num_tasks_to_offload(std::vector<int32_t>& tasksToOffloadPerRank, s
  cham_t_replication_info_t * compute_num_tasks_to_replicate(  std::vector<int32_t>& loadInfoRanks, int32_t num_tasks_local, int32_t *num_replication_infos ) {
 
     double alpha = 0;
-    int myLeft = chameleon_comm_rank-1;
-    int myRight = chameleon_comm_rank+1;
+    int myLeft = (chameleon_comm_rank-1 + chameleon_comm_size)%chameleon_comm_size;
+    int myRight = (chameleon_comm_rank+1 + chameleon_comm_size)%chameleon_comm_size;
     
     assert(num_tasks_local>=0);
 

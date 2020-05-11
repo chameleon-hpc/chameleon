@@ -210,7 +210,6 @@ void RequestManager::progressRequests(int is_comm_thread) {
 #endif
   if(outcount >= 0) {
     DBP("Finished %d requests in total out of %d\n", outcount, n_requests);
-    req_info->current_num_finished_requests += outcount;
   }
 
   // sort indices once
@@ -299,7 +298,7 @@ void RequestManager::printRequestInformation() {
 
 int RequestManager::getNumberOfOutstandingRequests() {
   ThreadLocalRequestInfo* req_info = get_request_info_for_thread();
-  return _request_queue.size()-req_info->current_num_finished_requests;
+  return _request_queue.size()+req_info->current_request_array.size();
 }
 
 inline RequestManager::ThreadLocalRequestInfo* RequestManager::get_request_info_for_thread() {

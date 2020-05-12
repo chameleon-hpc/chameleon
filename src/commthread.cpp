@@ -1480,7 +1480,7 @@ void decode_send_buffer(void * buffer, int mpi_tag, int32_t *num_tasks, std::vec
 int exit_condition_met(int from_taskwait, int print) {
     if(from_taskwait) {
         int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
-        if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {
+        if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0  && request_manager_cancel.getNumberOfOutstandingRequests()==0) {
             // if(print)
                 // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
                 //     _comm_thread_load_exchange_happend.load(), 
@@ -1491,7 +1491,7 @@ int exit_condition_met(int from_taskwait, int print) {
     } else {
         if( _num_threads_idle >= _num_threads_involved_in_taskwait) {
             int cp_ranks_not_completely_idle = _num_ranks_not_completely_idle.load();
-            if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 ) {
+            if( _comm_thread_load_exchange_happend && _outstanding_jobs_sum.load() == 0 && cp_ranks_not_completely_idle == 0 && request_manager_cancel.getNumberOfOutstandingRequests()==0) {
                 // if(print)
                     // DBP("exit_condition_met - exchange_happend: %d oustanding: %d _num_ranks_not_completely_idle: %d\n", 
                     //     _comm_thread_load_exchange_happend.load(), 
@@ -2942,6 +2942,9 @@ void* comm_thread_action(void* arg) {
                 assert(_num_active_communications_overall.load()==0);
                 #endif /* CHAM_STATS_RECORD */
                 assert(_remote_tasks_send_back.empty());
+                //if(request_manager_cancel.getNumberOfOutstandingRequests()!=0)
+                //  printf("outstanding cancel %d\n",request_manager_cancel.getNumberOfOutstandingRequests());
+
                 assert(request_manager_cancel.getNumberOfOutstandingRequests()==0);
                 
                 // run routine to cleanup all things for current work phase

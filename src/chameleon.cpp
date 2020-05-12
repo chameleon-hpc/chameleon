@@ -533,11 +533,7 @@ void chameleon_set_tracing_enabled(int enabled) {
 int32_t chameleon_taskyield() {
     int32_t res = CHAM_FAILURE;
 
-    // ========== Prio 1: try to execute a standard OpenMP task because that might create new target tasks
-    // DBP("Trying to run OpenMP Task\n");
-    #pragma omp taskyield
-
-    // ========== Prio 2: try to execute stolen tasks to overlap computation and communication
+    // ========== Prio 1: try to execute stolen tasks to overlap computation and communication
     if(!_stolen_remote_tasks.empty()) {
         res = process_remote_task();
         // if task has been executed successfully start from beginning
@@ -545,12 +541,17 @@ int32_t chameleon_taskyield() {
             return CHAM_REMOTE_TASK_SUCCESS;
     }
     
-    // ========== Prio 3: work on local tasks
+    // ========== Prio 2: work on local tasks
     if(!_local_tasks.empty()) {
         res = process_local_task();
         if(res == CHAM_LOCAL_TASK_SUCCESS)
             return CHAM_LOCAL_TASK_SUCCESS;
     }
+
+    // ========== Prio 3: try to execute a standard OpenMP task because that might create new target or Chameleon tasks
+    // DBP("Trying to run OpenMP Task\n");
+    #pragma omp taskyield
+
     return CHAM_FAILURE;
 }
 
@@ -1519,6 +1520,8 @@ inline int32_t process_remote_task() {
     if(!task)
         return CHAM_REMOTE_TASK_NONE;
 
+    DBP("process_remote_task - task_id: %ld\n", task->task_id);
+
     int is_migrated= task->is_migrated_task;
 #ifdef TRACE
     static int event_process_remote = -1;
@@ -1602,7 +1605,7 @@ inline int32_t process_local_task() {
 #endif
 
     // execute region now
-    DBP("process_local_task - local task execution\n");
+    DBP("process_local_task - task_id: %ld\n", task->task_id);
 #if CHAM_STATS_RECORD
     double cur_time = omp_get_wtime();
 #endif

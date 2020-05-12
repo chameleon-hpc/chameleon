@@ -662,13 +662,14 @@ static void receive_handler(void* buffer, int tag, int source, cham_migratable_t
     #if MPI_BLOCKING
     receive_handler_data(NULL, tag, source, p_tasks, n_tasks);
     #else
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_handler_data;
     request_manager_receive.submitRequests(start_time_requests, tag, 
                                     source,
                                     num_requests, 
                                     requests,
                                     num_bytes_received,
                                     0,
-                                    receive_handler_data,
+                                    cur_handler,
                                     recvData, 
                                     NULL, 
                                     p_tasks,
@@ -843,11 +844,12 @@ void cancel_offloaded_task_on_rank(cham_migratable_task_t *task, int rank) {
     assert(ierr==MPI_SUCCESS);
     //printf("cancel_offloaded_task - posted request %ld\n", request);
     _mtx_cancellation.lock();
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = handler_noop;
     request_manager_cancel.submitRequests( start_time_requests, 0, rank, 1,
                                            &request,
                                            -1, // TODO: what will this be?
                                            0, 
-                                           handler_noop,
+                                           cur_handler,
                                            send,   // TODO: special request
                                            nullptr);
     _mtx_cancellation.unlock();
@@ -1124,11 +1126,12 @@ void offload_action(cham_migratable_task_t **tasks, int32_t num_tasks, int targe
     #if MPI_BLOCKING
     send_handler(buffer, tmp_tag, target_rank, nullptr, 0);
     #else
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = send_handler;
     request_manager_send.submitRequests(start_time_requests, tmp_tag, target_rank, n_requests, 
                                 requests,
                                 num_bytes_sent,
                                 0,
-                                send_handler,
+                                cur_handler,
                                 send,
                                 buffer,
                                 tasks,
@@ -1976,6 +1979,7 @@ inline void action_send_back_stolen_tasks(cham_migratable_task_t *cur_task, Requ
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = send_back_handler;
     request_manager_send->submitRequests(start_time_requests, 
         cur_task->task_id, 
         cur_task->source_mpi_rank, 
@@ -1983,7 +1987,7 @@ inline void action_send_back_stolen_tasks(cham_migratable_task_t *cur_task, Requ
         &request, 
         tmp_size_buff, 
         0, 
-        send_back_handler, 
+        cur_handler, 
         sendBack, 
         buff, 
         tasks, 
@@ -2062,6 +2066,7 @@ inline void action_send_back_stolen_tasks(cham_migratable_task_t *cur_task, Requ
 
     cham_migratable_task_t **tasks = (cham_migratable_task_t **) malloc(sizeof(cham_migratable_task_t *));
     tasks[0] = cur_task;
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = send_back_handler;
     request_manager_send->submitRequests(start_time_requests, 
         cur_task->task_id, 
         cur_task->source_mpi_rank, 
@@ -2069,7 +2074,7 @@ inline void action_send_back_stolen_tasks(cham_migratable_task_t *cur_task, Requ
         &requests[0], 
         num_bytes_sent, 
         0, 
-        send_back_handler, 
+        cur_handler, 
         sendBack, 
         nullptr, 
         tasks, 
@@ -2191,11 +2196,12 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     #else
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
     p_tasks[0] = task_entry;
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_back_handler;
     request_manager_receive->submitRequests( start_time_requests, mpi_tag, mpi_source, 1, 
                                             &request,
                                             recv_buff_size,
                                             0,
-                                            receive_back_handler,
+                                            cur_handler,
                                             recvBack,
                                             buffer,
                                             p_tasks,
@@ -2245,11 +2251,12 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     #else
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
     p_tasks[0] = task_entry;
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_back_handler;
     request_manager_receive->submitRequests( start_time_requests, mpi_tag, mpi_source, j, 
                                         &requests[0],
                                         num_bytes_received,
                                         0,
-                                        receive_back_handler,
+                                        cur_handler,
                                         recvBack,
                                         nullptr,
                                         p_tasks,
@@ -2326,11 +2333,12 @@ inline void action_post_recvback_requests(cham_migratable_task_t *task_entry, in
     #else
     cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
     p_tasks[0] = task_entry;
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_back_handler;
     request_manager_receive->submitRequests( start_time_requests, mpi_tag, mpi_source, 1, 
                                         &requests[0],
                                         num_bytes_received,
                                         0,
-                                        receive_back_handler,
+                                        cur_handler,
                                         recvBack,
                                         nullptr,
                                         p_tasks,
@@ -2417,11 +2425,12 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
+            std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_back_trash_handler;
             request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, 1, 
                                                     &request,
                                                     num_bytes_received,
                                                     0,
-                                                    receive_back_trash_handler,
+                                                    cur_handler,
                                                     recvBackTrash,
                                                     trash_buffer,
 				   		    p_tasks,
@@ -2533,11 +2542,12 @@ inline void action_handle_recvback_request(MPI_Status *cur_status_receiveBack, R
             #else
             cham_migratable_task_t** p_tasks = (cham_migratable_task_t**) malloc(sizeof(cham_migratable_task_t*));
             p_tasks[0] = task_entry;
+            std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_back_trash_handler;
             request_manager_receive->submitRequests( start_time_requests, cur_status_receiveBack->MPI_TAG, cur_status_receiveBack->MPI_SOURCE, num_requests, 
                                                 &requests[0],
                                                 num_bytes_received,
                                                 0,
-                                                receive_back_trash_handler,
+                                                cur_handler,
                                                 recvBackTrash,
                                                 trash_buffer,
 						p_tasks,
@@ -2590,13 +2600,14 @@ inline void action_handle_recv_request(MPI_Status *cur_status_receive, RequestMa
     #if MPI_BLOCKING
     receive_handler(buffer, cur_status_receive->MPI_TAG, cur_status_receive->MPI_SOURCE, nullptr, 0);
     #else
+    std::function<void(void*, int, int, cham_migratable_task_t**, int)> cur_handler = receive_handler;
     request_manager_receive->submitRequests( start_time_requests, cur_status_receive->MPI_TAG, 
                                     cur_status_receive->MPI_SOURCE,
                                     1, 
                                     &request,
                                     num_bytes_received,
                                     0,
-                                    receive_handler,
+                                    cur_handler,
                                     recv,
                                     buffer);
     #endif

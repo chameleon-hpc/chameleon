@@ -1196,7 +1196,6 @@ int32_t execute_target_task(cham_migratable_task_t *task) {
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_change_freq_for_execution) {
         int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task, _load_info_ranks[chameleon_comm_rank], _total_created_tasks_per_rank);
-        //int32_t noise_time = cham_t_status.cham_t_callback_change_freq_for_execution(task, _num_local_tasks_outstanding.load()-_num_replicated_and_migrated_remote_tasks_outstanding.load(), _total_created_tasks_per_rank);
         // make the process slower by sleep
         DBP("execute_target_task - noise_time = %d\n", noise_time);
         if (noise_time != 0)

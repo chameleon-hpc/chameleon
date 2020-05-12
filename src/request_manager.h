@@ -74,9 +74,8 @@ class RequestManager {
     struct ThreadLocalRequestInfo {
         std::vector<MPI_Request>        current_request_array;
         std::vector<int>                current_rids;
-        std::atomic<int>                current_num_finished_requests;
 
-        ThreadLocalRequestInfo() : current_request_array(0), current_rids(0), current_num_finished_requests(0) {
+        ThreadLocalRequestInfo() : current_request_array(0), current_rids(0) {
 
         }
     };

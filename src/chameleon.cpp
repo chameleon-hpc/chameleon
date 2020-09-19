@@ -590,7 +590,7 @@ void dtw_startup() {
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 
-    #if ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION
+    #if ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
     // indicating that this has not happend yet for the current sync cycle
     _comm_thread_load_exchange_happend  = 0;
     #else
@@ -780,7 +780,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         }
         #endif /* !FORCE_MIGRATION */
 
-        #if ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0
+        #if ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
         // ========== Prio 3: work on replicated local tasks
         if(!_replicated_local_tasks.empty()) {
             

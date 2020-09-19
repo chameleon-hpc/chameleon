@@ -2699,7 +2699,7 @@ inline void action_task_replication_send() {
 }
 
 void action_communication_progression(int comm_thread) {
-    #if ENABLE_TASK_MIGRATION
+    #if ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
     #if CHAM_REPLICATION_MODE>=2
     _mtx_cancellation.lock();
     request_manager_cancel.progressRequests(comm_thread);
@@ -2874,7 +2874,7 @@ void action_communication_progression(int comm_thread) {
     MPI_Status cur_status_activate;
     int flag_open_request_activate = 0;
 
-    #if ENABLE_TASK_MIGRATION
+    #if ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
     #if CHAM_STATS_RECORD && SHOW_WARNING_SLOW_COMMUNICATION
     cur_time = omp_get_wtime();
     #endif

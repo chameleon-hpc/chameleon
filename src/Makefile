@@ -1,5 +1,5 @@
 #INSTALL_DIR ?=~/chameleon/
-INSTALL_DIR ?=~/install/chameleon-lib/intel_1.0
+INSTALL_DIR ?=~/Codes/chameleon/chameleon-lib/intel_1.0
 
 FILES_CXX_COMP=chameleon.cpp commthread.cpp chameleon_statistics.cpp chameleon_strategies.cpp chameleon_common.cpp request_manager.cpp chameleon_tools.cpp
 FILES_F90_COMP=chameleon_lib.f90

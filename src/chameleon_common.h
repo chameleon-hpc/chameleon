@@ -763,7 +763,11 @@ class thread_safe_deque_t {
         *success = true;
         if(this->empty()) {
             *success = false;
-            return NULL;
+            // if (std::is_fundamental<T>::value)
+            //     return -1;
+            // else 
+            //     return NULL;
+            return 0;
         }
 
         T ret_val;
@@ -776,7 +780,11 @@ class thread_safe_deque_t {
         } else {
             this->m.unlock();
             *success = false;
-            return NULL;
+            // if (std::is_fundamental<T>::value)
+            //     return -1;
+            // else 
+            //     return NULL;
+            return 0;
         }
         this->m.unlock();
         return ret_val;

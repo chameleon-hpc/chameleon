@@ -590,7 +590,7 @@ void dtw_startup() {
     _num_threads_idle                   = 0;
     _num_threads_finished_dtw           = 0;
 
-    #if ENABLE_COMM_THREAD || ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
+    #if ENABLE_COMM_THREAD //|| ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
     // indicating that this has not happend yet for the current sync cycle
     _comm_thread_load_exchange_happend  = 0;
     #else

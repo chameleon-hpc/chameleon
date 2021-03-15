@@ -1,7 +1,7 @@
 # ignore the following files
 src/libchameleon.so
 *.exe
-/.vscode
+.vscode
 __pycache__
 *.o
 *.mod

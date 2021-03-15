@@ -46,7 +46,7 @@ void MinMaxAvgStats::print_stats(FILE *cur_file) {
     ss.str(""); ss.clear(); ss << stat_name << "_sum (" << unit_str << ")";
     fprintf(cur_file, "Stats R#%d:\t%s\t%lf\n", chameleon_comm_rank, ss.str().c_str(), val_sum.load());
     ss.str(""); ss.clear(); ss << stat_name << "_count";
-    fprintf(cur_file, "Stats R#%d:\t%s\t%ld\n", chameleon_comm_rank, ss.str().c_str(), count.load());
+    fprintf(cur_file, "Stats R#%d:\t%s\t%ld\n", chameleon_comm_rank, ss.str().c_str(), (long)count.load());
     ss.str(""); ss.clear(); ss << stat_name << "_min (" << unit_str << ")";
     cham_stats_print_stats_w_mean(cur_file, ss.str(), val_min.load(), 1);
     ss.str(""); ss.clear(); ss << stat_name << "_max (" << unit_str << ")";

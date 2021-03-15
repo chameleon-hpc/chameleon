@@ -196,7 +196,7 @@ void RequestManager::progressRequests(int is_comm_thread) {
      MPI_Error_string(ierr, estring, &len);
      fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);
      for(int i=0; i<n_requests;i++) {
-        fprintf(stderr, "Request at position %d: %ld\n", i, req_info->current_request_array[i]);
+        fprintf(stderr, "Request at position %d: %ld\n", i, (long)req_info->current_request_array[i]);
         MPI_Error_class(arr_of_statuses[i].MPI_ERROR, &eclass);
         MPI_Error_string(arr_of_statuses[i].MPI_ERROR, estring, &len);
         fprintf(stderr, "Error %d: %s, requests: %d\n", eclass, estring, n_requests);fflush(stderr);

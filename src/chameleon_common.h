@@ -104,7 +104,7 @@
 #define CHAM_REPLICATION_MODE 0 //no replication
 // #define CHAM_REPLICATION_MODE 1 //replicated tasks may be processed locally if needed, however, no remote task cancellation is used
 // #define CHAM_REPLICATION_MODE 2 //replicated tasks may be processed locally if needed; remote replica task is cancelled
-//#define CHAM_REPLICATION_MODE 3 //mode 2 + migrated tasks will be kept locally as replicated tasks
+// #define CHAM_REPLICATION_MODE 3 //mode 2 + migrated tasks will be kept locally as replicated tasks
 // #define CHAM_REPLICATION_MODE 4
 #endif
 
@@ -763,7 +763,11 @@ class thread_safe_deque_t {
         *success = true;
         if(this->empty()) {
             *success = false;
-            return NULL;
+            // if (std::is_fundamental<T>::value)
+            //     return -1;
+            // else 
+            //     return NULL;
+            return 0;
         }
 
         T ret_val;
@@ -776,7 +780,11 @@ class thread_safe_deque_t {
         } else {
             this->m.unlock();
             *success = false;
-            return NULL;
+            // if (std::is_fundamental<T>::value)
+            //     return -1;
+            // else 
+            //     return NULL;
+            return 0;
         }
         this->m.unlock();
         return ret_val;

@@ -1926,6 +1926,9 @@ inline void action_task_migration() {
 
                                 offload_done = true;
                             }
+                            else {
+                                free(cur_tasks);
+                            }
                         }
                     }
                 }
@@ -2619,6 +2622,7 @@ inline void action_handle_recv_request(MPI_Status *cur_status_receive, RequestMa
 inline bool action_task_replication() {
     //if (chameleon_comm_rank == 1) return false;
 
+    static cham_t_replication_info_t* replication_infos = nullptr;
     if(_comm_thread_load_exchange_happend && _local_tasks.dup_size() >= MIN_LOCAL_TASKS_IN_QUEUE_BEFORE_MIGRATION ) {
     	DBP("action_task_replication - selecting tasks to replicate\n");
         //clean up replication infos from previous distributed taskwait
@@ -2626,9 +2630,10 @@ inline bool action_task_replication() {
     		free_replication_info(_replication_infos_list.pop_front());
     	}
 
+        if(!replication_infos) free(replication_infos);
+
     	int num_tasks_local = _local_tasks.dup_size();
 
-        cham_t_replication_info_t* replication_infos = nullptr;
         int num_rep_infos = 0;
         #if CHAMELEON_TOOL_SUPPORT && !FORCE_MIGRATION
         if(cham_t_status.enabled && cham_t_status.cham_t_callback_select_num_tasks_to_replicate) {
@@ -2639,7 +2644,7 @@ inline bool action_task_replication() {
         	   replication_infos = compute_num_tasks_to_replicate( _load_info_ranks, num_tasks_local, &num_rep_infos);
         }
         #else
-        replication_infos = compute_num_tasks_to_replicate( _load_info_ranks, num_tasks_local, &num_rep_infos);
+          replication_infos = compute_num_tasks_to_replicate( _load_info_ranks, num_tasks_local, &num_rep_infos);
         #endif
 
         for( int r=0; r<num_rep_infos; r++) {

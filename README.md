@@ -25,6 +25,14 @@ http://www.chameleon-hpc.org/
 
 https://github.com/chameleon-hpc/chameleon
 
+Publications
+---------
+
+* Jannis Klinkenberg, Philipp Samfass, Michael Bader, Christian Terboven, Matthias S. Müller. **CHAMELEON: Reactive Load Balancing for Hybrid MPI+OpenMP Task-Parallel Applications**, Journal of Parallel and Distributed Computing, Volume 138, 2020, Pages 55-64, ISSN 0743-7315. https://doi.org/10.1016/j.jpdc.2019.12.005
+
+* Philipp Samfass, Jannis Klinkenberg, and Michael Bader. **Hybrid MPI+OpenMP Reactive Work Stealing in Distributed Memory in the PDE Framework sam(oa)^2**. Proceedings of the 2018 IEEE International Conference on Cluster Computing (CLUSTER). September 10 - 13, 2018, Belfast, UK. https://ieeexplore.ieee.org/document/8514894
+
+
 
 Building and Installing CHAMELEON
 ============
@@ -74,9 +82,3 @@ Installing to the default installation path usually requires root privileges. Ch
     $ cmake -DCMAKE_INSTALL_PREFIX=<install/path> ../
     $ make
     $ make install
-    
-### Publications
-
-* Jannis Klinkenberg, Philipp Samfass, Michael Bader, Christian Terboven, Matthias S. Müller. **CHAMELEON: Reactive Load Balancing for Hybrid MPI+OpenMP Task-Parallel Applications**, Journal of Parallel and Distributed Computing, Volume 138, 2020, Pages 55-64, ISSN 0743-7315. https://doi.org/10.1016/j.jpdc.2019.12.005
-
-* Philipp Samfass, Jannis Klinkenberg, and Michael Bader. **Hybrid MPI+OpenMP Reactive Work Stealing in Distributed Memory in the PDE Framework sam(oa)^2**. Proceedings of the 2018 IEEE International Conference on Cluster Computing (CLUSTER). September 10 - 13, 2018, Belfast, UK. https://ieeexplore.ieee.org/document/8514894

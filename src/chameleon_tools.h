@@ -122,6 +122,13 @@ typedef struct cham_t_rank_info_t {
     int32_t comm_size;
 } cham_t_rank_info_t;
 
+typedef struct cham_t_task_param_info_t {
+    int32_t num_args;
+    int64_t *arg_sizes;
+    int64_t *arg_types;
+    void **arg_pointers;
+} cham_t_task_param_info_t;
+
 typedef void (*cham_t_interface_fn_t) (void);
 
 typedef cham_t_interface_fn_t (*cham_t_function_lookup_t) (
@@ -189,67 +196,6 @@ typedef struct cham_t_start_tool_result_t {
 } cham_t_start_tool_result_t;
 
 /*****************************************************************************
- * Data for the tool
- ****************************************************************************/
-typedef struct cham_t_task_info_t {
-    TYPE_TASK_ID task_id;
-    int rank_belong;    // 0
-    size_t size_data;   // 1
-    double queue_time;  // 2
-    double start_time;  // 3
-    double end_time;    // 4
-    double mig_time;    // 5
-    double exe_time;    // 6
-    int migrated;      // 7
-} cham_t_task_info_t;
-
-/*typedef struct cham_t_task_lis_t {
-    std::list<cham_t_task_info_t*> task_list;
-    std::mutex m;
-    std::atomic<size_t> list_size;
-
-    void cham_t_task_list(){
-        list_size = 0;
-    }
-
-    size_t size() {
-        return this->list_size.load();
-    }
-
-    bool empty() {
-        return this->list_size <= 0;
-    }
-
-    void push_back(cham_t_task_info_t* task) {
-        this->m.lock();
-        this->task_list.push_back(task);
-        this->list_size++;
-        this->m.unlock();
-    }
-
-    void set_start_time(TYPE_TASK_ID task_id, double s_time){
-        this->m.lock();
-        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it){
-            if ((*it)->task_id == task_id)
-                (*it)->start_time = s_time;
-        }
-        this->m.unlock();
-    }
-
-    void set_migrated_time(TYPE_TASK_ID task_id, double m_time){
-        this->m.lock();
-        for (std::list<cham_t_task_info_t*>::iterator it=this->task_list.begin(); it!=this->task_list.end(); ++it){
-            if ((*it)->task_id == task_id){
-                (*it)->migrated = true;
-                (*it)->mig_time = m_time;
-            }
-        }
-        this->m.unlock();
-    }
-
-} cham_t_task_lis_t; */
-
-/*****************************************************************************
  * Getter / Setter
  ****************************************************************************/
 typedef cham_t_set_result_t (*cham_t_set_callback_t) (
@@ -265,7 +211,8 @@ typedef int (*cham_t_get_callback_t) (
 typedef cham_t_data_t *(*cham_t_get_thread_data_t) (void);
 typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
 typedef cham_t_data_t *(*cham_t_get_task_data_t) (TYPE_TASK_ID);
-
+typedef cham_t_task_param_info_t (*cham_t_get_task_param_info_by_id_t) (TYPE_TASK_ID);
+typedef cham_t_task_param_info_t (*cham_t_get_task_param_info_t) (cham_migratable_task_t*);
 typedef cham_t_rank_info_t *(*cham_t_get_rank_info_t) (void);
 
 /*****************************************************************************

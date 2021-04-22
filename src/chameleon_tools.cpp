@@ -210,6 +210,31 @@ cham_t_rank_info_t * cham_t_get_rank_info(void) {
 #endif
 }
 
+cham_t_task_param_info_t cham_t_get_task_param_info(cham_migratable_task_t* task) {
+    cham_t_task_param_info_t ret;
+    ret.arg_sizes       = nullptr;
+    ret.arg_types       = nullptr;
+    ret.arg_pointers    = nullptr;
+    ret.num_args        = -1;
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(task) {
+        ret.num_args            = task->arg_num;        
+        if(ret.num_args > 0) {
+            ret.arg_sizes       = &(task->arg_sizes[0]);
+            ret.arg_types       = &(task->arg_types[0]);
+            ret.arg_pointers    = &(task->arg_hst_pointers[0]);
+        }
+    }
+#endif
+    return ret;
+}
+
+cham_t_task_param_info_t cham_t_get_task_param_info_by_id(TYPE_TASK_ID task_id) {
+    cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
+    return cham_t_get_task_param_info(task);
+}
+
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
     if(!strcmp(s, "cham_t_set_callback"))
         return (cham_t_interface_fn_t)cham_t_set_callback;
@@ -221,6 +246,10 @@ static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
         return (cham_t_interface_fn_t)cham_t_get_rank_data;
     else if(!strcmp(s, "cham_t_get_rank_info"))
         return (cham_t_interface_fn_t)cham_t_get_rank_info;
+    else if(!strcmp(s, "cham_t_get_task_param_info"))
+        return (cham_t_interface_fn_t)cham_t_get_task_param_info;
+    else if(!strcmp(s, "cham_t_get_task_param_info_by_id"))
+        return (cham_t_interface_fn_t)cham_t_get_task_param_info_by_id;
     else if(!strcmp(s, "cham_t_get_task_data"))
         return (cham_t_interface_fn_t)cham_t_get_task_data;
     else

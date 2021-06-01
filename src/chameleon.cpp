@@ -110,8 +110,6 @@ extern "C" {
 // ================================================================================
 int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
-cham_migratable_task_t* affinity_task_select();
-//cham_migratable_task_t* affinity_task_select(thread_safe_task_list_t task_list, int selection_strategy);
 int32_t process_local_task();
 int32_t process_remote_task();
 int32_t process_replicated_local_task();
@@ -1944,7 +1942,8 @@ inline int32_t process_remote_task() {
 
 inline int32_t process_local_task() {
 #if USE_TASK_AFFINITY
-    cham_migratable_task_t *task = _local_tasks.affinity_task_select();
+    int32_t my_domain = __thread_data[__ch_get_gtid()].domain;
+    cham_migratable_task_t *task = _local_tasks.affinity_task_select(my_domain);
 #else
     cham_migratable_task_t *task = _local_tasks.pop_front();
 #endif

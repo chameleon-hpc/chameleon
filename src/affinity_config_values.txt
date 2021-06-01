@@ -1,0 +1,16 @@
+compile with extra options example:
+	export CHAM_AFF_TASK_SELECTION_STRAT=1
+	CUSTOM_COMPILE_FLAGS="-DUSE_TASK_AFFINITY=1" make
+
+Flag USE_TASK_AFFINITY=1 to use task affinity (default 1)
+
+======================
+environment variables:
+======================
+CHAM_AFF_TASK_SELECTION_STRAT= (default 0)
+	//just pop the first task
+		CHAM_AFF_NONE = 0,
+    //start at the front and search each task
+    //pop the first with the correct domain
+    //else pop the first task
+		CHAM_AFF_ALL_LINEAR = 1

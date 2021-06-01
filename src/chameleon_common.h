@@ -36,6 +36,7 @@
 //inlcude for task affinity
 #include <map>
 #include <numaif.h> // move_pages
+#include <numa.h> //numa_node_of_cpu()
 
 #include "chameleon.h"
 
@@ -153,7 +154,7 @@
 
 //flag whether to use task affinity
 #ifndef USE_TASK_AFFINITY
-#define USE_TASK_AFFINITY 0
+#define USE_TASK_AFFINITY 1
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -472,6 +473,10 @@ typedef struct ch_thread_data_t {
 #if CHAMELEON_TOOL_SUPPORT
     cham_t_data_t thread_tool_data;
 #endif    
+
+#if USE_TASK_AFFINITY
+    int32_t domain;
+#endif
 } ch_thread_data_t;
 
 typedef struct ch_rank_data_t {
@@ -626,7 +631,7 @@ class thread_safe_task_list_t {
     }
 
     #if USE_TASK_AFFINITY
-    cham_migratable_task_t* affinity_task_select() {
+    cham_migratable_task_t* affinity_task_select(int32_t my_domain) {
         if(this->empty())
             return nullptr;
 
@@ -637,6 +642,19 @@ class thread_safe_task_list_t {
                 ret_val = this->pop_front();
                 break;
             case CHAM_AFF_ALL_LINEAR:
+                this->m.lock();
+                std::_List_iterator<cham_migratable_task_t *> it;
+                for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                    if(my_domain == (*it)->data_loc.domain){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it;
+                        this->task_list.remove(ret_val);
+                        break;
+                    }
+                }
+                this->m.unlock();
+                break;
             default:
                 ret_val = this->pop_front();
         }

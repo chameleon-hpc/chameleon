@@ -60,6 +60,12 @@ int32_t __ch_get_gtid() {
     __thread_data[__ch_gtid].os_thread_id = syscall(SYS_gettid);
     __thread_data[__ch_gtid].current_task = nullptr;
 
+    #if USE_TASK_AFFINITY
+    int32_t tmp_current_cpu_for_thread = sched_getcpu();
+    int32_t tmp_numa_node = numa_node_of_cpu(tmp_current_cpu_for_thread);
+    __thread_data[__ch_gtid].domain = tmp_numa_node;
+    #endif
+
     return __ch_gtid;
 }
 

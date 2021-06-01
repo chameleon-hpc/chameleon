@@ -30,6 +30,10 @@
 #define TYPE_TASK_ID int
 #endif
 
+#ifndef CHAM_TASK_AFFINITY_ALWAYS_CHECK_PHYSICAL_LOCATION
+#define CHAM_TASK_AFFINITY_ALWAYS_CHECK_PHYSICAL_LOCATION 0
+#endif
+
 #define CHAMELEON_VERSION 10
 
 // TODO: fix that to have only one place where that is defined

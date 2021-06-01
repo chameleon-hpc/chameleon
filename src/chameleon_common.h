@@ -33,6 +33,10 @@
 #include <atomic>
 #include <unordered_map>
 
+//inlcude for task affinity
+#include <map>
+#include <numaif.h> // move_pages
+
 #include "chameleon.h"
 
 // flag which communication should be applied (load exchange & migration)
@@ -147,11 +151,59 @@
 //#define REPLICATION_PRIORITIZE_MIGRATED 2 // migrated tasks have high priority
 #endif
 
+//flag whether to use task affinity
+#ifndef USE_TASK_AFFINITY
+#define USE_TASK_AFFINITY 0
+#endif
+
 #if CHAMELEON_TOOL_SUPPORT
 #include "chameleon_tools.h"
 #endif
 
 #pragma region Type Definitions
+#if USE_TASK_AFFINITY
+typedef enum cham_affinity_page_selection_strategy_t {
+    cham_affinity_page_mode_first_page_of_first_affinity_only = 0,
+    cham_affinity_page_mode_divide_in_n_pages = 1,
+    cham_affinity_page_mode_every_nth_page = 2,
+    cham_affinity_page_mode_first_and_last_page = 3,
+    cham_affinity_page_mode_continuous_binary_search = 4,
+    cham_affinity_page_mode_first_page = 5,
+} cham_affinity_page_selection_strategy_t;
+
+typedef enum cham_affinity_page_weighting_strategy_t {
+    cham_affinity_page_weight_mode_first_page_only = 0,
+    cham_affinity_page_weight_mode_majority = 1,
+    cham_affinity_page_weight_mode_by_size = 2,
+} cham_affinity_page_weighting_strategy_t;
+
+//strategy which tasks will be examined to choose which one to pop
+typedef enum cham_affinity_selection_strategy_t {
+    //just pop the first task
+    CHAM_AFF_NONE = 0,
+    //start at the front and search each task
+    //pop the first with the correct domain
+    //else pop the first task
+    CHAM_AFF_ALL_LINEAR = 1
+} cham_affinity_selection_strategy_t;
+
+typedef struct cham_affinity_settings_t {
+    int32_t task_selection_strategy;
+    int32_t page_selection_strategy;
+    int32_t page_weighting_strategy;
+    int32_t stride;
+} cham_affinity_settings_t;
+
+extern cham_affinity_settings_t cham_affinity_settings;
+
+typedef struct task_aff_physical_data_location_t {
+    //primary domain of the task data
+    int domain;
+    //Global Thread ID, I don't know what to use that for at the moment
+    int gtid;
+}task_aff_physical_data_location_t;
+#endif
+
 typedef enum cham_annotation_value_type_t {
     cham_annotation_int         = 0,
     cham_annotation_int64       = 1,
@@ -332,6 +384,15 @@ typedef struct cham_migratable_task_t {
     std::vector<void *> arg_hst_pointers;
     std::vector<int64_t> arg_sizes;
     std::vector<int64_t> arg_types;
+
+#if USE_TASK_AFFINITY
+    //primary domain of the data, calculated on task creation
+    task_aff_physical_data_location_t data_loc{
+        .domain = -1,
+        .gtid = -1
+    };
+#endif
+    //
 
     // target pointers will just be used at sender side for host pointer lookup 
     // and freeing of entries in data entry table
@@ -563,6 +624,25 @@ class thread_safe_task_list_t {
         this->m.unlock();
         return ret_val;
     }
+
+    #if USE_TASK_AFFINITY
+    cham_migratable_task_t* affinity_task_select() {
+        if(this->empty())
+            return nullptr;
+
+        cham_migratable_task_t* ret_val = nullptr;
+
+        switch(cham_affinity_settings.task_selection_strategy){
+            case CHAM_AFF_NONE:
+                ret_val = this->pop_front();
+                break;
+            case CHAM_AFF_ALL_LINEAR:
+            default:
+                ret_val = this->pop_front();
+        }
+        return ret_val;
+    }
+    #endif
 
     cham_migratable_task_t* back() {
         if(this->empty())
@@ -886,6 +966,11 @@ extern std::atomic<int> _num_sync_cycle;
 extern std::atomic<long> mem_allocated;
 #endif
 
+#if USE_TASK_AFFINITY
+extern std::mutex addr_map_mutex;
+extern std::map<size_t, task_aff_physical_data_location_t> task_aff_addr_map;
+#endif
+
 // ============================================================ 
 // config values defined through environment variables
 // ============================================================
@@ -910,6 +995,12 @@ extern std::atomic<double> MAX_PERCENTAGE_REPLICATED_TASKS;
 // settings to enable / disable tracing only for specific range of synchronization cycles
 extern std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE;
 extern std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE;
+
+//settings for task to data affinity
+#if USE_TASK_AFFINITY
+extern std::atomic<int> CHAM_AFF_TASK_SELECTION_STRAT;
+extern cham_affinity_settings_t cham_affinity_settings;
+#endif
 #pragma endregion
 
 #pragma region Functions
@@ -1068,6 +1159,21 @@ static void load_config_values() {
     if(tmp) {
         CHAMELEON_STATS_FILE_PREFIX = tmp;
     }
+
+    #if USE_TASK_AFFINITY
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_TASK_SELECTION_STRAT");
+    if(tmp) {
+         CHAM_AFF_TASK_SELECTION_STRAT = std::atof(tmp);
+    }
+
+    cham_affinity_settings = {
+        .task_selection_strategy = CHAM_AFF_TASK_SELECTION_STRAT,
+        .page_selection_strategy = 0,
+        .page_weighting_strategy = 0,
+        .stride = 1
+    };
+    #endif
 }
 
 static void print_config_values() {
@@ -1091,6 +1197,10 @@ static void print_config_values() {
     if(CHAMELEON_STATS_FILE_PREFIX.load()) {
         RELP("CHAMELEON_STATS_FILE_PREFIX=%s\n", CHAMELEON_STATS_FILE_PREFIX.load());
     }
+    RELP("USE_TASK_AFFINITY=%d\n", USE_TASK_AFFINITY);
+    #if USE_TASK_AFFINITY
+    RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_TASK_SELECTION_STRAT.load());
+    #endif
 }
 #pragma endregion
 

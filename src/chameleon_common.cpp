@@ -41,6 +41,12 @@ std::atomic<double> MAX_PERCENTAGE_REPLICATED_TASKS(0.1);
 // settings to enable / disable tracing only for specific range of synchronization cycles
 std::atomic<int> ENABLE_TRACE_FROM_SYNC_CYCLE(-1);
 std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE(INT_MAX);
+
+//settings for task to data affinity
+#if USE_TASK_AFFINITY
+std::atomic<int> CHAM_AFF_TASK_SELECTION_STRAT(0);
+cham_affinity_settings_t cham_affinity_settings;
+#endif
 #pragma endregion
 
 #pragma region Functions

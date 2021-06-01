@@ -61,6 +61,13 @@ std::mutex _mtx_comm_progression;
 // total tasks created per rank
 int32_t _total_created_tasks_per_rank = 0;
 
+#if USE_TASK_AFFINITY
+// lock the map of logical to physical addresses
+std::mutex addr_map_mutex;
+//map with logical and the corresponding physical addresses
+std::map<size_t ,task_aff_physical_data_location_t> task_aff_addr_map;
+#endif
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -103,6 +110,8 @@ extern "C" {
 // ================================================================================
 int32_t lookup_hst_pointers(cham_migratable_task_t *task);
 int32_t execute_target_task(cham_migratable_task_t *task);
+cham_migratable_task_t* affinity_task_select();
+//cham_migratable_task_t* affinity_task_select(thread_safe_task_list_t task_list, int selection_strategy);
 int32_t process_local_task();
 int32_t process_remote_task();
 int32_t process_replicated_local_task();
@@ -973,6 +982,341 @@ void chameleon_free_data(void *tgt_ptr) {
 #endif
 }
 
+#if USE_TASK_AFFINITY
+// weigh all the calculated physical addresses to determine the primary location of a task
+inline task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *task, const int naffin, const int row, task_aff_physical_data_location_t **page_loc, int *array_size) 
+{
+  const int page_size = getpagesize(); //doesn't work with windows
+    int x = 0, y = 0;
+    int max = 0;
+    int cur;
+    std::map<int,int> m;
+    
+
+  switch (cham_affinity_settings.page_weighting_strategy)
+  {
+  case cham_affinity_page_weight_mode_first_page_only:
+    return page_loc[0][0];
+    break;
+  case cham_affinity_page_weight_mode_majority:
+    x = 0;
+    y = 0;
+    max = 0;
+    for (int i=0; i < naffin; i++) {
+        for (int j=0; j < array_size[i]; j++){
+            cur = page_loc[i][j].domain;
+            //
+            if (cur < 0) {
+              continue;
+            }
+            m[cur]++;
+            if (m[cur] > max) {
+                max = m[cur];
+                x=i;
+                y=j;
+            }
+        }
+    }
+    break;
+  case cham_affinity_page_weight_mode_by_size:
+    max = 0;
+    int f = page_size*row; //divide weight by factor, to prevent overflow
+    for (int i=0; i < naffin; i++) {
+        double weight = 1 + ( (row-array_size[i]) / (double) array_size[i]);//weight each entry as if every row is full
+        for (int j=0; j < array_size[i]; j++){
+            cur = page_loc[i][j].domain;
+            if (cur < 0) {
+              continue;
+            }
+            m[cur]+=weight*f;
+            if (m[cur] > max) {
+                max = m[cur];
+                x=i;
+                y=j;
+            }
+        }
+    }
+    break;
+  }
+  
+  return page_loc[x][y];
+}
+
+//get the physical location of one page
+task_aff_physical_data_location_t check_page(void * addr){
+    
+    //---------Calculate the logical start address---------
+    int ret=-1, found=0;
+    const int page_size = getpagesize(); //doesn't work with windows
+    size_t tmp_address = (size_t)addr;
+    size_t page_start_address = tmp_address & ~(page_size-1);
+    void * page_boundary_pointer = (void *) page_start_address;
+
+    //---------Search if the location has already been calculated---------
+    //#if KMP_TASK_AFFINITY_USE_DEFAULT_MAP
+        auto search = task_aff_addr_map.find(page_start_address);
+        found = search != task_aff_addr_map.end();
+
+        //if (search->second.domain == -1 || search->second.gtid == -1)
+          //found = false;
+    //#else
+    //    kmp_maphash_entry * cur_entry = __kmp_maphash_find(thread, task_aff_addr_map2, (kmp_intptr_t) page_start_address);
+    //    found = cur_entry->val.gtid != -1 && cur_entry->val.domain != -1;
+    //#endif
+
+    #if CHAM_TASK_AFFINITY_ALWAYS_CHECK_PHYSICAL_LOCATION
+            found = false;
+    #endif
+
+    int current_data_domain=-1; //int target_tid=-1; int target_gtid=-1;
+    
+    if (found){
+        
+        //#if KMP_TASK_AFFINITY_USE_DEFAULT_MAP
+            return search->second;
+        //#else
+        //    return cur_entry->val;
+        //#endif
+    } else {
+        //---------Calculate the physical address---------
+        int ret_code = move_pages(0 /*self memory */, 1, &page_boundary_pointer, NULL, &current_data_domain, 0);
+
+        if (ret_code == 0 && current_data_domain >= 0){
+            //if(kmp_affinity_settings.thread_selection_strategy == kmp_affinity_thread_selection_mode_private
+            //    && current_data_domain == thread->th.th_task_aff_my_domain_nr
+            //    && (kmp_affinity_settings.affinity_map_mode == kmp_affinity_map_type_domain || kmp_affinity_settings.affinity_map_mode == kmp_affinity_map_type_combined)) 
+            //    {
+            //      target_gtid = gtid;
+            //      target_tid = __kmp_tid_from_gtid(gtid);
+            //    }
+
+            //kmp_info_t * target_thread = __kmp_task_aff_get_initial_thread_in_numa_domain(current_data_domain, task_team, threads_data, &target_tid, &target_gtid);
+
+            task_aff_physical_data_location_t tmp_result;
+            //if(target_tid != -1) {
+                  tmp_result.domain = current_data_domain;
+            //    tmp_result.gtid = target_gtid;
+            //      #if KMP_TASK_AFFINITY_USE_DEFAULT_MAP
+            //      __kmp_acquire_bootstrap_lock(&lock_addr_map);
+                    addr_map_mutex.lock();
+                    task_aff_addr_map[page_start_address].domain = current_data_domain;
+                    //task_aff_addr_map[page_start_address].gtid = target_gtid;
+                    addr_map_mutex.unlock();
+            //      __kmp_release_bootstrap_lock(&lock_addr_map);
+            //    #else
+            //      cur_entry->val.domain = current_data_domain;
+            //      cur_entry->val.gtid = target_gtid;
+            //    #endif
+                return tmp_result;
+            //}
+        }
+    }
+    task_aff_physical_data_location_t tmp_result{
+        .domain = -2,
+        .gtid = -2
+    };
+    return tmp_result;
+}
+#endif
+
+/*
+    calculates the primary physical data domain of one task
+    dependent on the cham_affinity_settings.page_selection_strategy
+    and cham_affinity_settings.page_weighting_strategy
+*/
+#if USE_TASK_AFFINITY
+task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task){
+    const int page_size = getpagesize(); //doesn't work with windows
+    
+    size_t page_start_address;
+
+    int32_t number_of_affinities = task->arg_hst_pointers.size();
+
+    const int naffin = number_of_affinities;
+
+    if (number_of_affinities < 1)
+    {
+      number_of_affinities = 1;
+    }
+    const int n = number_of_affinities;//for strat
+
+    int max_len = n;//for loc array
+
+    /*----------------------------------------------------------------*/
+    /*determine the maximum number of pages to check per affinity*/
+    /*----------------------------------------------------------------*/
+
+    if(cham_affinity_settings.page_weighting_strategy == 0) {
+      max_len = 1;
+    } else {
+      switch (cham_affinity_settings.page_selection_strategy)
+      {
+        case cham_affinity_page_mode_first_page_of_first_affinity_only:
+          max_len = 1;
+          break;
+        case cham_affinity_page_mode_divide_in_n_pages:
+          max_len = n;
+          break;
+        case cham_affinity_page_mode_every_nth_page:
+          max_len = 1;
+          for (int i=0; i < number_of_affinities; i++){
+            if (task->arg_sizes[i] > max_len){
+                max_len = task->arg_sizes[i];
+            }
+          }
+          max_len = ((max_len/page_size)/n)+1;
+          break;
+        case cham_affinity_page_mode_first_and_last_page:
+          max_len = 2;
+          break;
+        case cham_affinity_page_mode_continuous_binary_search:
+          max_len = n;
+          break;
+        case cham_affinity_page_mode_first_page:
+          max_len = 1;
+          break;
+      }
+    }
+
+    const int row = max_len;
+
+    task_aff_physical_data_location_t **page_loc = (task_aff_physical_data_location_t**) malloc(naffin*sizeof(task_aff_physical_data_location_t*));
+    for(int i = 0; i < naffin; i++) {
+        page_loc[i] = (task_aff_physical_data_location_t*) malloc(row*sizeof(task_aff_physical_data_location_t));
+    }
+
+    int array_size[naffin];//filled page loc array size
+    int skipLen[naffin];
+
+    for (int i = 0; i < naffin; i++) {
+      array_size[i] = 0;
+      skipLen[i] = 0;
+      for (int j = 0; j < row; j++) {
+          page_loc[i][j].gtid = -1;
+          page_loc[i][j].domain = -1;
+      }
+    }
+
+    int skip=0;
+
+    /*----------------------------------------------------------------*/
+    /*Check the physical page locations*/
+    /*----------------------------------------------------------------*/
+    switch (cham_affinity_settings.page_selection_strategy)
+    {
+      case cham_affinity_page_mode_first_page_of_first_affinity_only:
+
+        page_loc[0][0] = check_page(task->arg_hst_pointers[0]);
+        page_loc[0][0] = check_page(task->arg_hst_pointers[0]);
+        array_size[0] = 1;
+        break;
+      case cham_affinity_page_mode_divide_in_n_pages:
+
+        for (int i=0;i<naffin;i++){
+            skipLen[i] = task->arg_sizes[i]/n;
+            array_size[i] = row;
+            skip = 0;
+            if (skipLen[i] < page_size){
+                //e.g. for arrays with 1 element or high n
+                //insted check every page contained in len
+                skipLen[i] = page_size;
+                array_size[i] = ((task->arg_sizes[i]-1)/page_size)+1; //round up
+            }
+            for (int j=0; j < array_size[i]; j++){
+                page_loc[i][j] = check_page(task->arg_hst_pointers[i] + skip);
+                skip += skipLen[i];
+            }
+        }
+
+        break;
+      case cham_affinity_page_mode_every_nth_page:
+
+        for (int i=0; i < naffin; i++){
+            skipLen[i] = page_size*n;
+            skip = 0;
+            array_size[i] = row;
+            //KA_TRACE(50,("strat s2, skip %d size %d row %d\n", skipLen[i],array_size[i], row));
+            for (int j=0; j < row; j++){
+                page_loc[i][j] = check_page(task->arg_hst_pointers[i] + skip);
+
+                skip += skipLen[i];
+                if (skip >= task->arg_sizes[i]) {
+                    array_size[i]=j+1;
+                }
+            }
+        }
+
+        break;
+      case cham_affinity_page_mode_first_and_last_page:
+
+        for (int i=0; i < naffin; i++) {
+            array_size[i]=1;
+            skipLen[i] = task->arg_sizes[i]-1;
+            //KA_TRACE(50,("strat s3, len %d, skipLen %d\n",aff_info[i].len, skipLen[i]));
+            page_loc[i][0] = check_page(task->arg_hst_pointers[i]);
+
+            if (skipLen[i] >= page_size) {
+                //only check last page, if not on same page
+                array_size[i]=2;
+                page_loc[i][1] = check_page(task->arg_hst_pointers[i] + skipLen[i]);
+            }
+        }
+
+        break;
+      case cham_affinity_page_mode_continuous_binary_search:
+
+        //KA_TRACE(50,("strat s4\n"));
+        for (int i=0; i < naffin; i++){
+            array_size[i] = n;
+            skipLen[i] = task->arg_sizes[i]/n;//for page_boundary_addr
+            task_aff_physical_data_location_t top, bot, m;
+            int half = task->arg_sizes[i]/2;
+            top = check_page(task->arg_hst_pointers[i] + task->arg_sizes[i]-1);
+            bot = check_page(task->arg_hst_pointers[i]);
+            while (half >= page_size && top.domain != bot.domain){
+                m = check_page(task->arg_hst_pointers[i] + half);
+                half = half/2;
+                if (m.domain == bot.domain){
+                    bot = m;
+                } else{ //m == top
+                    top = m;
+                }
+            }
+            //fill page_loc array up by same % based on found cut
+            int scale = (half*row)/task->arg_sizes[i];
+            for (int j=0; j < row; j++){
+                if (j <= scale)
+                  page_loc[i][j]=bot;
+                else
+                  page_loc[i][j]=top;
+            }
+        }
+
+        break;
+      case cham_affinity_page_mode_first_page:
+        for (int i=0; i < naffin; i++){
+            page_loc[i][0] = check_page(task->arg_hst_pointers[i]);
+            array_size[i] = 1;
+        }
+        break;
+    }
+    
+    /*----------------------------------------------------------------*/
+    /*Weigh the locations to calculate the primary domain of the task*/
+    /*----------------------------------------------------------------*/
+    task_aff_physical_data_location_t ret_val = map_count_weighted(task, naffin, row, page_loc, &(array_size[0]));
+    //task_aff_physical_data_location_t ret_val = map_count_weighted(aff_info, naffin, row, page_loc, &(array_size[0]));
+    
+    // free memory again
+    for(int i = 0; i < naffin; i++) {
+        free(page_loc[i]);
+    }
+    free(page_loc);
+
+    return ret_val;
+}
+#endif
+
 cham_migratable_task_t* chameleon_create_task(void * entry_point, int num_args, chameleon_map_data_entry_t* args) {
     // Format of variable input args should always be:
     // 1. void* to data entry
@@ -1006,6 +1350,12 @@ cham_migratable_task_t* chameleon_create_task(void * entry_point, int num_args, 
     tmp_task->is_manual_task    = 1;
     tmp_task->arg_hst_pointers  = arg_hst_pointers;
     tmp_task->arg_sizes         = arg_sizes;
+
+#if USE_TASK_AFFINITY
+    //calculate the primary data domain of the task
+    task_aff_physical_data_location_t tmp_loc = affinity_schedule(tmp_task);
+    tmp_task->data_loc = tmp_loc;
+#endif
 
     return tmp_task;
 }
@@ -1593,7 +1943,11 @@ inline int32_t process_remote_task() {
 }
 
 inline int32_t process_local_task() {
+#if USE_TASK_AFFINITY
+    cham_migratable_task_t *task = _local_tasks.affinity_task_select();
+#else
     cham_migratable_task_t *task = _local_tasks.pop_front();
+#endif
     if(!task)
         return CHAM_LOCAL_TASK_NONE;
 

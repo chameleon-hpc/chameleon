@@ -330,8 +330,8 @@ typedef struct cham_migratable_task_t {
 
     // host pointers will be used for transfer execution target region
     std::vector<void *> arg_hst_pointers;
-    std::vector<int64_t> arg_sizes;
-    std::vector<int64_t> arg_types;
+    std::vector<int64_t> arg_sizes;         // size of each parameter in bytes
+    std::vector<int64_t> arg_types;         // int representing bitwise combination of chameleon_tgt_map_type values
 
     // target pointers will just be used at sender side for host pointer lookup 
     // and freeing of entries in data entry table

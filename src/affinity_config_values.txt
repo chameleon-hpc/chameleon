@@ -6,6 +6,7 @@ compile with extra options example:
 	export CHAM_AFF_PAGE_WEIGHTING_STRAT=2
   export CHAM_AFF_CONSIDER_TYPES=1
   export CHAM_AFF_PAGE_SELECTION_N=3
+  export CHAM_AFF_TASK_SELECTION_N=3
 
 ======================
 flags
@@ -22,6 +23,11 @@ CHAM_AFF_TASK_SELECTION_STRAT= (default 0)
   //pop the first with the correct domain
   //else pop the first task
   CHAM_AFF_ALL_LINEAR = 1
+  CHAM_AFF_FIRST_N = 2,
+  // check N tasks euqally spaced
+  CHAM_AFF_N_EQS = 3,
+  // check tasks linearely with stride N
+  CHAM_AFF_EVERY_NTH = 4
 
 CHAM_AFF_PAGE_SELECTION_STRAT= (default 0)
 	cham_affinity_page_mode_first_page_of_first_affinity_only = 0,
@@ -45,3 +51,5 @@ CHAM_AFF_CONSIDER_TYPES= (default 0) //which types should be considered when cal
   CONSIDER_TYPE_TO = 1 //considers only the type to
 
 CHAM_AFF_PAGE_SELECTION_N= (default 3) //parameter to use for page selection strategy, e.g. number of pages to check
+
+CHAM_AFF_TASK_SELECTION_N= (default 3) //parameter for task selection strategies

@@ -49,6 +49,7 @@ std::atomic<int> CHAM_AFF_PAGE_SELECTION_STRAT(0);
 std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT(0);
 std::atomic<int> CHAM_AFF_CONSIDER_TYPES(0); //0 = consider all types except literals
 std::atomic<int> CHAM_AFF_PAGE_SELECTION_N(3);
+std::atomic<int> CHAM_AFF_TASK_SELECTION_N(3);
 cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion

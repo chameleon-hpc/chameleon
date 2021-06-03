@@ -189,7 +189,12 @@ typedef enum cham_affinity_selection_strategy_t {
     //start at the front and search each task
     //pop the first with the correct domain
     //else pop the first task
-    CHAM_AFF_ALL_LINEAR = 1
+    CHAM_AFF_ALL_LINEAR = 1,
+    CHAM_AFF_FIRST_N = 2,
+    // check N tasks euqally spaced
+    CHAM_AFF_N_EQS = 3,
+    // check tasks linearely with stride N
+    CHAM_AFF_EVERY_NTH = 4
 } cham_affinity_selection_strategy_t;
 
 //which types of affinities are to be considered when calculating the domain of a task?
@@ -204,6 +209,7 @@ typedef struct cham_affinity_settings_t {
     int32_t page_weighting_strategy;
     int32_t n_pages; //e.g. number of pages to skip or number of pages to check
     int32_t consider_types;
+    int32_t n_tasks; //parameter for affinity_task_select
 } cham_affinity_settings_t;
 
 extern cham_affinity_settings_t cham_affinity_settings;
@@ -647,17 +653,22 @@ class thread_safe_task_list_t {
             return nullptr;
 
         cham_migratable_task_t* ret_val = nullptr;
+        bool found;
+        std::_List_iterator<cham_migratable_task_t *> it;
+        int stride, counter;
 
         switch(cham_affinity_settings.task_selection_strategy){
+            
             case CHAM_AFF_NONE:
                 ret_val = this->pop_front();
                 break;
+
             case CHAM_AFF_ALL_LINEAR:
                 this->m.lock();
-                bool found = false;
-                std::_List_iterator<cham_migratable_task_t *> it;
+                found = false;
                 for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
-                    if(my_domain == (*it)->data_loc.domain){
+                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                         this->list_size--;
                         this->dup_list_size--;
                         ret_val = *it;
@@ -671,6 +682,77 @@ class thread_safe_task_list_t {
                     ret_val = this->pop_front();
                 }
                 break;
+
+            case CHAM_AFF_FIRST_N:
+                this->m.lock();
+                found = false;
+                counter = 0;
+                for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
+                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                        break;
+                    }
+                    counter++;
+                }
+                this->m.unlock();
+                if(!found){
+                    ret_val = this->pop_front();
+                }
+                break;
+
+            // check N tasks euqally spaced
+            case CHAM_AFF_N_EQS:
+                this->m.lock();
+                bool found = false;
+                it = this->task_list.begin();
+                stride = this->task_list.size()/cham_affinity_settings.n_tasks;
+                while (it != this->task_list.end()){
+                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                        break;
+                    }
+                    std::advance(it, stride);
+                }
+                this->m.unlock();
+                if(!found){
+                    ret_val = this->pop_front();
+                }
+                break;
+
+            // check tasks linearely with stride N
+            case CHAM_AFF_EVERY_NTH:
+                this->m.lock();
+                found = false;
+                it = this->task_list.begin();
+                stride = cham_affinity_settings.n_tasks;
+                while (it != this->task_list.end()){
+                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                        break;
+                    }
+                    std::advance(it, stride);
+                }
+                this->m.unlock();
+                if(!found){
+                    ret_val = this->pop_front();
+                }
+                break;
+                
             default:
                 ret_val = this->pop_front();
         }
@@ -1037,6 +1119,7 @@ extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_STRAT;
 extern std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT;
 extern std::atomic<int> CHAM_AFF_CONSIDER_TYPES;
 extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_N;
+extern std::atomic<int> CHAM_AFF_TASK_SELECTION_N;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion
@@ -1229,12 +1312,19 @@ static void load_config_values() {
          CHAM_AFF_PAGE_SELECTION_N = std::atof(tmp);
     }
 
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_TASK_SELECTION_N");
+    if(tmp) {
+         CHAM_AFF_TASK_SELECTION_N = std::atof(tmp);
+    }
+
     cham_affinity_settings = {
         .task_selection_strategy = CHAM_AFF_TASK_SELECTION_STRAT,
         .page_selection_strategy = CHAM_AFF_PAGE_SELECTION_STRAT,
         .page_weighting_strategy = CHAM_AFF_PAGE_WEIGHTING_STRAT,
         .n_pages = CHAM_AFF_PAGE_SELECTION_N,
-        .consider_types = CHAM_AFF_CONSIDER_TYPES
+        .consider_types = CHAM_AFF_CONSIDER_TYPES,
+        .n_tasks = CHAM_AFF_TASK_SELECTION_N
     };
     #endif
 }
@@ -1273,11 +1363,14 @@ static void print_config_values() {
     "CHAM_AFF_PAGE_WEIGHTING_STRAT=%d\n "
     "CHAM_AFF_CONSIDER_TYPES=%d\n "
     "CHAM_AFF_PAGE_SELECTION_N=%d\n"
+    "CHAM_AFF_TASK_SELECTION_N=%d\n"
     , CHAM_AFF_TASK_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_WEIGHTING_STRAT.load()
     , CHAM_AFF_CONSIDER_TYPES.load()
-    , CHAM_AFF_PAGE_SELECTION_N.load());
+    , CHAM_AFF_PAGE_SELECTION_N.load()
+    , CHAM_AFF_TASK_SELECTION_N.load()
+    );
     #endif
 }
 #pragma endregion

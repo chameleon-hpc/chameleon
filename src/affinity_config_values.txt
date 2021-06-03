@@ -1,8 +1,11 @@
 compile with extra options example:
-	export CHAM_AFF_TASK_SELECTION_STRAT=1
-	export CHAM_AFF_PAGE_SELECTION_STRAT=5
-	export CHAM_AFF_PAGE_WEIGHTING_STRAT=2
 	CUSTOM_COMPILE_FLAGS="-DUSE_TASK_AFFINITY=1" make
+
+  export CHAM_AFF_TASK_SELECTION_STRAT=1
+	export CHAM_AFF_PAGE_SELECTION_STRAT=7
+	export CHAM_AFF_PAGE_WEIGHTING_STRAT=2
+  export CHAM_AFF_CONSIDER_TYPES=1
+  export CHAM_AFF_PAGE_SELECTION_N=3
 
 ======================
 flags
@@ -27,6 +30,10 @@ CHAM_AFF_PAGE_SELECTION_STRAT= (default 0)
   cham_affinity_page_mode_first_and_last_page = 3,
   cham_affinity_page_mode_continuous_binary_search = 4,
   cham_affinity_page_mode_first_page = 5,
+  // considered = if some affinity has a type that is to be ignored, do not consider it in the page selection strategy
+  // instead check the next affinity
+  cham_affinity_page_mode_first_page_of_first_affinity_considered = 6,
+  cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs = 7
 
 CHAM_AFF_PAGE_WEIGHTING_STRAT= (default 0)
 	cham_affinity_page_weight_mode_first_page_only = 0,
@@ -36,3 +43,5 @@ CHAM_AFF_PAGE_WEIGHTING_STRAT= (default 0)
 CHAM_AFF_CONSIDER_TYPES= (default 0) //which types should be considered when calculating the domain of a task?
   CONSIDER_ALL_TYPES = 0, //considers all except literals
   CONSIDER_TYPE_TO = 1 //considers only the type to
+
+CHAM_AFF_PAGE_SELECTION_N= (default 3) //parameter to use for page selection strategy, e.g. number of pages to check

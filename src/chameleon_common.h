@@ -170,6 +170,10 @@ typedef enum cham_affinity_page_selection_strategy_t {
     cham_affinity_page_mode_first_and_last_page = 3,
     cham_affinity_page_mode_continuous_binary_search = 4,
     cham_affinity_page_mode_first_page = 5,
+    // considered = if some affinity has a type that is to be ignored, do not consider it in the page selection strategy
+    // instead check the next affinity
+    cham_affinity_page_mode_first_page_of_first_affinity_considered = 6,
+    cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs = 7
 } cham_affinity_page_selection_strategy_t;
 
 typedef enum cham_affinity_page_weighting_strategy_t {
@@ -198,7 +202,7 @@ typedef struct cham_affinity_settings_t {
     int32_t task_selection_strategy;
     int32_t page_selection_strategy;
     int32_t page_weighting_strategy;
-    int32_t stride;
+    int32_t n_pages; //e.g. number of pages to skip or number of pages to check
     int32_t consider_types;
 } cham_affinity_settings_t;
 
@@ -1032,6 +1036,7 @@ extern std::atomic<int> CHAM_AFF_TASK_SELECTION_STRAT;
 extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_STRAT;
 extern std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT;
 extern std::atomic<int> CHAM_AFF_CONSIDER_TYPES;
+extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_N;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion
@@ -1218,11 +1223,17 @@ static void load_config_values() {
          CHAM_AFF_CONSIDER_TYPES = std::atof(tmp);
     }
 
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_PAGE_SELECTION_N");
+    if(tmp) {
+         CHAM_AFF_PAGE_SELECTION_N = std::atof(tmp);
+    }
+
     cham_affinity_settings = {
         .task_selection_strategy = CHAM_AFF_TASK_SELECTION_STRAT,
         .page_selection_strategy = CHAM_AFF_PAGE_SELECTION_STRAT,
         .page_weighting_strategy = CHAM_AFF_PAGE_WEIGHTING_STRAT,
-        .stride = 1,
+        .n_pages = CHAM_AFF_PAGE_SELECTION_N,
         .consider_types = CHAM_AFF_CONSIDER_TYPES
     };
     #endif
@@ -1256,7 +1267,17 @@ static void print_config_values() {
     //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_SELECTION_STRAT.load());
     //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_WEIGHTING_STRAT.load());
 
-    RELP("\n========== affinity settings ==========\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_TASK_SELECTION_STRAT.load(), CHAM_AFF_PAGE_SELECTION_STRAT.load(), CHAM_AFF_PAGE_WEIGHTING_STRAT.load());
+    RELP("\n========== affinity settings ==========\n "
+    "CHAM_AFF_TASK_SELECTION_STRAT=%d\n "
+    "CHAM_AFF_PAGE_SELECTION_STRAT=%d\n "
+    "CHAM_AFF_PAGE_WEIGHTING_STRAT=%d\n "
+    "CHAM_AFF_CONSIDER_TYPES=%d\n "
+    "CHAM_AFF_PAGE_SELECTION_N=%d\n"
+    , CHAM_AFF_TASK_SELECTION_STRAT.load()
+    , CHAM_AFF_PAGE_SELECTION_STRAT.load()
+    , CHAM_AFF_PAGE_WEIGHTING_STRAT.load()
+    , CHAM_AFF_CONSIDER_TYPES.load()
+    , CHAM_AFF_PAGE_SELECTION_N.load());
     #endif
 }
 #pragma endregion

@@ -1187,6 +1187,12 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
         case cham_affinity_page_mode_first_page:
           max_len = 1;
           break;
+        case cham_affinity_page_mode_first_page_of_first_affinity_considered:
+            max_len = 1;
+            break;
+        case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
+            max_len = n;
+            break;
       }
     }
 
@@ -1310,6 +1316,38 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
             array_size[i] = 1;
         }
         break;
+
+        // ====================================
+        // The following strategies with "considered" take into account that check_page will ignore some types
+        // ====================================
+
+        // get the first location of an affinity that isn't ignored because of its type
+        case cham_affinity_page_mode_first_page_of_first_affinity_considered:
+            for (int i=0; i < naffin; i++){
+                page_loc[0][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+                if(!(page_loc[0][0].domain < 0)){
+                    array_size[0]=1;
+                    break;
+                }
+            }
+            break;
+
+        // check n pages equally spaced over all affinities
+        case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
+            int n_checked = 0; //number of pages successfully checked
+            int stride = naffin/cham_affinity_settings.n_pages;
+            for(int i = 0; i<naffin && (n_checked < cham_affinity_settings.n_pages); i++){
+                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+                if(page_loc[n_checked][0].domain < 0){
+                    continue;
+                }
+                else {
+                    array_size[n_checked] = 1;
+                    n_checked++;
+                    i += stride;
+                }
+            }
+            break;
     }
     
     /*----------------------------------------------------------------*/

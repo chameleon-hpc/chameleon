@@ -188,11 +188,18 @@ typedef enum cham_affinity_selection_strategy_t {
     CHAM_AFF_ALL_LINEAR = 1
 } cham_affinity_selection_strategy_t;
 
+//which types of affinities are to be considered when calculating the domain of a task?
+typedef enum cham_affinity_consider_types_t {
+    CONSIDER_ALL_TYPES = 0, //considers all except literals
+    CONSIDER_TYPE_TO = 1 //considers only the type to
+} cham_affinity_consider_types_t;
+
 typedef struct cham_affinity_settings_t {
     int32_t task_selection_strategy;
     int32_t page_selection_strategy;
     int32_t page_weighting_strategy;
     int32_t stride;
+    int32_t consider_types;
 } cham_affinity_settings_t;
 
 extern cham_affinity_settings_t cham_affinity_settings;
@@ -643,6 +650,7 @@ class thread_safe_task_list_t {
                 break;
             case CHAM_AFF_ALL_LINEAR:
                 this->m.lock();
+                bool found = false;
                 std::_List_iterator<cham_migratable_task_t *> it;
                 for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
                     if(my_domain == (*it)->data_loc.domain){
@@ -650,10 +658,14 @@ class thread_safe_task_list_t {
                         this->dup_list_size--;
                         ret_val = *it;
                         this->task_list.remove(ret_val);
+                        found = true;
                         break;
                     }
                 }
                 this->m.unlock();
+                if(!found){
+                    ret_val = this->pop_front();
+                }
                 break;
             default:
                 ret_val = this->pop_front();
@@ -1017,6 +1029,9 @@ extern std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE;
 //settings for task to data affinity
 #if USE_TASK_AFFINITY
 extern std::atomic<int> CHAM_AFF_TASK_SELECTION_STRAT;
+extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_STRAT;
+extern std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT;
+extern std::atomic<int> CHAM_AFF_CONSIDER_TYPES;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion
@@ -1185,11 +1200,30 @@ static void load_config_values() {
          CHAM_AFF_TASK_SELECTION_STRAT = std::atof(tmp);
     }
 
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_PAGE_SELECTION_STRAT");
+    if(tmp) {
+         CHAM_AFF_PAGE_SELECTION_STRAT = std::atof(tmp);
+    }
+
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_PAGE_WEIGHTING_STRAT");
+    if(tmp) {
+         CHAM_AFF_PAGE_WEIGHTING_STRAT = std::atof(tmp);
+    }
+
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_CONSIDER_TYPES");
+    if(tmp) {
+         CHAM_AFF_CONSIDER_TYPES = std::atof(tmp);
+    }
+
     cham_affinity_settings = {
         .task_selection_strategy = CHAM_AFF_TASK_SELECTION_STRAT,
-        .page_selection_strategy = 0,
-        .page_weighting_strategy = 0,
-        .stride = 1
+        .page_selection_strategy = CHAM_AFF_PAGE_SELECTION_STRAT,
+        .page_weighting_strategy = CHAM_AFF_PAGE_WEIGHTING_STRAT,
+        .stride = 1,
+        .consider_types = CHAM_AFF_CONSIDER_TYPES
     };
     #endif
 }
@@ -1217,7 +1251,12 @@ static void print_config_values() {
     }
     RELP("USE_TASK_AFFINITY=%d\n", USE_TASK_AFFINITY);
     #if USE_TASK_AFFINITY
-    RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_TASK_SELECTION_STRAT.load());
+    //RELP("========== affinity settings ==========");
+    //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_TASK_SELECTION_STRAT.load());
+    //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_SELECTION_STRAT.load());
+    //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_WEIGHTING_STRAT.load());
+
+    RELP("\n========== affinity settings ==========\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_TASK_SELECTION_STRAT.load(), CHAM_AFF_PAGE_SELECTION_STRAT.load(), CHAM_AFF_PAGE_WEIGHTING_STRAT.load());
     #endif
 }
 #pragma endregion

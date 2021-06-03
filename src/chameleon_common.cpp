@@ -45,6 +45,9 @@ std::atomic<int> ENABLE_TRACE_TO_SYNC_CYCLE(INT_MAX);
 //settings for task to data affinity
 #if USE_TASK_AFFINITY
 std::atomic<int> CHAM_AFF_TASK_SELECTION_STRAT(0);
+std::atomic<int> CHAM_AFF_PAGE_SELECTION_STRAT(0);
+std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT(0);
+std::atomic<int> CHAM_AFF_CONSIDER_TYPES(0); //0 = consider all types except literals
 cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion

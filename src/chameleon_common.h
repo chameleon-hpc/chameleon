@@ -659,11 +659,11 @@ class thread_safe_task_list_t {
 
         switch(cham_affinity_settings.task_selection_strategy){
             
-            case CHAM_AFF_NONE:
+            case CHAM_AFF_NONE: // 0
                 ret_val = this->pop_front();
                 break;
 
-            case CHAM_AFF_ALL_LINEAR:
+            case CHAM_AFF_ALL_LINEAR: // 1
                 this->m.lock();
                 found = false;
                 for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
@@ -677,13 +677,17 @@ class thread_safe_task_list_t {
                         break;
                     }
                 }
-                this->m.unlock();
-                if(!found){
-                    ret_val = this->pop_front();
+                // if not found, get front task
+                if(!found && !this->empty()){
+                    this->list_size--;
+                    this->dup_list_size--;
+                    ret_val = this->task_list.front();
+                    this->task_list.pop_front();
                 }
+                this->m.unlock();
                 break;
 
-            case CHAM_AFF_FIRST_N:
+            case CHAM_AFF_FIRST_N: // 2
                 this->m.lock();
                 found = false;
                 counter = 0;
@@ -699,43 +703,55 @@ class thread_safe_task_list_t {
                     }
                     counter++;
                 }
-                this->m.unlock();
-                if(!found){
-                    ret_val = this->pop_front();
+                // if not found, get front task
+                if(!found && !this->empty()){
+                    this->list_size--;
+                    this->dup_list_size--;
+                    ret_val = this->task_list.front();
+                    this->task_list.pop_front();
                 }
+                this->m.unlock();
                 break;
 
             // check N tasks euqally spaced
-            case CHAM_AFF_N_EQS:
+            case CHAM_AFF_N_EQS: // 3
                 this->m.lock();
-                bool found = false;
+                found = false;
                 it = this->task_list.begin();
                 stride = this->task_list.size()/cham_affinity_settings.n_tasks;
-                while (it != this->task_list.end()){
+                if(stride<1) stride = 1;
+                counter = 0;
+                while (counter < this->task_list.size()){
                     //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                     if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
-                        this->list_size--;
-                        this->dup_list_size--;
                         ret_val = *it;
                         this->task_list.remove(ret_val);
+                        this->list_size--;
+                        this->dup_list_size--;
                         found = true;
                         break;
                     }
                     std::advance(it, stride);
+                    counter += stride;
+                }
+                // if not found, get front task
+                if(!found && !this->empty()){
+                    this->list_size--;
+                    this->dup_list_size--;
+                    ret_val = this->task_list.front();
+                    this->task_list.pop_front();
                 }
                 this->m.unlock();
-                if(!found){
-                    ret_val = this->pop_front();
-                }
                 break;
 
             // check tasks linearely with stride N
-            case CHAM_AFF_EVERY_NTH:
+            case CHAM_AFF_EVERY_NTH: // 4
                 this->m.lock();
                 found = false;
                 it = this->task_list.begin();
                 stride = cham_affinity_settings.n_tasks;
-                while (it != this->task_list.end()){
+                counter = 0;
+                while (counter < this->task_list.size()){
                     //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                     if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                         this->list_size--;
@@ -746,11 +762,16 @@ class thread_safe_task_list_t {
                         break;
                     }
                     std::advance(it, stride);
+                    counter += stride;
+                }
+                // if not found, get front task
+                if(!found && !this->empty()){
+                    this->list_size--;
+                    this->dup_list_size--;
+                    ret_val = this->task_list.front();
+                    this->task_list.pop_front();
                 }
                 this->m.unlock();
-                if(!found){
-                    ret_val = this->pop_front();
-                }
                 break;
                 
             default:
@@ -1357,11 +1378,11 @@ static void print_config_values() {
     //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_SELECTION_STRAT.load());
     //RELP("CHAM_AFF_TASK_SELECTION_STRAT=%d\n", CHAM_AFF_PAGE_WEIGHTING_STRAT.load());
 
-    RELP("\n========== affinity settings ==========\n "
-    "CHAM_AFF_TASK_SELECTION_STRAT=%d\n "
-    "CHAM_AFF_PAGE_SELECTION_STRAT=%d\n "
-    "CHAM_AFF_PAGE_WEIGHTING_STRAT=%d\n "
-    "CHAM_AFF_CONSIDER_TYPES=%d\n "
+    RELP("\n========== affinity settings ==========\n"
+    "CHAM_AFF_TASK_SELECTION_STRAT=%d\n"
+    "CHAM_AFF_PAGE_SELECTION_STRAT=%d\n"
+    "CHAM_AFF_PAGE_WEIGHTING_STRAT=%d\n"
+    "CHAM_AFF_CONSIDER_TYPES=%d\n"
     "CHAM_AFF_PAGE_SELECTION_N=%d\n"
     "CHAM_AFF_TASK_SELECTION_N=%d\n"
     , CHAM_AFF_TASK_SELECTION_STRAT.load()

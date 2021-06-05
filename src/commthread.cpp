@@ -379,6 +379,8 @@ short pin_thread_to_last_core(int n_last_core) {
     const long n_physical_cores = hwloc_get_nbobjs_by_depth(topology, depth);
     const long n_logical_cores = sysconf( _SC_NPROCESSORS_ONLN );
 
+    RELP("n_physical_cores %d, n_logical_cores %d\n", n_physical_cores, n_logical_cores);
+
     hwloc_topology_destroy(topology);
     
     // get last hw thread of current cpuset
@@ -387,13 +389,16 @@ short pin_thread_to_last_core(int n_last_core) {
 
     for (long i = n_logical_cores; i >= 0; i--) {
         if (CPU_ISSET(i, &current_cpuset)) {
-            // DBP("Last core/hw thread in cpuset is %ld\n", i);
+            RELP("Last core/hw thread in cpuset is %ld\n", i);
             max_core_set = i;
             count_last++;
             if(count_last >= n_last_core)
                 break;
         }
     }
+
+    // hardcode core set on CM2
+    max_core_set = 55;
 
     // set affinity mask to last core or all hw threads on specific core 
     CPU_ZERO(&new_cpu_set);

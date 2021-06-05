@@ -157,6 +157,17 @@
 #define USE_TASK_AFFINITY 1
 #endif
 
+//debug prints to validate the correctness
+#ifndef TASK_AFFINITY_DEBUG
+#define TASK_AFFINITY_DEBUG 0
+#endif
+
+#if TASK_AFFINITY_DEBUG
+// used to count which percentage of tasks chosen are in the same domain as the corresponding thread
+extern std::atomic<int> task_domain_hit;
+extern std::atomic<int> task_domain_miss;
+#endif
+
 #if CHAMELEON_TOOL_SUPPORT
 #include "chameleon_tools.h"
 #endif
@@ -777,6 +788,17 @@ class thread_safe_task_list_t {
             default:
                 ret_val = this->pop_front();
         }
+
+        #if TASK_AFFINITY_DEBUG
+            printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
+            if(my_domain == ret_val->data_loc.domain){
+                task_domain_hit++;
+            }
+            else{
+                task_domain_miss++;
+            }
+        #endif
+
         return ret_val;
     }
     #endif

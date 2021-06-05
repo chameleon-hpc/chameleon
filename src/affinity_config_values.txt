@@ -1,5 +1,5 @@
 compile with extra options example:
-	CUSTOM_COMPILE_FLAGS="-DUSE_TASK_AFFINITY=1" make
+	CUSTOM_COMPILE_FLAGS="-DUSE_TASK_AFFINITY=1 -DTASK_AFFINITY_DEBUG=1" make
 
   export CHAM_AFF_TASK_SELECTION_STRAT=3
 	export CHAM_AFF_PAGE_SELECTION_STRAT=7
@@ -12,6 +12,8 @@ compile with extra options example:
 flags
 ======================
 USE_TASK_AFFINITY=1 to use task affinity (default 1)
+
+TASK_AFFINITY_DEBUG=1 to activate debug prints (default 0)
 
 ======================
 environment variables:

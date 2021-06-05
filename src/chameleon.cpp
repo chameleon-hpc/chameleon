@@ -68,6 +68,12 @@ std::mutex addr_map_mutex;
 std::map<size_t ,task_aff_physical_data_location_t> task_aff_addr_map;
 #endif
 
+#if TASK_AFFINITY_DEBUG
+// used to count which percentage of tasks chosen are in the same domain as the corresponding thread
+std::atomic<int> task_domain_hit(0);
+std::atomic<int> task_domain_miss(0);
+#endif
+
 #pragma endregion Variables
 
 // void char_p_f2c(const char* fstr, int len, char** cstr)
@@ -470,6 +476,14 @@ int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address) {
 int32_t chameleon_finalize() {
     DBP("chameleon_finalize (enter)\n");
     verify_initialized();
+
+    #if TASK_AFFINITY_DEBUG
+        int tdh = task_domain_hit.load();
+        int tdm = task_domain_miss.load();
+        printf("Total tasks selected from local domains: %d\n", tdh);
+        printf("Total tasks selected from foreign domains: %d\n", tdm);
+        printf("==> Task Domain Hitrate = %f%%\n", (100.0*tdh)/(tdm+tdh));
+    #endif
 
     #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
     stop_communication_threads();

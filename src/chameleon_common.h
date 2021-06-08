@@ -184,13 +184,15 @@ typedef enum cham_affinity_page_selection_strategy_t {
     // considered = if some affinity has a type that is to be ignored, do not consider it in the page selection strategy
     // instead check the next affinity
     cham_affinity_page_mode_first_page_of_first_affinity_considered = 6,
-    cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs = 7
+    cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs = 7,
+    cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs = 8
 } cham_affinity_page_selection_strategy_t;
 
 typedef enum cham_affinity_page_weighting_strategy_t {
     cham_affinity_page_weight_mode_first_page_only = 0,
     cham_affinity_page_weight_mode_majority = 1,
     cham_affinity_page_weight_mode_by_size = 2,
+    cham_affinity_page_weight_mode_by_size_old = 3,
 } cham_affinity_page_weighting_strategy_t;
 
 //strategy which tasks will be examined to choose which one to pop

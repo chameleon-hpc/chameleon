@@ -1030,10 +1030,42 @@ inline task_aff_physical_data_location_t map_count_weighted(cham_migratable_task
         }
     }
     break;
-  case cham_affinity_page_weight_mode_by_size:
+      
+   //adjusted version that actually checks the sizes
+   case cham_affinity_page_weight_mode_by_size:
     max = 0;
+    for (int i=0; i < naffin; i++) {
+        //normalize the weight to work in cases where multiple pages per affinity have been checked
+        double weight = task->arg_sizes[i]/array_size[i];
+        for (int j=0; j < array_size[i]; j++){
+            cur = page_loc[i][j].domain;
+            if (cur < 0) {
+              continue;
+            }
+            m[cur]+=weight;
+            if (m[cur] > max) {
+                max = m[cur];
+                x=i;
+                y=j;
+            }
+        }
+    }
+    break;
+
+    //The old copied by size weight mode, which doesn't really consider the size of the affinities.
+    //It counts affinities with only one page checked as max large, which most likely is wrong.
+    //It normalizes the checked pages such that each checked affinity weighs exactly the same, no matter the real size.
+    //(Hence one affinity that has only one page checked and is only one byte large weighs the same as an affinity with 1000 pages checked?)
+  case cham_affinity_page_weight_mode_by_size_old:
+    max = 0;
+    // row := maximum number of pages to check per affinity
+    // Hence f is just a constant greater than 1 which doesn't make sense here
     int f = page_size*row; //divide weight by factor, to prevent overflow
     for (int i=0; i < naffin; i++) {
+        // 1+(10-1)/1 = 10, 1+(10-3)/3 = 3.33, ...
+        // This normalizes when one affinity gets checked more often than another affinity.
+        // This makes affinities that get checked more often weight the same as all others.
+        // Therefore the size of each affinity gets neutralized
         double weight = 1 + ( (row-array_size[i]) / (double) array_size[i]);//weight each entry as if every row is full
         for (int j=0; j < array_size[i]; j++){
             cur = page_loc[i][j].domain;
@@ -1205,7 +1237,10 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
             max_len = 1;
             break;
         case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
-            max_len = n;
+            max_len = 1;
+            break;
+        case cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs:
+            max_len = 1;
             break;
       }
     }
@@ -1230,6 +1265,7 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
     }
 
     int skip=0;
+    int n_checked;
 
     /*----------------------------------------------------------------*/
     /*Check the physical page locations*/
@@ -1348,17 +1384,36 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
 
         // check n pages equally spaced over all affinities
         case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
-            int n_checked = 0; //number of pages successfully checked
-            int stride = naffin/cham_affinity_settings.n_pages;
+            n_checked = 0; //number of pages successfully checked
+            skip = naffin/cham_affinity_settings.n_pages;
             for(int i = 0; i<naffin && (n_checked < cham_affinity_settings.n_pages); i++){
                 page_loc[n_checked][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+                //if checked affinity returns error, check next
                 if(page_loc[n_checked][0].domain < 0){
                     continue;
                 }
                 else {
                     array_size[n_checked] = 1;
                     n_checked++;
-                    i += stride;
+                    i += skip;
+                }
+            }
+            break;
+
+        // check n pages equally spaced over all affinities (check the middle page of each affinity)
+        case cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs:
+            n_checked = 0; //number of pages successfully checked
+            skip = naffin/cham_affinity_settings.n_pages;
+            for(int i = 0; i<naffin && (n_checked < cham_affinity_settings.n_pages); i++){
+                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[i] + (int)(task->arg_sizes[i])/2, task->arg_types[i]);
+                //if checked affinity returns error, check next
+                if(page_loc[n_checked][0].domain < 0){
+                    continue;
+                }
+                else {
+                    array_size[n_checked] = 1;
+                    n_checked++;
+                    i += skip;
                 }
             }
             break;

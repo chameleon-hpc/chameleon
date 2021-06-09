@@ -1036,7 +1036,7 @@ inline task_aff_physical_data_location_t map_count_weighted(cham_migratable_task
     max = 0;
     for (int i=0; i < naffin; i++) {
         //normalize the weight to work in cases where multiple pages per affinity have been checked
-        double weight = task->arg_sizes[i]/array_size[i];
+        double weight = (task->arg_sizes[i])/((double)array_size[i]);
         for (int j=0; j < array_size[i]; j++){
             cur = page_loc[i][j].domain;
             if (cur < 0) {

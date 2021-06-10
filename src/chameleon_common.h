@@ -181,11 +181,9 @@ typedef enum cham_affinity_page_selection_strategy_t {
     cham_affinity_page_mode_first_and_last_page = 3,
     cham_affinity_page_mode_continuous_binary_search = 4,
     cham_affinity_page_mode_first_page = 5,
-    // considered = if some affinity has a type that is to be ignored, do not consider it in the page selection strategy
-    // instead check the next affinity
-    cham_affinity_page_mode_first_page_of_first_affinity_considered = 6,
-    cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs = 7,
-    cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs = 8
+    cham_affinity_page_mode_first_page_of_n_affinities_eqs = 6,
+    cham_affinity_page_mode_middle_page_of_n_affinities_eqs = 7,
+    cham_affinity_page_mode_middle_page = 8
 } cham_affinity_page_selection_strategy_t;
 
 typedef enum cham_affinity_page_weighting_strategy_t {

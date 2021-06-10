@@ -1087,24 +1087,25 @@ inline task_aff_physical_data_location_t map_count_weighted(cham_migratable_task
 }
 
 //get the physical location of one page
-task_aff_physical_data_location_t check_page(void * addr, int64_t type){
+//task_aff_physical_data_location_t check_page(void * addr, int64_t type){
+task_aff_physical_data_location_t check_page(void * addr){
     
     task_aff_physical_data_location_t tmp_result{
         .domain = -1,
         .gtid = -1
     };
 
-    //----- check the type of the affinity -----
-    //skip literals
-    if (type & CHAM_OMP_TGT_MAPTYPE_LITERAL){
-        tmp_result.domain = -7; // 7 = T = Type
-        return tmp_result;
-    }
-    //skip all except TO mode
-    if((cham_affinity_settings.consider_types == CONSIDER_TYPE_TO) && !(type & CHAM_OMP_TGT_MAPTYPE_TO)){
-        tmp_result.domain = -7;
-        return tmp_result;
-    }
+//    //----- check the type of the affinity -----
+//    //skip literals
+//    if (type & CHAM_OMP_TGT_MAPTYPE_LITERAL){
+//        tmp_result.domain = -7; // 7 = T = Type
+//        return tmp_result;
+//    }
+//    //skip all except TO mode
+//    if((cham_affinity_settings.consider_types == CONSIDER_TYPE_TO) && !(type & CHAM_OMP_TGT_MAPTYPE_TO)){
+//        tmp_result.domain = -7;
+//        return tmp_result;
+//    }
 
     //---------Calculate the logical start address---------
     int ret=-1, found=0;
@@ -1117,13 +1118,6 @@ task_aff_physical_data_location_t check_page(void * addr, int64_t type){
     //#if KMP_TASK_AFFINITY_USE_DEFAULT_MAP
         auto search = task_aff_addr_map.find(page_start_address);
         found = search != task_aff_addr_map.end();
-
-        //if (search->second.domain == -1 || search->second.gtid == -1)
-          //found = false;
-    //#else
-    //    kmp_maphash_entry * cur_entry = __kmp_maphash_find(thread, task_aff_addr_map2, (kmp_intptr_t) page_start_address);
-    //    found = cur_entry->val.gtid != -1 && cur_entry->val.domain != -1;
-    //#endif
 
     #if CHAM_TASK_AFFINITY_ALWAYS_CHECK_PHYSICAL_LOCATION
             found = false;
@@ -1184,21 +1178,39 @@ task_aff_physical_data_location_t check_page(void * addr, int64_t type){
 */
 #if USE_TASK_AFFINITY
 task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task){
+    
+    // filter the types of affinity arguments
+    int n_all_args = task->arg_hst_pointers.size();
+    int n_args_to_consider = 0;
+    int considered_idx[n_all_args];
+    int64_t type;
+
+    for (int i= 0; i<n_all_args; i++){
+        //----- check the type of the affinity -----
+        type = task->arg_types[i];
+        // always skip literals
+        if (type & CHAM_OMP_TGT_MAPTYPE_LITERAL){
+            continue;
+        }
+        // skip all except TO mode
+        if((cham_affinity_settings.consider_types == CONSIDER_TYPE_TO) && !(type & CHAM_OMP_TGT_MAPTYPE_TO)){
+            continue;
+        }
+        considered_idx[n_args_to_consider]=i;
+        n_args_to_consider++;
+    }
+
     const int page_size = getpagesize(); //doesn't work with windows
     
     size_t page_start_address;
 
-    int32_t number_of_affinities = task->arg_hst_pointers.size();
-
-    const int naffin = number_of_affinities;
-
-    if (number_of_affinities < 1)
+    if (n_args_to_consider < 1)
     {
-      number_of_affinities = 1;
+      n_args_to_consider = 1;
+      considered_idx[0]=0;
     }
-    const int n = number_of_affinities;//for strat
 
-    int max_len = n;//for loc array
+    int max_len = n_args_to_consider;//for loc array
 
     /*----------------------------------------------------------------*/
     /*determine the maximum number of pages to check per affinity*/
@@ -1213,33 +1225,33 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
           max_len = 1;
           break;
         case cham_affinity_page_mode_divide_in_n_pages:
-          max_len = n;
+          max_len = n_args_to_consider;
           break;
         case cham_affinity_page_mode_every_nth_page:
           max_len = 1;
-          for (int i=0; i < number_of_affinities; i++){
-            if (task->arg_sizes[i] > max_len){
+          for (int i=0; i < n_args_to_consider; i++){
+            if (task->arg_sizes[considered_idx[i]] > max_len){
                 max_len = task->arg_sizes[i];
             }
           }
-          max_len = ((max_len/page_size)/n)+1;
+          max_len = ((max_len/page_size)/n_args_to_consider)+1;
           break;
         case cham_affinity_page_mode_first_and_last_page:
           max_len = 2;
           break;
         case cham_affinity_page_mode_continuous_binary_search:
-          max_len = n;
+          max_len = n_args_to_consider;
           break;
         case cham_affinity_page_mode_first_page:
           max_len = 1;
           break;
-        case cham_affinity_page_mode_first_page_of_first_affinity_considered:
+        case cham_affinity_page_mode_first_page_of_n_affinities_eqs:
             max_len = 1;
             break;
-        case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
+        case cham_affinity_page_mode_middle_page_of_n_affinities_eqs:
             max_len = 1;
             break;
-        case cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs:
+        case cham_affinity_page_mode_middle_page:
             max_len = 1;
             break;
       }
@@ -1247,15 +1259,15 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
 
     const int row = max_len;
 
-    task_aff_physical_data_location_t **page_loc = (task_aff_physical_data_location_t**) malloc(naffin*sizeof(task_aff_physical_data_location_t*));
-    for(int i = 0; i < naffin; i++) {
+    task_aff_physical_data_location_t **page_loc = (task_aff_physical_data_location_t**) malloc(n_args_to_consider*sizeof(task_aff_physical_data_location_t*));
+    for(int i = 0; i < n_args_to_consider; i++) {
         page_loc[i] = (task_aff_physical_data_location_t*) malloc(row*sizeof(task_aff_physical_data_location_t));
     }
 
-    int array_size[naffin];//filled page loc array size
-    int skipLen[naffin];
+    int array_size[n_args_to_consider];//filled page loc array size
+    int skipLen[n_args_to_consider];
 
-    for (int i = 0; i < naffin; i++) {
+    for (int i = 0; i < n_args_to_consider; i++) {
       array_size[i] = 0;
       skipLen[i] = 0;
       for (int j = 0; j < row; j++) {
@@ -1274,32 +1286,35 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
     {
       case cham_affinity_page_mode_first_page_of_first_affinity_only:
 
-        page_loc[0][0] = check_page(task->arg_hst_pointers[0], task->arg_types[0]);
+        page_loc[0][0] = check_page(task->arg_hst_pointers[considered_idx[0]]);
         array_size[0] = 1;
         break;
       case cham_affinity_page_mode_divide_in_n_pages:
 
-        for (int i=0;i<naffin;i++){
-            skipLen[i] = task->arg_sizes[i]/n;
+        for (int i=0;i<n_args_to_consider;i++){
+            skipLen[i] = task->arg_sizes[considered_idx[i]]/n_args_to_consider;
             array_size[i] = row;
             skip = 0;
             if (skipLen[i] < page_size){
                 //e.g. for arrays with 1 element or high n
                 //insted check every page contained in len
                 skipLen[i] = page_size;
-                array_size[i] = ((task->arg_sizes[i]-1)/page_size)+1; //round up
+                array_size[i] = ((task->arg_sizes[considered_idx[i]]-1)/page_size)+1; //round up
             }
             for (int j=0; j < array_size[i]; j++){
-                page_loc[i][j] = check_page(task->arg_hst_pointers[i] + skip, task->arg_types[i]);
+                page_loc[i][j] = check_page(task->arg_hst_pointers[considered_idx[i]] + skip);
                 skip += skipLen[i];
             }
         }
 
         break;
+      /*  
+      // the old copied version of nth_page
+      // is actually divide in n pages non adjustable...
       case cham_affinity_page_mode_every_nth_page:
 
         for (int i=0; i < naffin; i++){
-            skipLen[i] = page_size*n;
+            skipLen[i] = page_size*n; // this is a constant, n = number of affinities
             skip = 0;
             array_size[i] = row;
             //KA_TRACE(50,("strat s2, skip %d size %d row %d\n", skipLen[i],array_size[i], row));
@@ -1312,20 +1327,40 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
                 }
             }
         }
+        break;
+        */
+      case cham_affinity_page_mode_every_nth_page:
+
+        for (int i=0; i < n_args_to_consider; i++){
+            //skipLen[i] = page_size*n_args_to_consider; //That is a constant value
+            skip = 0;
+            array_size[i] = row;
+            //KA_TRACE(50,("strat s2, skip %d size %d row %d\n", skipLen[i],array_size[i], row));
+            for (int j=0; j < row; j++){
+                page_loc[i][j] = check_page(task->arg_hst_pointers[considered_idx[i]] + skip);
+
+                //skip += skipLen[i];
+                skip += cham_affinity_settings.n_pages*page_size;
+                if (skip >= task->arg_sizes[considered_idx[i]]) {
+                    array_size[i]=j+1;
+                    break;
+                }
+            }
+        }
 
         break;
       case cham_affinity_page_mode_first_and_last_page:
 
-        for (int i=0; i < naffin; i++) {
+        for (int i=0; i < n_args_to_consider; i++) {
             array_size[i]=1;
-            skipLen[i] = task->arg_sizes[i]-1;
+            skipLen[i] = task->arg_sizes[considered_idx[i]]-1;
             //KA_TRACE(50,("strat s3, len %d, skipLen %d\n",aff_info[i].len, skipLen[i]));
-            page_loc[i][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+            page_loc[i][0] = check_page(task->arg_hst_pointers[considered_idx[i]]);
 
             if (skipLen[i] >= page_size) {
                 //only check last page, if not on same page
                 array_size[i]=2;
-                page_loc[i][1] = check_page(task->arg_hst_pointers[i] + skipLen[i], task->arg_types[i]);
+                page_loc[i][1] = check_page(task->arg_hst_pointers[considered_idx[i]] + skipLen[i]);
             }
         }
 
@@ -1333,15 +1368,15 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
       case cham_affinity_page_mode_continuous_binary_search:
 
         //KA_TRACE(50,("strat s4\n"));
-        for (int i=0; i < naffin; i++){
-            array_size[i] = n;
-            skipLen[i] = task->arg_sizes[i]/n;//for page_boundary_addr
+        for (int i=0; i < n_args_to_consider; i++){
+            array_size[i] = n_args_to_consider;
+            skipLen[i] = task->arg_sizes[considered_idx[i]]/n_args_to_consider;//for page_boundary_addr
             task_aff_physical_data_location_t top, bot, m;
-            int half = task->arg_sizes[i]/2;
-            top = check_page(task->arg_hst_pointers[i] + task->arg_sizes[i]-1, task->arg_types[i]);
-            bot = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+            int half = task->arg_sizes[considered_idx[i]]/2;
+            top = check_page(task->arg_hst_pointers[considered_idx[i]] + task->arg_sizes[considered_idx[i]]-1);
+            bot = check_page(task->arg_hst_pointers[considered_idx[i]]);
             while (half >= page_size && top.domain != bot.domain){
-                m = check_page(task->arg_hst_pointers[i] + half, task->arg_types[i]);
+                m = check_page(task->arg_hst_pointers[considered_idx[i]] + half);
                 half = half/2;
                 if (m.domain == bot.domain){
                     bot = m;
@@ -1350,7 +1385,7 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
                 }
             }
             //fill page_loc array up by same % based on found cut
-            int scale = (half*row)/task->arg_sizes[i];
+            int scale = (half*row)/task->arg_sizes[considered_idx[i]];
             for (int j=0; j < row; j++){
                 if (j <= scale)
                   page_loc[i][j]=bot;
@@ -1361,72 +1396,55 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
 
         break;
       case cham_affinity_page_mode_first_page:
-        for (int i=0; i < naffin; i++){
-            page_loc[i][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
+        for (int i=0; i < n_args_to_consider; i++){
+            page_loc[i][0] = check_page(task->arg_hst_pointers[considered_idx[i]]);
             array_size[i] = 1;
         }
         break;
 
-        // ====================================
-        // The following strategies with "considered" take into account that check_page will ignore some types
-        // ====================================
-
-        // get the first location of an affinity that isn't ignored because of its type
-        case cham_affinity_page_mode_first_page_of_first_affinity_considered:
-            for (int i=0; i < naffin; i++){
-                page_loc[0][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
-                if(!(page_loc[0][0].domain < 0)){
-                    array_size[0]=1;
-                    break;
-                }
-            }
-            break;
-
         // check n pages equally spaced over all affinities
-        case cham_affinity_page_mode_first_page_of_n_affinities_considered_eqs:
+        case cham_affinity_page_mode_first_page_of_n_affinities_eqs:
             n_checked = 0; //number of pages successfully checked
-            skip = naffin/cham_affinity_settings.n_pages;
-            for(int i = 0; i<naffin && (n_checked < cham_affinity_settings.n_pages); i++){
-                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[i], task->arg_types[i]);
-                //if checked affinity returns error, check next
-                if(page_loc[n_checked][0].domain < 0){
-                    continue;
-                }
-                else {
-                    array_size[n_checked] = 1;
-                    n_checked++;
-                    i += skip;
-                }
+            skip = n_args_to_consider/cham_affinity_settings.n_pages;
+            for(int i = 0; i<n_args_to_consider && (n_checked < cham_affinity_settings.n_pages); i++){
+                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[considered_idx[i]]);
+                array_size[n_checked] = 1;
+                n_checked++;
+                i += skip;
             }
             break;
 
         // check n pages equally spaced over all affinities (check the middle page of each affinity)
-        case cham_affinity_page_mode_middle_page_of_n_affinities_considered_eqs:
+        case cham_affinity_page_mode_middle_page_of_n_affinities_eqs:
             n_checked = 0; //number of pages successfully checked
-            skip = naffin/cham_affinity_settings.n_pages;
-            for(int i = 0; i<naffin && (n_checked < cham_affinity_settings.n_pages); i++){
-                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[i] + (int)(task->arg_sizes[i])/2, task->arg_types[i]);
-                //if checked affinity returns error, check next
-                if(page_loc[n_checked][0].domain < 0){
-                    continue;
-                }
-                else {
-                    array_size[n_checked] = 1;
-                    n_checked++;
-                    i += skip;
-                }
+            skip = n_args_to_consider/cham_affinity_settings.n_pages;
+            for(int i = 0; i<n_args_to_consider && (n_checked < cham_affinity_settings.n_pages); i++){
+                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[considered_idx[i]] + (int)(task->arg_sizes[considered_idx[i]])/2);
+                array_size[n_checked] = 1;
+                n_checked++;
+                i += skip;
             }
             break;
+
+        //check the middle page of every affinity
+        case cham_affinity_page_mode_middle_page:
+            skip = n_args_to_consider/cham_affinity_settings.n_pages;
+            for(int i = 0; i<n_args_to_consider; i++){
+                page_loc[n_checked][0] = check_page(task->arg_hst_pointers[considered_idx[i]] + (int)(task->arg_sizes[considered_idx[i]])/2);
+                array_size[i] = 1;
+            }
+            break;
+
     }
     
     /*----------------------------------------------------------------*/
     /*Weigh the locations to calculate the primary domain of the task*/
     /*----------------------------------------------------------------*/
-    task_aff_physical_data_location_t ret_val = map_count_weighted(task, naffin, row, page_loc, &(array_size[0]));
+    task_aff_physical_data_location_t ret_val = map_count_weighted(task, n_args_to_consider, row, page_loc, &(array_size[0]));
     //task_aff_physical_data_location_t ret_val = map_count_weighted(aff_info, naffin, row, page_loc, &(array_size[0]));
     
     // free memory again
-    for(int i = 0; i < naffin; i++) {
+    for(int i = 0; i < n_args_to_consider; i++) {
         free(page_loc[i]);
     }
     free(page_loc);

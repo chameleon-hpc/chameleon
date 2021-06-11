@@ -214,6 +214,11 @@ typedef enum cham_affinity_consider_types_t {
     CONSIDER_TYPE_TO = 1 //considers only the type to
 } cham_affinity_consider_types_t;
 
+typedef enum cham_affinity_map_mode_t {
+    CHAM_AFF_DOMAIN_MODE = 0,
+    CHAM_AFF_TEMPORAL_MODE = 1
+} cham_affinity_map_mode_t;
+
 typedef struct cham_affinity_settings_t {
     int32_t task_selection_strategy;
     int32_t page_selection_strategy;
@@ -221,6 +226,8 @@ typedef struct cham_affinity_settings_t {
     int32_t n_pages; //e.g. number of pages to skip or number of pages to check
     int32_t consider_types;
     int32_t n_tasks; //parameter for affinity_task_select
+    int32_t map_mode; //domain mode or temporal mode
+    int32_t always_check_loc; // always calculate physical location in check_page
 } cham_affinity_settings_t;
 
 extern cham_affinity_settings_t cham_affinity_settings;
@@ -659,7 +666,25 @@ class thread_safe_task_list_t {
     }
 
     #if USE_TASK_AFFINITY
-    cham_migratable_task_t* affinity_task_select(int32_t my_domain) {
+    // Function to use when searching for an appropiate task wasn't successfull
+    cham_migratable_task_t* affinity_task_select_fallback(int32_t my_domain, int32_t my_gtid){
+        this->m.lock();
+        cham_migratable_task_t* ret_val = nullptr;
+        if (!this->empty()){
+            ret_val = this->task_list.front();
+            //update gtid in address map
+            if(cham_affinity_settings.map_mode == CHAM_AFF_TEMPORAL_MODE){
+                update_aff_addr_map(ret_val, my_gtid);  //new
+            }
+            this->list_size--;
+            this->dup_list_size--;
+            this->task_list.pop_front();
+        }
+        this->m.unlock();
+        return ret_val;
+    }
+
+    cham_migratable_task_t* affinity_task_select(int32_t my_domain, int32_t my_gtid) {
         if(this->empty())
             return nullptr;
 
@@ -669,124 +694,223 @@ class thread_safe_task_list_t {
         int stride, counter;
 
         switch(cham_affinity_settings.task_selection_strategy){
-            
+    
             case CHAM_AFF_NONE: // 0
                 ret_val = this->pop_front();
+                found = true; //to not run into fallback strategy
                 break;
-
+            
+            //=================================================
             case CHAM_AFF_ALL_LINEAR: // 1
+            //=================================================
                 this->m.lock();
                 found = false;
-                for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
-                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
-                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
-                        this->list_size--;
-                        this->dup_list_size--;
-                        ret_val = *it;
-                        this->task_list.remove(ret_val);
-                        found = true;
-                        break;
+                switch (cham_affinity_settings.map_mode){
+                //---------------------------------------------
+                case CHAM_AFF_DOMAIN_MODE:
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
                     }
-                }
-                // if not found, get front task
-                if(!found && !this->empty()){
-                    this->list_size--;
-                    this->dup_list_size--;
-                    ret_val = this->task_list.front();
-                    this->task_list.pop_front();
-                }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_TEMPORAL_MODE:
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        // recalculate task domain and gtid
+                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
+                        (*it)->data_loc = new_loc;
+                        // execute if same thread last used or not used yet but data on my domain
+                        if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                            if ((*it)->data_loc.gtid < 0){
+                                //update gtids in address map       
+                                update_aff_addr_map(*it, my_gtid);
+                            }
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                    }
+                    break;
+                //---------------------------------------------
+                }// mode switch
                 this->m.unlock();
                 break;
-
+            
+            //=================================================
             case CHAM_AFF_FIRST_N: // 2
+            //=================================================
                 this->m.lock();
                 found = false;
                 counter = 0;
-                for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
-                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
-                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
-                        this->list_size--;
-                        this->dup_list_size--;
-                        ret_val = *it;
-                        this->task_list.remove(ret_val);
-                        found = true;
-                        break;
+                switch (cham_affinity_settings.map_mode){
+                //---------------------------------------------
+                case CHAM_AFF_DOMAIN_MODE:
+                    for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        counter++;
                     }
-                    counter++;
-                }
-                // if not found, get front task
-                if(!found && !this->empty()){
-                    this->list_size--;
-                    this->dup_list_size--;
-                    ret_val = this->task_list.front();
-                    this->task_list.pop_front();
-                }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_TEMPORAL_MODE:  
+                    for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
+                        // recalculate task domain and gtid
+                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
+                        (*it)->data_loc = new_loc;
+                        // execute if same thread last used or not used yet but data on my domain
+                        if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                            if ((*it)->data_loc.gtid < 0){
+                                //update gtids in address map       
+                                update_aff_addr_map(*it, my_gtid);
+                            }
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        counter++;
+                    }
+                    break;
+                //---------------------------------------------
+                }// mode switch
                 this->m.unlock();
                 break;
 
             // check N tasks euqally spaced
+            //=================================================
             case CHAM_AFF_N_EQS: // 3
+            //=================================================
                 this->m.lock();
                 found = false;
                 it = this->task_list.begin();
                 stride = this->task_list.size()/cham_affinity_settings.n_tasks;
                 if(stride<1) stride = 1;
                 counter = 0;
-                while (counter < this->task_list.size()){
-                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
-                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
-                        ret_val = *it;
-                        this->task_list.remove(ret_val);
-                        this->list_size--;
-                        this->dup_list_size--;
-                        found = true;
-                        break;
+                switch (cham_affinity_settings.map_mode){
+                //---------------------------------------------
+                case CHAM_AFF_DOMAIN_MODE:
+                    while (counter < this->task_list.size()){
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            found = true;
+                            break;
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
                     }
-                    std::advance(it, stride);
-                    counter += stride;
-                }
-                // if not found, get front task
-                if(!found && !this->empty()){
-                    this->list_size--;
-                    this->dup_list_size--;
-                    ret_val = this->task_list.front();
-                    this->task_list.pop_front();
-                }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_TEMPORAL_MODE:
+                    while (counter < this->task_list.size()){
+                        // recalculate task domain and gtid
+                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
+                        (*it)->data_loc = new_loc;
+                        // execute if same thread last used or not used yet but data on my domain
+                        if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                            if ((*it)->data_loc.gtid < 0){
+                                //update gtids in address map       
+                                update_aff_addr_map(*it, my_gtid);
+                            }
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            found = true;
+                            break;
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
+                    }
+                    break;
+                //---------------------------------------------
+                }// mode switch    
                 this->m.unlock();
                 break;
 
             // check tasks linearely with stride N
+            //=================================================
             case CHAM_AFF_EVERY_NTH: // 4
+            //=================================================
                 this->m.lock();
                 found = false;
                 it = this->task_list.begin();
                 stride = cham_affinity_settings.n_tasks;
                 counter = 0;
-                while (counter < this->task_list.size()){
-                    //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
-                    if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
-                        this->list_size--;
-                        this->dup_list_size--;
-                        ret_val = *it;
-                        this->task_list.remove(ret_val);
-                        found = true;
-                        break;
+                switch (cham_affinity_settings.map_mode){
+                //---------------------------------------------
+                case CHAM_AFF_DOMAIN_MODE:
+                    while (counter < this->task_list.size()){
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
                     }
-                    std::advance(it, stride);
-                    counter += stride;
-                }
-                // if not found, get front task
-                if(!found && !this->empty()){
-                    this->list_size--;
-                    this->dup_list_size--;
-                    ret_val = this->task_list.front();
-                    this->task_list.pop_front();
-                }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_TEMPORAL_MODE:
+                    while (counter < this->task_list.size()){
+                        // recalculate task domain and gtid
+                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
+                        (*it)->data_loc = new_loc;
+                        // execute if same thread last used or not used yet but data on my domain
+                        if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                            if ((*it)->data_loc.gtid < 0){
+                                //update gtids in address map       
+                                update_aff_addr_map(*it, my_gtid);
+                            }
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
+                    }
+                    break;
+                //---------------------------------------------
+                }// mode switch
                 this->m.unlock();
                 break;
                 
             default:
                 ret_val = this->pop_front();
+                found = true; //to not run into fallback strategy
+        } // switch strategy
+        
+        if(!found){
+            ret_val = affinity_task_select_fallback(my_domain, my_gtid);
         }
 
         #if TASK_AFFINITY_DEBUG
@@ -1163,6 +1287,8 @@ extern std::atomic<int> CHAM_AFF_PAGE_WEIGHTING_STRAT;
 extern std::atomic<int> CHAM_AFF_CONSIDER_TYPES;
 extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_N;
 extern std::atomic<int> CHAM_AFF_TASK_SELECTION_N;
+extern std::atomic<int> CHAM_AFF_MAP_MODE; //Domain mode or temporal mode
+extern std::atomic<int> CHAM_AFF_ALWAYS_CHECK_PHSYICAL;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion
@@ -1361,13 +1487,27 @@ static void load_config_values() {
          CHAM_AFF_TASK_SELECTION_N = std::atof(tmp);
     }
 
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_MAP_MODE");
+    if(tmp) {
+         CHAM_AFF_MAP_MODE = std::atof(tmp);
+    }
+
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_AFF_ALWAYS_CHECK_PHSYICAL");
+    if(tmp) {
+         CHAM_AFF_ALWAYS_CHECK_PHSYICAL = std::atof(tmp);
+    }
+
     cham_affinity_settings = {
         .task_selection_strategy = CHAM_AFF_TASK_SELECTION_STRAT,
         .page_selection_strategy = CHAM_AFF_PAGE_SELECTION_STRAT,
         .page_weighting_strategy = CHAM_AFF_PAGE_WEIGHTING_STRAT,
         .n_pages = CHAM_AFF_PAGE_SELECTION_N,
         .consider_types = CHAM_AFF_CONSIDER_TYPES,
-        .n_tasks = CHAM_AFF_TASK_SELECTION_N
+        .n_tasks = CHAM_AFF_TASK_SELECTION_N,
+        .map_mode = CHAM_AFF_MAP_MODE, //domain or temporal mode
+        .always_check_loc = CHAM_AFF_ALWAYS_CHECK_PHSYICAL
     };
     #endif
 }
@@ -1407,12 +1547,16 @@ static void print_config_values() {
     "CHAM_AFF_CONSIDER_TYPES=%d\n"
     "CHAM_AFF_PAGE_SELECTION_N=%d\n"
     "CHAM_AFF_TASK_SELECTION_N=%d\n"
+    "CHAM_AFF_MAP_MODE=%d\n"
+    "CHAM_AFF_ALWAYS_CHECK_PHSYICAL%d\n"
     , CHAM_AFF_TASK_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_WEIGHTING_STRAT.load()
     , CHAM_AFF_CONSIDER_TYPES.load()
     , CHAM_AFF_PAGE_SELECTION_N.load()
     , CHAM_AFF_TASK_SELECTION_N.load()
+    , CHAM_AFF_MAP_MODE.load()
+    , CHAM_AFF_ALWAYS_CHECK_PHSYICAL.load()
     );
     #endif
 }

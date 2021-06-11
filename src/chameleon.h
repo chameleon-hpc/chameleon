@@ -211,6 +211,13 @@ int32_t chameleon_local_task_has_finished(TYPE_TASK_ID task_id);
 
 TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task);
 
+// ================================================================================
+// Functions and types related to task affinity
+// ================================================================================
+struct task_aff_physical_data_location_t;
+task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task);
+void update_aff_addr_map(cham_migratable_task_t *task, int32_t new_gtid);
+
 #ifdef __cplusplus
 }
 #endif

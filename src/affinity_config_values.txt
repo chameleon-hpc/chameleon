@@ -3,11 +3,13 @@ compile with extra options example:
 CUSTOM_COMPILE_FLAGS="-DUSE_TASK_AFFINITY=1 -DTASK_AFFINITY_DEBUG=1" make
 
 export CHAM_AFF_TASK_SELECTION_STRAT=3
-export CHAM_AFF_PAGE_SELECTION_STRAT=7
+export CHAM_AFF_PAGE_SELECTION_STRAT=8
 export CHAM_AFF_PAGE_WEIGHTING_STRAT=2
 export CHAM_AFF_CONSIDER_TYPES=1
 export CHAM_AFF_PAGE_SELECTION_N=3
 export CHAM_AFF_TASK_SELECTION_N=8
+export CHAM_AFF_MAP_MODE=0
+export CHAM_AFF_ALWAYS_CHECK_PHSYICAL=0
 
 ======================
 flags
@@ -56,3 +58,11 @@ CHAM_AFF_CONSIDER_TYPES= (default 0) //which types should be considered when cal
 CHAM_AFF_PAGE_SELECTION_N= (default 3) //parameter to use for page selection strategy, e.g. number of pages to check
 
 CHAM_AFF_TASK_SELECTION_N= (default 3) //parameter for task selection strategies
+
+CHAM_AFF_MAP_MODE= (default 0)
+  CHAM_AFF_DOMAIN_MODE = 0,
+  CHAM_AFF_TEMPORAL_MODE = 1
+
+CHAM_AFF_ALWAYS_CHECK_PHSYICAL= (default 0)
+  off (never update domain) = 0
+  on (always update domain) = 1

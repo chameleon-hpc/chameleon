@@ -1288,7 +1288,7 @@ extern std::atomic<int> CHAM_AFF_CONSIDER_TYPES;
 extern std::atomic<int> CHAM_AFF_PAGE_SELECTION_N;
 extern std::atomic<int> CHAM_AFF_TASK_SELECTION_N;
 extern std::atomic<int> CHAM_AFF_MAP_MODE; //Domain mode or temporal mode
-extern std::atomic<int> CHAM_AFF_ALWAYS_CHECK_PHSYICAL;
+extern std::atomic<int> CHAM_AFF_ALWAYS_CHECK_PHYSICAL;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
 #pragma endregion
@@ -1494,9 +1494,9 @@ static void load_config_values() {
     }
 
     tmp = nullptr;
-    tmp = std::getenv("CHAM_AFF_ALWAYS_CHECK_PHSYICAL");
+    tmp = std::getenv("CHAM_AFF_ALWAYS_CHECK_PHYSICAL");
     if(tmp) {
-         CHAM_AFF_ALWAYS_CHECK_PHSYICAL = std::atof(tmp);
+         CHAM_AFF_ALWAYS_CHECK_PHYSICAL = std::atof(tmp);
     }
 
     cham_affinity_settings = {
@@ -1507,7 +1507,7 @@ static void load_config_values() {
         .consider_types = CHAM_AFF_CONSIDER_TYPES,
         .n_tasks = CHAM_AFF_TASK_SELECTION_N,
         .map_mode = CHAM_AFF_MAP_MODE, //domain or temporal mode
-        .always_check_loc = CHAM_AFF_ALWAYS_CHECK_PHSYICAL
+        .always_check_loc = CHAM_AFF_ALWAYS_CHECK_PHYSICAL
     };
     #endif
 }
@@ -1548,7 +1548,7 @@ static void print_config_values() {
     "CHAM_AFF_PAGE_SELECTION_N=%d\n"
     "CHAM_AFF_TASK_SELECTION_N=%d\n"
     "CHAM_AFF_MAP_MODE=%d\n"
-    "CHAM_AFF_ALWAYS_CHECK_PHSYICAL%d\n"
+    "CHAM_AFF_ALWAYS_CHECK_PHYSICAL=%d\n"
     , CHAM_AFF_TASK_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_SELECTION_STRAT.load()
     , CHAM_AFF_PAGE_WEIGHTING_STRAT.load()
@@ -1556,7 +1556,7 @@ static void print_config_values() {
     , CHAM_AFF_PAGE_SELECTION_N.load()
     , CHAM_AFF_TASK_SELECTION_N.load()
     , CHAM_AFF_MAP_MODE.load()
-    , CHAM_AFF_ALWAYS_CHECK_PHSYICAL.load()
+    , CHAM_AFF_ALWAYS_CHECK_PHYSICAL.load()
     );
     #endif
 }

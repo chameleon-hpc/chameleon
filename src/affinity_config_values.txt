@@ -9,7 +9,7 @@ export CHAM_AFF_CONSIDER_TYPES=1
 export CHAM_AFF_PAGE_SELECTION_N=3
 export CHAM_AFF_TASK_SELECTION_N=8
 export CHAM_AFF_MAP_MODE=0
-export CHAM_AFF_ALWAYS_CHECK_PHSYICAL=0
+export CHAM_AFF_ALWAYS_CHECK_PHYSICAL=0
 
 ======================
 flags
@@ -63,6 +63,6 @@ CHAM_AFF_MAP_MODE= (default 0)
   CHAM_AFF_DOMAIN_MODE = 0,
   CHAM_AFF_TEMPORAL_MODE = 1
 
-CHAM_AFF_ALWAYS_CHECK_PHSYICAL= (default 0)
+CHAM_AFF_ALWAYS_CHECK_PHYSICAL= (default 0)
   off (never update domain) = 0
   on (always update domain) = 1

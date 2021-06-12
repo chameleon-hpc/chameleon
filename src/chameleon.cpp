@@ -73,6 +73,12 @@ const int page_size = getpagesize(); //doesn't work with windows
 // used to count which percentage of tasks chosen are in the same domain as the corresponding thread
 std::atomic<int> task_domain_hit(0);
 std::atomic<int> task_domain_miss(0);
+std::atomic<int> task_gtid_hit(0);
+std::atomic<int> task_gtid_miss(0);
+std::atomic<int> domain_changed(0);
+std::atomic<int> domain_didnt_change(0);
+std::atomic<int> gtid_changed(0);
+std::atomic<int> gtid_didnt_change(0);
 #endif
 
 #pragma endregion Variables
@@ -484,6 +490,18 @@ int32_t chameleon_finalize() {
         printf("Total tasks selected from local domains: %d\n", tdh);
         printf("Total tasks selected from foreign domains: %d\n", tdm);
         printf("==> Task Domain Hitrate = %f%%\n", (100.0*tdh)/(tdm+tdh));
+        tdh = task_gtid_hit.load();
+        tdm = task_gtid_miss.load();
+        if(tdm !=0 || tdh != 0)
+            printf("==> Task gtid Hitrate = %f%%\n", (100.0*tdh)/(tdm+tdh));
+        else
+            printf("No gtid hits or misses recorded.");
+        int changed = domain_changed.load();
+        int not_changed = domain_didnt_change.load();
+        printf("The domain changed %d times and stayed the same %d times.\n", changed, not_changed);
+        changed = gtid_changed.load();
+        not_changed = gtid_didnt_change.load();
+        printf("The gtid changed %d times and stayed the same %d times.\n", changed, not_changed);
     #endif
 
     #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
@@ -1101,29 +1119,56 @@ task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *tas
   return page_loc[x][y];
 }
 
+// returns true if this type of task argument should be skipped
+bool aff_dont_consider_this_type(int64_t type){
+    // always skip literals
+    if (type & CHAM_OMP_TGT_MAPTYPE_LITERAL){
+        return true;
+    }
+    // skip all except TO mode
+    if((cham_affinity_settings.consider_types == CONSIDER_TYPE_TO) && !(type & CHAM_OMP_TGT_MAPTYPE_TO)){
+        return true;
+    }
+    return false;
+}
+
 // update the gtid of all page start addresses of all pages of all arguments of task
 void update_aff_addr_map(cham_migratable_task_t *task, int32_t new_gtid){
     //const int page_size = getpagesize(); //doesn't work with windows
     size_t base_address;
+    int pages;
+    int64_t type;
     addr_map_mutex.lock();
     for (int i = 0; i< task->arg_hst_pointers.size(); i++){
+        type = task->arg_types[i];
+        if (aff_dont_consider_this_type(type)){
+            continue;
+        }
+
         base_address = ((size_t)task->arg_hst_pointers[i]) & ~(page_size-1);
-        for (int j = 0; j < (task->arg_sizes.size()/page_size); j++){
-            base_address += j*page_size;
+        pages = (int)((task->arg_sizes[i] & ~(page_size-1))/(page_size*1.0));
+//        #if TASK_AFFINITY_DEBUG 
+//            printf("pages: %d\n", pages); //output: 0
+//        #endif
+        for (int j = 0; j < pages; j++){
             task_aff_addr_map[base_address].gtid = new_gtid;
+            base_address += page_size;
         }
     }
     addr_map_mutex.unlock();
+//    #if TASK_AFFINITY_DEBUG
+//        printf("gtid of last updated base_address: %d\n", task_aff_addr_map[base_address-page_size].gtid);
+//        printf("Updated affinity address map with new_gtid=%d.\n", new_gtid);
+//        task_aff_physical_data_location_t tmp = affinity_recalculate_task_data_loc(task);
+//        printf("Recalculate task data loc after addr map update: gtid=%d, domain=%d\n", tmp.gtid, tmp.domain);
+//    #endif
 }
 
 //get the physical location of one page
 //task_aff_physical_data_location_t check_page(void * addr, int64_t type){
 task_aff_physical_data_location_t check_page(void * addr){
     
-    task_aff_physical_data_location_t tmp_result{
-        .domain = -1,
-        .gtid = -1
-    };
+    task_aff_physical_data_location_t tmp_result;
 
     //---------Calculate the logical start address---------
     int ret=-1, found=0;
@@ -1135,8 +1180,8 @@ task_aff_physical_data_location_t check_page(void * addr){
     //---------Search if the location has already been calculated---------
     auto search = task_aff_addr_map.find(page_start_address);
     found = search != task_aff_addr_map.end();
-    if (!(cham_affinity_settings.always_check_loc==1)){
-        if (found) { return search->second; }
+    if (!(cham_affinity_settings.always_check_loc==1) && found){
+        return search->second;
     }
     if (found){
         tmp_result.gtid = (search->second).gtid;
@@ -1193,12 +1238,7 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
     for (int i= 0; i<n_all_args; i++){
         //----- check the type of the affinity -----
         type = task->arg_types[i];
-        // always skip literals
-        if (type & CHAM_OMP_TGT_MAPTYPE_LITERAL){
-            continue;
-        }
-        // skip all except TO mode
-        if((cham_affinity_settings.consider_types == CONSIDER_TYPE_TO) && !(type & CHAM_OMP_TGT_MAPTYPE_TO)){
+        if (aff_dont_consider_this_type(type)){
             continue;
         }
         considered_idx[n_args_to_consider]=i;
@@ -1455,6 +1495,22 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
     free(page_loc);
 
     return ret_val;
+}
+
+// recalculate task domain and gtid
+task_aff_physical_data_location_t affinity_recalculate_task_data_loc(cham_migratable_task_t* task){
+    task_aff_physical_data_location_t new_loc = affinity_schedule(task); //also partly needed for domain mode?
+    #if TASK_AFFINITY_DEBUG
+        if(new_loc.gtid != task->data_loc.gtid)
+            gtid_changed++;
+        else
+            gtid_didnt_change++;
+        if(new_loc.domain != task->data_loc.domain)
+            domain_changed++;
+        else
+            domain_didnt_change++;
+    #endif
+    return new_loc;
 }
 #endif
 

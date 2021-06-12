@@ -37,6 +37,10 @@ release: generic
 trace: FLAGS_OPTIMIZATION=-g -O3 -DTRACE -I$(VT_ROOT)/include -trace
 trace: generic
 
+aff_debug: CH_CXX_COMPILE_FLAGS += -DUSE_TASK_AFFINITY=1 -DTASK_AFFINITY_DEBUG=1
+aff_debug: FLAGS_OPTIMIZATION=-g -O3
+aff_debug: generic
+
 generic:
 	@if [ ! -z "$(MPIF90)" -a "$(MPIF90)" != "" ]; then\
 		echo "$(MPIF90) $(FLAGS_OPTIMIZATION) $(CH_F90_COMPILE_FLAGS) -c $(FILES_F90_COMP)"; \

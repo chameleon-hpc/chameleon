@@ -217,6 +217,7 @@ TYPE_TASK_ID chameleon_get_task_id(cham_migratable_task_t *task);
 struct task_aff_physical_data_location_t;
 task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task);
 void update_aff_addr_map(cham_migratable_task_t *task, int32_t new_gtid);
+task_aff_physical_data_location_t affinity_recalculate_task_data_loc(cham_migratable_task_t* task);
 
 #ifdef __cplusplus
 }

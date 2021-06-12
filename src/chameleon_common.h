@@ -166,6 +166,12 @@
 // used to count which percentage of tasks chosen are in the same domain as the corresponding thread
 extern std::atomic<int> task_domain_hit;
 extern std::atomic<int> task_domain_miss;
+extern std::atomic<int> task_gtid_hit;
+extern std::atomic<int> task_gtid_miss;
+extern std::atomic<int> domain_changed;
+extern std::atomic<int> domain_didnt_change;
+extern std::atomic<int> gtid_changed;
+extern std::atomic<int> gtid_didnt_change;
 #endif
 
 #if CHAMELEON_TOOL_SUPPORT
@@ -234,9 +240,9 @@ extern cham_affinity_settings_t cham_affinity_settings;
 
 typedef struct task_aff_physical_data_location_t {
     //primary domain of the task data
-    int domain;
+    int domain = -1;
     //Global Thread ID, I don't know what to use that for at the moment
-    int gtid;
+    int gtid = -1;
 }task_aff_physical_data_location_t;
 #endif
 
@@ -423,10 +429,7 @@ typedef struct cham_migratable_task_t {
 
 #if USE_TASK_AFFINITY
     //primary domain of the data, calculated on task creation
-    task_aff_physical_data_location_t data_loc{
-        .domain = -1,
-        .gtid = -1
-    };
+    task_aff_physical_data_location_t data_loc;
 #endif
     //
 
@@ -666,6 +669,7 @@ class thread_safe_task_list_t {
     }
 
     #if USE_TASK_AFFINITY
+
     // Function to use when searching for an appropiate task wasn't successfull
     cham_migratable_task_t* affinity_task_select_fallback(int32_t my_domain, int32_t my_gtid){
         this->m.lock();
@@ -724,8 +728,7 @@ class thread_safe_task_list_t {
                 case CHAM_AFF_TEMPORAL_MODE:
                     for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
                         // recalculate task domain and gtid
-                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
-                        (*it)->data_loc = new_loc;
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
                         // execute if same thread last used or not used yet but data on my domain
                         if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
                             if ((*it)->data_loc.gtid < 0){
@@ -772,8 +775,7 @@ class thread_safe_task_list_t {
                 case CHAM_AFF_TEMPORAL_MODE:  
                     for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
                         // recalculate task domain and gtid
-                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
-                        (*it)->data_loc = new_loc;
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
                         // execute if same thread last used or not used yet but data on my domain
                         if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
                             if ((*it)->data_loc.gtid < 0){
@@ -826,8 +828,7 @@ class thread_safe_task_list_t {
                 case CHAM_AFF_TEMPORAL_MODE:
                     while (counter < this->task_list.size()){
                         // recalculate task domain and gtid
-                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
-                        (*it)->data_loc = new_loc;
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
                         // execute if same thread last used or not used yet but data on my domain
                         if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
                             if ((*it)->data_loc.gtid < 0){
@@ -880,8 +881,7 @@ class thread_safe_task_list_t {
                 case CHAM_AFF_TEMPORAL_MODE:
                     while (counter < this->task_list.size()){
                         // recalculate task domain and gtid
-                        task_aff_physical_data_location_t new_loc = affinity_schedule(*it); //also partly needed for domain mode?
-                        (*it)->data_loc = new_loc;
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
                         // execute if same thread last used or not used yet but data on my domain
                         if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
                             if ((*it)->data_loc.gtid < 0){
@@ -914,12 +914,19 @@ class thread_safe_task_list_t {
         }
 
         #if TASK_AFFINITY_DEBUG
-            printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
+            //printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
+            //printf("My gtid: %d, Chosen Task gtid:%d\n", my_gtid, ret_val->data_loc.gtid);
             if(my_domain == ret_val->data_loc.domain){
                 task_domain_hit++;
             }
             else{
                 task_domain_miss++;
+            }
+            if(my_gtid == ret_val->data_loc.gtid){
+                task_gtid_hit++;
+            }
+            else{
+                task_gtid_miss++;
             }
         #endif
 

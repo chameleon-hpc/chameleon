@@ -18,6 +18,8 @@ USE_TASK_AFFINITY=1 to use task affinity (default 1)
 
 TASK_AFFINITY_DEBUG=1 to activate debug prints (default 0)
 
+comile with affinity debug: make aff_debug
+
 ======================
 environment variables:
 ======================

@@ -914,19 +914,24 @@ class thread_safe_task_list_t {
         }
 
         #if TASK_AFFINITY_DEBUG
-            //printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
-            //printf("My gtid: %d, Chosen Task gtid:%d\n", my_gtid, ret_val->data_loc.gtid);
-            if(my_domain == ret_val->data_loc.domain){
-                task_domain_hit++;
+            if (ret_val != nullptr){
+                //printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
+                //printf("My gtid: %d, Chosen Task gtid:%d\n", my_gtid, ret_val->data_loc.gtid);
+                if(my_domain == ret_val->data_loc.domain){
+                    task_domain_hit++;
+                }
+                else{
+                    task_domain_miss++;
+                }
+                if(my_gtid == ret_val->data_loc.gtid){
+                    task_gtid_hit++;
+                }
+                else{
+                    task_gtid_miss++;
+                }
             }
             else{
-                task_domain_miss++;
-            }
-            if(my_gtid == ret_val->data_loc.gtid){
-                task_gtid_hit++;
-            }
-            else{
-                task_gtid_miss++;
+                printf("affinity_task_select returned a nullpointer!\n");
             }
         #endif
 

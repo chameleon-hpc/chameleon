@@ -2062,8 +2062,6 @@ inline int32_t process_remote_task() {
     if(_stolen_remote_tasks.empty())
         return CHAM_REMOTE_TASK_NONE;
 
-    //task = _stolen_remote_tasks.pop_front();
-
 #if USE_TASK_AFFINITY
     int32_t my_domain = __thread_data[__ch_get_gtid()].domain;
     int32_t my_gtid = __ch_get_gtid();

@@ -1019,7 +1019,8 @@ int get_cur(task_aff_physical_data_location_t page_loc)
 {
   switch (cham_affinity_settings.map_mode)
   {
-    case CHAM_AFF_DOMAIN_MODE: 
+    case CHAM_AFF_DOMAIN_MODE:
+    case CHAM_AFF_DOMAIN_RECALC_MODE: 
       return page_loc.domain;
       break;
     case CHAM_AFF_TEMPORAL_MODE:
@@ -1193,25 +1194,12 @@ task_aff_physical_data_location_t check_page(void * addr){
     int ret_code = move_pages(0 /*self memory */, 1, &page_boundary_pointer, NULL, &current_data_domain, 0);
 
     if (ret_code == 0 && current_data_domain >= 0){
-        //if(kmp_affinity_settings.thread_selection_strategy == kmp_affinity_thread_selection_mode_private
-        //    && current_data_domain == thread->th.th_task_aff_my_domain_nr
-        //    && (kmp_affinity_settings.affinity_map_mode == kmp_affinity_map_type_domain || kmp_affinity_settings.affinity_map_mode == kmp_affinity_map_type_combined)) 
-        //    {
-        //      target_gtid = gtid;
-        //      target_tid = __kmp_tid_from_gtid(gtid);
-        //    }
+        tmp_result.domain = current_data_domain;
+        addr_map_mutex.lock();
+        task_aff_addr_map[page_start_address].domain = current_data_domain;
+        addr_map_mutex.unlock();
+        return tmp_result;
 
-        //kmp_info_t * target_thread = __kmp_task_aff_get_initial_thread_in_numa_domain(current_data_domain, task_team, threads_data, &target_tid, &target_gtid);
-
-        //if(target_tid != -1) {
-                tmp_result.domain = current_data_domain;
-        //    tmp_result.gtid = target_gtid;
-                addr_map_mutex.lock();
-                task_aff_addr_map[page_start_address].domain = current_data_domain;
-                //task_aff_addr_map[page_start_address].gtid = target_gtid;
-                addr_map_mutex.unlock();
-            return tmp_result;
-        //}
     }
 
     // if move_pages failed

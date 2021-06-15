@@ -24,17 +24,12 @@ comile with affinity debug: make aff_debug
 environment variables:
 ======================
 CHAM_AFF_TASK_SELECTION_STRAT= (default 0)
-	//just pop the first task
-  CHAM_AFF_NONE = 0,
-  //start at the front and search each task
-  //pop the first with the correct domain
-  //else pop the first task
-  CHAM_AFF_ALL_LINEAR = 1
+  CHAM_AFF_NONE = 0, //just pop the first task
+  CHAM_AFF_ALL_LINEAR = 1, //start at the front and search each task, pop the first with the correct domain 
   CHAM_AFF_FIRST_N = 2,
-  // check N tasks euqally spaced
-  CHAM_AFF_N_EQS = 3,
-  // check tasks linearely with stride N
-  CHAM_AFF_EVERY_NTH = 4
+  CHAM_AFF_N_EQS = 3, // check N tasks euqally spaced
+  CHAM_AFF_EVERY_NTH = 4 //check tasks linearely with stride N
+  //fallback when in the selected strat no fitting task is found: get the first task
 
 CHAM_AFF_PAGE_SELECTION_STRAT= (default 0)
 	cham_affinity_page_mode_first_page_of_first_affinity_only = 0,
@@ -62,9 +57,10 @@ CHAM_AFF_PAGE_SELECTION_N= (default 3) //parameter to use for page selection str
 CHAM_AFF_TASK_SELECTION_N= (default 3) //parameter for task selection strategies
 
 CHAM_AFF_MAP_MODE= (default 0)
-  CHAM_AFF_DOMAIN_MODE = 0,
-  CHAM_AFF_TEMPORAL_MODE = 1
+  0 = CHAM_AFF_DOMAIN_MODE (Prioritize tasks in the same domain, never update the domain)
+  1 = CHAM_AFF_TEMPORAL_MODE
+  2 = CHAM_AFF_DOMAIN_RECALC_MODE (domain mode but rechecks the domain of the task with affinity_schedule before selecting it, only makes sense with ALWAYS_CHECK_PHYSICAL otherwise the domain would never change)
 
 CHAM_AFF_ALWAYS_CHECK_PHYSICAL= (default 0)
-  off (never update domain) = 0
-  on (always update domain) = 1
+  0 = off (never recalculate domain when valid map entry exists)
+  1 = on (always recalculate physical data domain (move_pages) when check_page is entered)

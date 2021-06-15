@@ -222,7 +222,8 @@ typedef enum cham_affinity_consider_types_t {
 
 typedef enum cham_affinity_map_mode_t {
     CHAM_AFF_DOMAIN_MODE = 0,
-    CHAM_AFF_TEMPORAL_MODE = 1
+    CHAM_AFF_TEMPORAL_MODE = 1,
+    CHAM_AFF_DOMAIN_RECALC_MODE = 2 //recalculate the domain everytime before selecting a task
 } cham_affinity_map_mode_t;
 
 typedef struct cham_affinity_settings_t {
@@ -712,7 +713,12 @@ class thread_safe_task_list_t {
                 switch (cham_affinity_settings.map_mode){
                 //---------------------------------------------
                 case CHAM_AFF_DOMAIN_MODE:
+                case CHAM_AFF_DOMAIN_RECALC_MODE:
                     for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        if (cham_affinity_settings.map_mode == CHAM_AFF_DOMAIN_RECALC_MODE){
+                            // recalculate task domain and gtid
+                            (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        }
                         //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                         if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                             this->list_size--;
@@ -727,8 +733,15 @@ class thread_safe_task_list_t {
                 //---------------------------------------------
                 case CHAM_AFF_TEMPORAL_MODE:
                     for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        #if TASK_AFFINITY_DEBUG
+                            int old_gtid = (*it)->data_loc.gtid;
+                        #endif
                         // recalculate task domain and gtid
                         (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        #if TASK_AFFINITY_DEBUG
+                            int new_gtid = (*it)->data_loc.gtid;
+                            if (old_gtid != new_gtid) printf("gtid changed from %d to %d after recalc!", old_gtid, new_gtid);
+                        #endif
                         // execute if same thread last used or not used yet but data on my domain
                         if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
                             if ((*it)->data_loc.gtid < 0){
@@ -758,7 +771,12 @@ class thread_safe_task_list_t {
                 switch (cham_affinity_settings.map_mode){
                 //---------------------------------------------
                 case CHAM_AFF_DOMAIN_MODE:
+                case CHAM_AFF_DOMAIN_RECALC_MODE:
                     for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
+                        if (cham_affinity_settings.map_mode == CHAM_AFF_DOMAIN_RECALC_MODE){
+                            // recalculate task domain and gtid
+                            (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        }
                         //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                         if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                             this->list_size--;
@@ -810,7 +828,12 @@ class thread_safe_task_list_t {
                 switch (cham_affinity_settings.map_mode){
                 //---------------------------------------------
                 case CHAM_AFF_DOMAIN_MODE:
+                case CHAM_AFF_DOMAIN_RECALC_MODE:
                     while (counter < this->task_list.size()){
+                        if (cham_affinity_settings.map_mode == CHAM_AFF_DOMAIN_RECALC_MODE){
+                            // recalculate task domain and gtid
+                            (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        }
                         //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                         if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                             ret_val = *it;
@@ -863,7 +886,12 @@ class thread_safe_task_list_t {
                 switch (cham_affinity_settings.map_mode){
                 //---------------------------------------------
                 case CHAM_AFF_DOMAIN_MODE:
+                case CHAM_AFF_DOMAIN_RECALC_MODE:
                     while (counter < this->task_list.size()){
+                        if (cham_affinity_settings.map_mode == CHAM_AFF_DOMAIN_RECALC_MODE){
+                            // recalculate task domain and gtid
+                            (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        }
                         //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
                         if((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0)){
                             this->list_size--;

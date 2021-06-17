@@ -58,8 +58,9 @@ CHAM_AFF_TASK_SELECTION_N= (default 3) //parameter for task selection strategies
 
 CHAM_AFF_MAP_MODE= (default 0)
   0 = CHAM_AFF_DOMAIN_MODE (Prioritize tasks in the same domain, never update the domain)
-  1 = CHAM_AFF_TEMPORAL_MODE
+  1 = CHAM_AFF_TEMPORAL_MODE (searches for task with the same gtid)
   2 = CHAM_AFF_DOMAIN_RECALC_MODE (domain mode but rechecks the domain of the task with affinity_schedule before selecting it, only makes sense with ALWAYS_CHECK_PHYSICAL otherwise the domain would never change)
+  3 = CHAM_AFF_COMBINED_MODE (searches for task in same domain and same gtid)
 
 CHAM_AFF_ALWAYS_CHECK_PHYSICAL= (default 0)
   0 = off (never recalculate domain when valid map entry exists)

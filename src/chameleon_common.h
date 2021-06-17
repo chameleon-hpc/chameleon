@@ -223,7 +223,8 @@ typedef enum cham_affinity_consider_types_t {
 typedef enum cham_affinity_map_mode_t {
     CHAM_AFF_DOMAIN_MODE = 0,
     CHAM_AFF_TEMPORAL_MODE = 1,
-    CHAM_AFF_DOMAIN_RECALC_MODE = 2 //recalculate the domain everytime before selecting a task
+    CHAM_AFF_DOMAIN_RECALC_MODE = 2, //recalculate the domain everytime before selecting a task
+    CHAM_AFF_COMBINED_MODE = 3 // searches for task in same domain and same gtid
 } cham_affinity_map_mode_t;
 
 typedef struct cham_affinity_settings_t {
@@ -694,8 +695,8 @@ class thread_safe_task_list_t {
             return nullptr;
 
         cham_migratable_task_t* ret_val = nullptr;
-        bool found;
-        std::_List_iterator<cham_migratable_task_t *> it;
+        bool found, backup_found;
+        std::_List_iterator<cham_migratable_task_t *> it, it_last_best;
         int stride, counter;
 
         switch(cham_affinity_settings.task_selection_strategy){
@@ -758,6 +759,53 @@ class thread_safe_task_list_t {
                     }
                     break;
                 //---------------------------------------------
+                case CHAM_AFF_COMBINED_MODE:
+                    backup_found = false;
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((*it)->data_loc.domain < 0){
+                            update_aff_addr_map(*it, my_gtid);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        if(my_domain == (*it)->data_loc.domain){
+                            // execute if same thread last used or not used yet but data on my domain
+                            if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                                if ((*it)->data_loc.gtid < 0){
+                                    //update gtids in address map       
+                                    update_aff_addr_map(*it, my_gtid);
+                                }
+                                this->list_size--;
+                                this->dup_list_size--;
+                                ret_val = *it;
+                                this->task_list.remove(ret_val);
+                                found = true;
+                                break;
+                            }
+                            else{ // task not perfect, save for later as backup plan
+                                it_last_best = it;
+                                backup_found = true;
+                            }
+                        }
+                    }
+                    // found no task with same domain and gtid, but at least one with only the same domain
+                    if (!found && backup_found){
+                        //update gtids in address map       
+                        update_aff_addr_map(*it_last_best, my_gtid);
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it_last_best;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                    }
+                    break;
+                //---------------------------------------------
                 }// mode switch
                 this->m.unlock();
                 break;
@@ -808,6 +856,54 @@ class thread_safe_task_list_t {
                             break;
                         }
                         counter++;
+                    }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_COMBINED_MODE:
+                    backup_found = false;
+                    for (it = this->task_list.begin(); (it != this->task_list.end()) && counter < cham_affinity_settings.n_tasks; ++it){
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((*it)->data_loc.domain < 0){
+                            update_aff_addr_map(*it, my_gtid);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        if(my_domain == (*it)->data_loc.domain){
+                            // execute if same thread last used or not used yet but data on my domain
+                            if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                                if ((*it)->data_loc.gtid < 0){
+                                    //update gtids in address map       
+                                    update_aff_addr_map(*it, my_gtid);
+                                }
+                                this->list_size--;
+                                this->dup_list_size--;
+                                ret_val = *it;
+                                this->task_list.remove(ret_val);
+                                found = true;
+                                break;
+                            }
+                            else{ // task not perfect, save for later as backup plan
+                                it_last_best = it;
+                                backup_found = true;
+                            }
+                        }
+                        counter++;
+                    }
+                    // found no task with same domain and gtid, but at least one with only the same domain
+                    if (!found && backup_found){
+                        //update gtids in address map       
+                        update_aff_addr_map(*it_last_best, my_gtid);
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it_last_best;
+                        this->task_list.remove(ret_val);
+                        found = true;
                     }
                     break;
                 //---------------------------------------------
@@ -870,6 +966,55 @@ class thread_safe_task_list_t {
                     }
                     break;
                 //---------------------------------------------
+                case CHAM_AFF_COMBINED_MODE:
+                    backup_found = false;
+                    while (counter < this->task_list.size()){
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((*it)->data_loc.domain < 0){
+                            update_aff_addr_map(*it, my_gtid);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        if(my_domain == (*it)->data_loc.domain){
+                            // execute if same thread last used or not used yet but data on my domain
+                            if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                                if ((*it)->data_loc.gtid < 0){
+                                    //update gtids in address map       
+                                    update_aff_addr_map(*it, my_gtid);
+                                }
+                                this->list_size--;
+                                this->dup_list_size--;
+                                ret_val = *it;
+                                this->task_list.remove(ret_val);
+                                found = true;
+                                break;
+                            }
+                            else{ // task not perfect, save for later as backup plan
+                                it_last_best = it;
+                                backup_found = true;
+                            }
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
+                    }
+                    // found no task with same domain and gtid, but at least one with only the same domain
+                    if (!found && backup_found){
+                        //update gtids in address map       
+                        update_aff_addr_map(*it_last_best, my_gtid);
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it_last_best;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                    }
+                    break;
+                //---------------------------------------------
                 }// mode switch    
                 this->m.unlock();
                 break;
@@ -925,6 +1070,55 @@ class thread_safe_task_list_t {
                         }
                         std::advance(it, stride);
                         counter += stride;
+                    }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_COMBINED_MODE:
+                    backup_found = false;
+                    while (counter < this->task_list.size()){
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if((*it)->data_loc.domain < 0){
+                            update_aff_addr_map(*it, my_gtid);
+                            this->list_size--;
+                            this->dup_list_size--;
+                            ret_val = *it;
+                            this->task_list.remove(ret_val);
+                            found = true;
+                            break;
+                        }
+                        if(my_domain == (*it)->data_loc.domain){
+                            // execute if same thread last used or not used yet but data on my domain
+                            if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                                if ((*it)->data_loc.gtid < 0){
+                                    //update gtids in address map       
+                                    update_aff_addr_map(*it, my_gtid);
+                                }
+                                this->list_size--;
+                                this->dup_list_size--;
+                                ret_val = *it;
+                                this->task_list.remove(ret_val);
+                                found = true;
+                                break;
+                            }
+                            else{ // task not perfect, save for later as backup plan
+                                it_last_best = it;
+                                backup_found = true;
+                            }
+                        }
+                        std::advance(it, stride);
+                        counter += stride;
+                    }
+                    // found no task with same domain and gtid, but at least one with only the same domain
+                    if (!found && backup_found){
+                        //update gtids in address map       
+                        update_aff_addr_map(*it_last_best, my_gtid);
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it_last_best;
+                        this->task_list.remove(ret_val);
+                        found = true;
                     }
                     break;
                 //---------------------------------------------

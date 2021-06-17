@@ -498,10 +498,10 @@ int32_t chameleon_finalize() {
             printf("No gtid hits or misses recorded.");
         int changed = domain_changed.load();
         int not_changed = domain_didnt_change.load();
-        printf("The domain changed %d times and stayed the same %d times.\n", changed, not_changed);
+        printf("The domain changed %d times\nThe domain stayed the same %d times.\n", changed, not_changed);
         changed = gtid_changed.load();
         not_changed = gtid_didnt_change.load();
-        printf("The gtid changed %d times and stayed the same %d times.\n", changed, not_changed);
+        printf("The gtid changed %d times \nThe gtid stayed the same %d times.\n", changed, not_changed);
     #endif
 
     #if ENABLE_COMM_THREAD && THREAD_ACTIVATION
@@ -1015,22 +1015,28 @@ void chameleon_free_data(void *tgt_ptr) {
 
 #if USE_TASK_AFFINITY
 // returns the location part which is currently used for weighting
-int get_cur(task_aff_physical_data_location_t page_loc)
+int get_cur(task_aff_physical_data_location_t page_loc, int run)
 {
   switch (cham_affinity_settings.map_mode)
   {
     case CHAM_AFF_DOMAIN_MODE:
-    case CHAM_AFF_DOMAIN_RECALC_MODE: 
+    case CHAM_AFF_DOMAIN_RECALC_MODE:
       return page_loc.domain;
       break;
     case CHAM_AFF_TEMPORAL_MODE:
       return page_loc.gtid;
       break;
+    case CHAM_AFF_COMBINED_MODE: 
+      if (run == 1)
+        return page_loc.domain;
+      else
+        return page_loc.gtid;
+      break;
   }
   return -1;
 }
 // weigh all the calculated physical addresses to determine the primary location of a task
-task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *task, const int naffin, const int row, task_aff_physical_data_location_t **page_loc, int *array_size) 
+task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *task, const int naffin, const int row, task_aff_physical_data_location_t **page_loc, int *array_size, int run) 
 {
   //const int page_size = getpagesize(); //doesn't work with windows
     int x = 0, y = 0;
@@ -1050,7 +1056,7 @@ task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *tas
     max = 0;
     for (int i=0; i < naffin; i++) {
         for (int j=0; j < array_size[i]; j++){
-            cur = get_cur(page_loc[i][j]);
+            cur = get_cur(page_loc[i][j], run);
             //
             if (cur < 0) {
               continue;
@@ -1072,7 +1078,7 @@ task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *tas
         //normalize the weight to work in cases where multiple pages per affinity have been checked
         double weight = (task->arg_sizes[i])/((double)array_size[i]);
         for (int j=0; j < array_size[i]; j++){
-            cur = get_cur(page_loc[i][j]);
+            cur = get_cur(page_loc[i][j], run);
             if (cur < 0) {
               continue;
             }
@@ -1102,7 +1108,7 @@ task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *tas
         // Therefore the size of each affinity gets neutralized
         double weight = 1 + ( (row-array_size[i]) / (double) array_size[i]);//weight each entry as if every row is full
         for (int j=0; j < array_size[i]; j++){
-            cur = get_cur(page_loc[i][j]);
+            cur = get_cur(page_loc[i][j], run);
             if (cur < 0) {
               continue;
             }
@@ -1115,6 +1121,13 @@ task_aff_physical_data_location_t map_count_weighted(cham_migratable_task_t *tas
         }
     }
     break;
+  } // switch
+
+  // rerun count weighted to get the correctly weighted gtid
+  if((cham_affinity_settings.map_mode == CHAM_AFF_COMBINED_MODE) && run == 1){
+      run = 2;
+      task_aff_physical_data_location_t data_loc_gtid = map_count_weighted(task, naffin, row, page_loc, array_size, run);
+      page_loc[x][y].gtid = data_loc_gtid.gtid;
   }
   
   return page_loc[x][y];
@@ -1165,7 +1178,7 @@ void update_aff_addr_map(cham_migratable_task_t *task, int32_t new_gtid){
 //    #endif
 }
 
-//get the physical location of one page
+//get the physical location (domain, gtid) of one page
 //task_aff_physical_data_location_t check_page(void * addr, int64_t type){
 task_aff_physical_data_location_t check_page(void * addr){
     
@@ -1210,7 +1223,7 @@ task_aff_physical_data_location_t check_page(void * addr){
 #endif
 
 /*
-    calculates the primary physical data domain of one task
+    calculates the primary physical data domain or gtid of one task
     dependent on the cham_affinity_settings.page_selection_strategy
     and cham_affinity_settings.page_weighting_strategy
 */
@@ -1473,7 +1486,7 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
     /*----------------------------------------------------------------*/
     /*Weigh the locations to calculate the primary domain of the task*/
     /*----------------------------------------------------------------*/
-    task_aff_physical_data_location_t ret_val = map_count_weighted(task, n_args_to_consider, row, page_loc, &(array_size[0]));
+    task_aff_physical_data_location_t ret_val = map_count_weighted(task, n_args_to_consider, row, page_loc, &(array_size[0]), 1);
     //task_aff_physical_data_location_t ret_val = map_count_weighted(aff_info, naffin, row, page_loc, &(array_size[0]));
     
     // free memory again
@@ -1487,7 +1500,7 @@ task_aff_physical_data_location_t affinity_schedule(cham_migratable_task_t *task
 
 // recalculate task domain and gtid
 task_aff_physical_data_location_t affinity_recalculate_task_data_loc(cham_migratable_task_t* task){
-    task_aff_physical_data_location_t new_loc = affinity_schedule(task); //also partly needed for domain mode?
+    task_aff_physical_data_location_t new_loc = affinity_schedule(task);
     #if TASK_AFFINITY_DEBUG
         if(new_loc.gtid != task->data_loc.gtid)
             gtid_changed++;

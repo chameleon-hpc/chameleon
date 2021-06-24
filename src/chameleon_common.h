@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <iterator>
+#include <sched.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -866,6 +867,10 @@ class thread_safe_unordered_map_atomic {
 extern int chameleon_comm_rank;
 extern int chameleon_comm_size;
 
+// original cpuset of the complete process 
+// (needs to be recorded in serial region at the beginning of the applicatrion)
+extern cpu_set_t pid_mask;
+
 // atomic counter for task ids
 extern std::atomic<TYPE_TASK_ID> _task_id_counter;
 
@@ -992,6 +997,35 @@ static void split_string(const std::string& str, Container& cont, char delim = '
     while (std::getline(ss, token, delim)) {
         cont.push_back(token);
     }
+}
+
+static void print_affinity_mask(cpu_set_t mask) {
+    long nproc, i;
+
+    // get the number of processors/mts
+    nproc = sysconf(_SC_NPROCESSORS_ONLN);
+
+    // build + output mask string
+    std::string mask_str("");
+    for (i = 0; i < nproc; i++) {
+        if (CPU_ISSET(i, &mask)) {
+            mask_str = mask_str + " X";
+        } else {
+            mask_str = mask_str + " .";
+        }
+    }
+    RELP("CPUSET ==> %s\n", mask_str.c_str());
+}
+
+static void get_and_print_affinity_mask() {
+    cpu_set_t mask;
+    // get the affinity mask from the current thread
+    if (sched_getaffinity(getpid(), sizeof(cpu_set_t), &mask) == -1) {
+        perror("sched_getaffinity");
+        return;
+    }
+
+    return print_affinity_mask(mask);
 }
 
 static void load_config_values() {

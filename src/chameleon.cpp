@@ -314,6 +314,12 @@ int32_t chameleon_init() {
         return CHAM_SUCCESS;
     }
 
+    // first thing: remember original full cpuset of complete process
+    sched_getaffinity(getpid(), sizeof(cpu_set_t), &pid_mask);
+    // === DEBUG
+    // get_and_print_affinity_mask();
+    // === DEBUG
+
     // check whether MPI is initialized, otherwise do so
     int initialized, err;
     initialized = 0;

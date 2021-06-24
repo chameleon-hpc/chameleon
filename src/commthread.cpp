@@ -14,6 +14,8 @@
 #include <hwloc/glibc-sched.h>
 #include <functional>
 #include <set>
+#include <string>
+#include <iostream>
 
 #ifdef TRACE
 #include "VT.h"
@@ -36,6 +38,10 @@ MPI_Comm chameleon_comm_activate;
 
 int chameleon_comm_rank = -1;
 int chameleon_comm_size = -1;
+
+// original cpuset of the complete process 
+// (needs to be recorded in serial region at the beginning of the applicatrion)
+cpu_set_t pid_mask;
 
 //request manager for MPI requests
 RequestManager request_manager_receive;
@@ -354,7 +360,6 @@ short pin_thread_to_last_core(int n_last_core) {
     pthread_t thread;
     cpu_set_t current_cpuset;
     cpu_set_t new_cpu_set;
-    cpu_set_t final_cpu_set;    
 
     // somehow this only reflects binding of current thread. Problem when OpenMP already pinned threads due to OMP_PLACES and OMP_PROC_BIND. 
     // then comm thread only get cpuset to single core --> overdecomposition of core with computational and communication thread  
@@ -366,11 +371,18 @@ short pin_thread_to_last_core(int n_last_core) {
     hwloc_bitmap_t set, hwlocset;
     err = hwloc_topology_init(&topology);
     err = hwloc_topology_load(topology);
+
+    // Comment: Do not use this CPU set as there is currently a bug in hwloc
+    // Effect: cpuset returned only contains bits of activate threads but not the original cpuset
     hwlocset = hwloc_bitmap_alloc();
-    err = hwloc_get_proc_cpubind(topology, getpid(), hwlocset, 0);
+    err = hwloc_get_proc_cpubind(topology, getpid(), hwlocset, HWLOC_CPUBIND_PROCESS);
     hwloc_cpuset_to_glibc_sched_affinity(topology, hwlocset, &current_cpuset, sizeof(current_cpuset));
     hwloc_bitmap_free(hwlocset);
-    
+
+    // ===== DEBUG
+    //print_affinity_mask(current_cpuset);
+    // ===== DEBUG
+
     // also get the number of processing units (here)
     int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
     if(depth == HWLOC_TYPE_DEPTH_UNKNOWN) {
@@ -378,16 +390,17 @@ short pin_thread_to_last_core(int n_last_core) {
     }
     const long n_physical_cores = hwloc_get_nbobjs_by_depth(topology, depth);
     const long n_logical_cores = sysconf( _SC_NPROCESSORS_ONLN );
-
+    int ht_enabled = n_logical_cores > n_physical_cores;
     hwloc_topology_destroy(topology);
     
     // get last hw thread of current cpuset
     long max_core_set = -1;
     int count_last = 0;
 
-    for (long i = n_logical_cores; i >= 0; i--) {
-        if (CPU_ISSET(i, &current_cpuset)) {
-            // DBP("Last core/hw thread in cpuset is %ld\n", i);
+    for (long i = n_logical_cores-1; i >= 0; i--) {
+        //RELP("core/hw thread %ld not set in cpuset\n", i);
+        if (CPU_ISSET(i, &pid_mask)) {
+            // RELP("Last core/hw thread in cpuset is %ld\n", i);
             max_core_set = i;
             count_last++;
             if(count_last >= n_last_core)
@@ -397,7 +410,7 @@ short pin_thread_to_last_core(int n_last_core) {
 
     // set affinity mask to last core or all hw threads on specific core 
     CPU_ZERO(&new_cpu_set);
-    if(max_core_set < n_physical_cores) {
+    if(!ht_enabled) {
         // Case: there are no hyper threads
         RELP("COMM_THREAD: Setting thread affinity to core %ld\n", max_core_set);
         CPU_SET(max_core_set, &new_cpu_set);
@@ -419,6 +432,7 @@ short pin_thread_to_last_core(int n_last_core) {
 
     // // ===== DEBUG
     // // verify that pinning worked
+    // cpu_set_t final_cpu_set;
     // err = pthread_getaffinity_np(thread, sizeof(cpu_set_t), &final_cpu_set);
     // if (err != 0)
     //     handle_error_en(err, "pthread_getaffinity_np");

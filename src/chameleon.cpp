@@ -400,12 +400,14 @@ int32_t chameleon_init() {
     _outstanding_jobs_sum = 0;
     _task_id_counter = 0;
 
+#ifndef __GNUG__
     // dummy target region to force binary loading, use host offloading for that purpose
     // #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
     #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
         printf("chameleon_init - dummy region\n");
     }
+#endif
 
     // initialize communication session data
     chameleon_comm_thread_session_data_t_init();

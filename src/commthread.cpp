@@ -380,7 +380,7 @@ short pin_thread_to_last_core(int n_last_core) {
     hwloc_bitmap_free(hwlocset);
 
     // ===== DEBUG
-    //print_affinity_mask(current_cpuset);
+    // print_affinity_mask(pid_mask);
     // ===== DEBUG
 
     // also get the number of processing units (here)

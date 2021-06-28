@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <omp.h>
+#include <sched.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -165,6 +166,8 @@ int32_t chameleon_taskyield();
 void chameleon_print(int print_prefix, const char *prefix, int rank, ... );
 
 int32_t chameleon_determine_base_addresses(void * main_ptr);
+
+void chameleon_set_proc_cpuset(cpu_set_t mask);
 
 void chameleon_set_tracing_enabled(int enabled);
 

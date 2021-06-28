@@ -300,7 +300,7 @@ inline void verify_initialized() {
 }
 
 /* 
- * Function chameleon_preinit
+ * Function chameleon_preinit_ctor
  * Runs before chameleon library is initialized.
  * NOTE: Might not work with libgomp: might not run before libgomp constructor 
  *       is executed which already binds threads if OpenMP affinity policy set.
@@ -309,6 +309,15 @@ static void __attribute__((constructor (102))) chameleon_preinit_ctor(void) {
     // fprintf (stderr,"==> chameleon_preinit_ctor\n");
     // first thing: remember original full cpuset of complete process
     sched_getaffinity(getpid(), sizeof(cpu_set_t), &pid_mask);
+}
+
+/* 
+ * Function __chameleon_set_proc_cpuset
+ * Possibility to set process cpuset from outside
+ * NOTE: Necessary when using GNU compiler + libgomp
+ */
+void chameleon_set_proc_cpuset(cpu_set_t mask) {
+    pid_mask = mask;
 }
 
 /* 

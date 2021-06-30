@@ -3,7 +3,7 @@ INSTALL_DIR ?=~/install/chameleon/intel
 
 FILES_CXX_COMP=chameleon.cpp commthread.cpp chameleon_statistics.cpp chameleon_strategies.cpp chameleon_common.cpp request_manager.cpp chameleon_tools.cpp
 FILES_F90_COMP=chameleon_lib.f90
-FILES_COPY_INCLUDE=chameleon.h chameleon_tools.h 
+FILES_COPY_INCLUDE=chameleon.h chameleon_tools.h chameleon_pre_init.h 
 FILES_COPY_INCLUDE_FORTRAN=chameleon_lib.mod
 FILES_COPY_LIB=libchameleon.so
 

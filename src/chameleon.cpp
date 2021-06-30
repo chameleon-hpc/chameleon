@@ -320,6 +320,27 @@ inline void verify_initialized() {
 }
 
 /* 
+ * Function chameleon_preinit_ctor
+ * Runs before chameleon library is initialized.
+ * NOTE: Might not work with libgomp: might not run before libgomp constructor 
+ *       is executed which already binds threads if OpenMP affinity policy set.
+ */
+static void __attribute__((constructor (102))) chameleon_preinit_ctor(void) {
+    // fprintf (stderr,"==> chameleon_preinit_ctor\n");
+    // first thing: remember original full cpuset of complete process
+    sched_getaffinity(getpid(), sizeof(cpu_set_t), &pid_mask);
+}
+
+/* 
+ * Function __chameleon_set_proc_cpuset
+ * Possibility to set process cpuset from outside
+ * NOTE: Necessary when using GNU compiler + libgomp
+ */
+void chameleon_set_proc_cpuset(cpu_set_t mask) {
+    pid_mask = mask;
+}
+
+/* 
  * Function chameleon_init
  * Initialized chameleon library, communicators and all whats necessary.
  */
@@ -334,8 +355,6 @@ int32_t chameleon_init() {
         return CHAM_SUCCESS;
     }
 
-    // first thing: remember original full cpuset of complete process
-    sched_getaffinity(getpid(), sizeof(cpu_set_t), &pid_mask);
     // === DEBUG
     // get_and_print_affinity_mask();
     // === DEBUG
@@ -370,16 +389,18 @@ int32_t chameleon_init() {
     MPI_Errhandler_set(chameleon_comm_cancel, MPI_ERRORS_RETURN);
     MPI_Errhandler_set(chameleon_comm_load, MPI_ERRORS_RETURN);
 
+#if PRINT_CONFIG_VALUES
     RELP("chameleon_init: VERSION %s\n", CHAMELEON_VERSION_STRING);
+#endif
 #ifdef CHAM_DEBUG
     mem_allocated = 0;
 #endif
 
     // load config values that were speicified by environment variables
     load_config_values();
-    #if PRINT_CONFIG_VALUES
+#if PRINT_CONFIG_VALUES
     print_config_values();
-    #endif
+#endif
 
     // initilize thread data here
     __rank_data.comm_rank = chameleon_comm_rank;
@@ -408,12 +429,14 @@ int32_t chameleon_init() {
     _outstanding_jobs_sum = 0;
     _task_id_counter = 0;
 
+#ifndef __GNUG__
     // dummy target region to force binary loading, use host offloading for that purpose
     // #pragma omp target device(1001) map(to:stderr) // 1001 = CHAMELEON_HOST
     #pragma omp target device(1001) // 1001 = CHAMELEON_HOST
     {
         printf("chameleon_init - dummy region\n");
     }
+#endif
 
     // initialize communication session data
     chameleon_comm_thread_session_data_t_init();

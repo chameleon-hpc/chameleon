@@ -358,29 +358,19 @@ short pin_thread_to_last_core(int n_last_core) {
     int err;
     int s, j;
     pthread_t thread;
-    cpu_set_t current_cpuset;
     cpu_set_t new_cpu_set;
 
-    // somehow this only reflects binding of current thread. Problem when OpenMP already pinned threads due to OMP_PLACES and OMP_PROC_BIND. 
+    // this only reflects binding of current thread. Problem when OpenMP already pinned threads due to OMP_PLACES and OMP_PROC_BIND. 
     // then comm thread only get cpuset to single core --> overdecomposition of core with computational and communication thread  
-    // err = sched_getaffinity(getpid(), sizeof(cpu_set_t), &current_cpuset);
-    // if(err != 0)
-    //     handle_error_en(err, "sched_getaffinity");
+    // err = sched_getaffinity(getpid(), sizeof(cpu_set_t), &pid_mask);
+    // if(err != 0) handle_error_en(err, "sched_getaffinity");
 
     hwloc_topology_t topology;
-    hwloc_bitmap_t set, hwlocset;
     err = hwloc_topology_init(&topology);
     err = hwloc_topology_load(topology);
 
-    // Comment: Do not use this CPU set as there is currently a bug in hwloc
-    // Effect: cpuset returned only contains bits of activate threads but not the original cpuset
-    hwlocset = hwloc_bitmap_alloc();
-    err = hwloc_get_proc_cpubind(topology, getpid(), hwlocset, HWLOC_CPUBIND_PROCESS);
-    hwloc_cpuset_to_glibc_sched_affinity(topology, hwlocset, &current_cpuset, sizeof(current_cpuset));
-    hwloc_bitmap_free(hwlocset);
-
     // ===== DEBUG
-    //print_affinity_mask(current_cpuset);
+    // print_affinity_mask(pid_mask);
     // ===== DEBUG
 
     // also get the number of processing units (here)

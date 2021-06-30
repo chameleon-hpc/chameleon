@@ -132,6 +132,6 @@ endif()
 include_directories(${ADDITIONAL_INCLUDES})
 
 ## Installation
-install(TARGETS ${CHAMELEON_LIBRARY_NAME} DESTINATION lib)                      # shared library
-install(FILES "chameleon.h" "chameleon_tools.h" DESTINATION include)            # headers
-install(FILES ${CMAKE_BINARY_DIR}/src/chameleon_lib.mod DESTINATION include)    # fortran mod file
+install(TARGETS ${CHAMELEON_LIBRARY_NAME} DESTINATION lib)                                  # shared library
+install(FILES "chameleon_pre_init.h" "chameleon.h" "chameleon_tools.h" DESTINATION include) # headers
+install(FILES ${CMAKE_BINARY_DIR}/src/chameleon_lib.mod DESTINATION include)                # fortran mod file

@@ -212,7 +212,9 @@ typedef enum cham_affinity_selection_strategy_t {
     // check N tasks euqally spaced
     CHAM_AFF_N_EQS = 3,
     // check tasks linearely with stride N
-    CHAM_AFF_EVERY_NTH = 4
+    CHAM_AFF_EVERY_NTH = 4,
+    // testing
+    CHAM_AFF_ALL_LINEAR_FAKE = 5
 } cham_affinity_selection_strategy_t;
 
 //which types of affinities are to be considered when calculating the domain of a task?
@@ -1127,6 +1129,114 @@ class thread_safe_task_list_t {
                 this->m.unlock();
                 break;
                 
+            // ALL_LINEAR but also check all elements after a fitting one is found
+            // !!! for testing !!!
+            //=================================================
+            case CHAM_AFF_ALL_LINEAR_FAKE: // 5
+            //=================================================
+                this->m.lock();
+                found = false;
+                switch (cham_affinity_settings.map_mode){
+                //---------------------------------------------
+                case CHAM_AFF_DOMAIN_MODE:
+                case CHAM_AFF_DOMAIN_RECALC_MODE:
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        if (cham_affinity_settings.map_mode == CHAM_AFF_DOMAIN_RECALC_MODE){
+                            // recalculate task domain and gtid
+                            (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        }
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if(!found && ((my_domain == (*it)->data_loc.domain) || ((*it)->data_loc.domain < 0))){
+                            ret_val = *it;
+                            found = true;
+                            // break;
+                        }
+                    }
+                    if(found){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        this->task_list.remove(ret_val);
+                    }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_TEMPORAL_MODE:
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        #if TASK_AFFINITY_DEBUG
+                            int old_gtid = (*it)->data_loc.gtid;
+                        #endif
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        #if TASK_AFFINITY_DEBUG
+                            int new_gtid = (*it)->data_loc.gtid;
+                            if (old_gtid != new_gtid) printf("gtid changed from %d to %d after recalc!", old_gtid, new_gtid);
+                        #endif
+                        // execute if same thread last used or not used yet but data on my domain
+                        if(!found && ((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain)))){
+                            if ((*it)->data_loc.gtid < 0){
+                                //update gtids in address map       
+                                update_aff_addr_map(*it, my_gtid);
+                            }
+                            ret_val = *it;
+                            found = true;
+                            //break;
+                        }
+                    }
+                    if(found){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        this->task_list.remove(ret_val);
+                    }
+                    break;
+                //---------------------------------------------
+                case CHAM_AFF_COMBINED_MODE:
+                    backup_found = false;
+                    for (it = this->task_list.begin(); it != this->task_list.end(); ++it){
+                        // recalculate task domain and gtid
+                        (*it)->data_loc = affinity_recalculate_task_data_loc(*it);
+                        //execute task immediately if domain < 0, otherwise this task will be checked very often and executed last
+                        if(!found && ((*it)->data_loc.domain < 0)){
+                            update_aff_addr_map(*it, my_gtid);
+                            ret_val = *it;
+                            found = true;
+                            // break;
+                        }
+                        if(!found && my_domain == (*it)->data_loc.domain){
+                            // execute if same thread last used or not used yet but data on my domain
+                            if((my_gtid == (*it)->data_loc.gtid) || (((*it)->data_loc.gtid < 0) && ((*it)->data_loc.domain == my_domain))){
+                                if ((*it)->data_loc.gtid < 0){
+                                    //update gtids in address map       
+                                    update_aff_addr_map(*it, my_gtid);
+                                }
+                                ret_val = *it;
+                                found = true;
+                                // break;
+                            }
+                            else if(!backup_found){ // task not perfect, save for later as backup plan
+                                it_last_best = it;
+                                backup_found = true;
+                            }
+                        }
+                    }
+                    if(found){
+                        this->list_size--;
+                        this->dup_list_size--;
+                        this->task_list.remove(ret_val);
+                    }
+                    // found no task with same domain and gtid, but at least one with only the same domain
+                    if (!found && backup_found){
+                        //update gtids in address map       
+                        update_aff_addr_map(*it_last_best, my_gtid);
+                        this->list_size--;
+                        this->dup_list_size--;
+                        ret_val = *it_last_best;
+                        this->task_list.remove(ret_val);
+                        found = true;
+                    }
+                    break;
+                //---------------------------------------------
+                }// mode switch
+                this->m.unlock();
+                break;
             default:
                 ret_val = this->pop_front();
                 found = true; //to not run into fallback strategy
@@ -1138,7 +1248,7 @@ class thread_safe_task_list_t {
 
         #if TASK_AFFINITY_DEBUG
             if (ret_val != nullptr){
-                //printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
+                // printf("My domain: %d, Chosen Task domain:%d\n", my_domain, ret_val->data_loc.domain);
                 //printf("My gtid: %d, Chosen Task gtid:%d\n", my_gtid, ret_val->data_loc.gtid);
                 if(my_domain == ret_val->data_loc.domain){
                     task_domain_hit++;

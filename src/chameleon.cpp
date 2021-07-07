@@ -1223,6 +1223,16 @@ task_aff_physical_data_location_t check_page(void * addr){
     //---------Search if the location has already been calculated---------
     auto search = task_aff_addr_map.find(page_start_address);
     found = search != task_aff_addr_map.end();
+    #if TASK_AFFINITY_DEBUG
+    int domain_before = -1;
+    if (found){
+        // printf("Address found. Domain = %d\n",search->second.domain);
+        domain_before = search->second.domain;
+    }
+    else{
+        // printf("Address not in the map.\n");
+    }
+    #endif
     if (!(cham_affinity_settings.always_check_loc==1) && found){
         return search->second;
     }
@@ -1240,6 +1250,13 @@ task_aff_physical_data_location_t check_page(void * addr){
         addr_map_mutex.lock();
         task_aff_addr_map[page_start_address].domain = current_data_domain;
         addr_map_mutex.unlock();
+        #if TASK_AFFINITY_DEBUG
+            // printf("Domain after recalculation: %d\n", tmp_result.domain);
+            int domain_after=tmp_result.domain;
+            if ((domain_before != domain_after) && found){
+                printf("Domain of page changed because of AlwaysCheckPhysical from %d to %d.\n",domain_before, domain_after);
+            }
+        #endif
         return tmp_result;
 
     }

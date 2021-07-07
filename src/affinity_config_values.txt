@@ -29,6 +29,7 @@ CHAM_AFF_TASK_SELECTION_STRAT= (default 0)
   CHAM_AFF_FIRST_N = 2,
   CHAM_AFF_N_EQS = 3, // check N tasks euqally spaced
   CHAM_AFF_EVERY_NTH = 4 //check tasks linearely with stride N
+  (for testing) CHAM_AFF_ALL_LINEAR_FAKE = 5 // ALL_LINEAR but check all elements after the found
   //fallback when in the selected strat no fitting task is found: get the first task
 
 CHAM_AFF_PAGE_SELECTION_STRAT= (default 0)

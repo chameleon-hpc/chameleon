@@ -1711,7 +1711,7 @@ inline void action_handle_gather_request() {
         }
     }
     #else
-    *offload_triggered = 0;
+    _session_data.offload_triggered = 0;
     #endif /* OFFLOAD_AFTER_OUTSTANDING_SUM_CHANGED */
 
     #ifdef TRACE
@@ -3022,7 +3022,13 @@ void* comm_thread_action(void* arg) {
             _session_data.num_threads_in_tw = _num_threads_involved_in_taskwait.load();
         }
         #endif
-
+#if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
+        if(_tracing_enabled) {
+            VT_traceon();
+        } else {
+            VT_traceoff();
+        }
+#endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
         // call function for communication progression
         action_communication_progression(1);
     }

@@ -457,6 +457,21 @@ int32_t chameleon_thread_init() {
     return CHAM_SUCCESS;
 }
 
+/* 
+ * Function chameleon_post_init_serial
+ * Can run after init and thread init in a serial region
+ */
+int32_t chameleon_post_init_serial() {
+    // make sure basic stuff is initialized
+    int32_t gtid = __ch_get_gtid();
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_post_init_serial) {
+        cham_t_status.cham_t_callback_post_init_serial(&(__thread_data[gtid].thread_tool_data));
+    }
+#endif
+    return CHAM_SUCCESS;
+}
+
 int32_t chameleon_thread_finalize() {
     // make sure basic stuff is initialized
     int32_t gtid = __ch_get_gtid();

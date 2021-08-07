@@ -25,7 +25,8 @@ typedef enum cham_t_callback_types_t {
     cham_t_callback_select_num_tasks_to_offload = 9,
     cham_t_callback_select_tasks_for_migration  = 10,
     cham_t_callback_select_num_tasks_to_replicate= 11,
-    cham_t_callback_change_freq_for_execution= 12
+    cham_t_callback_change_freq_for_execution= 12,
+    cham_t_callback_post_init_serial            = 13,
     // cham_t_callback_implicit_task            = 7,
     // cham_t_callback_target                   = 8,
     // cham_t_callback_target_data_op           = 9,
@@ -219,6 +220,10 @@ typedef cham_t_rank_info_t *(*cham_t_get_rank_info_t) (void);
  * List of callbacks
  ****************************************************************************/
 typedef void (*cham_t_callback_thread_init_t) (
+    cham_t_data_t *thread_data
+);
+
+typedef void (*cham_t_callback_post_init_serial_t) (
     cham_t_data_t *thread_data
 );
 

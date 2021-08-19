@@ -155,6 +155,8 @@ int32_t chameleon_init();
 
 int32_t chameleon_thread_init();
 
+int32_t chameleon_post_init_serial();
+
 int32_t chameleon_set_image_base_address(int idx_image, intptr_t base_address);
 
 int32_t chameleon_finalize();

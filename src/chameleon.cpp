@@ -447,6 +447,11 @@ int32_t chameleon_init() {
     start_communication_threads();
     #endif
     #endif
+
+#if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
+    VT_traceoff();
+    _tracing_enabled = 0;
+#endif
         
     // set flag to ensure that only a single thread is initializing
     _ch_is_initialized = true;
@@ -464,6 +469,24 @@ int32_t chameleon_thread_init() {
 #if CHAMELEON_TOOL_SUPPORT
     if(cham_t_status.enabled && cham_t_status.cham_t_callback_thread_init) {
         cham_t_status.cham_t_callback_thread_init(&(__thread_data[gtid].thread_tool_data));
+    }
+#endif
+#if PRINT_AFFINITY_MASKS
+    get_and_print_affinity_mask();
+#endif
+    return CHAM_SUCCESS;
+}
+
+/* 
+ * Function chameleon_post_init_serial
+ * Can run after init and thread init in a serial region
+ */
+int32_t chameleon_post_init_serial() {
+    // make sure basic stuff is initialized
+    int32_t gtid = __ch_get_gtid();
+#if CHAMELEON_TOOL_SUPPORT
+    if(cham_t_status.enabled && cham_t_status.cham_t_callback_post_init_serial) {
+        cham_t_status.cham_t_callback_post_init_serial(&(__thread_data[gtid].thread_tool_data));
     }
 #endif
     return CHAM_SUCCESS;
@@ -639,15 +662,6 @@ void dtw_startup() {
     cham_stats_reset_for_sync_cycle();
     #endif
 
-    #if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
-    _num_sync_cycle++;
-    if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
-        _tracing_enabled = 1;
-    } else {
-        _tracing_enabled = 0;
-    }
-    #endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
-
     //DBP("chameleon_distributed_taskwait - startup, resetting counters\n");
     _num_threads_involved_in_taskwait   = omp_get_num_threads();
     _session_data.num_threads_in_tw     = omp_get_num_threads();
@@ -697,11 +711,30 @@ void dtw_teardown() {
         #endif
         
         _flag_dtw_active = 0;
+
+#if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
+        _num_sync_cycle++;
+        if(_num_sync_cycle >= ENABLE_TRACE_FROM_SYNC_CYCLE && _num_sync_cycle <= ENABLE_TRACE_TO_SYNC_CYCLE) {
+            VT_traceon();
+            _tracing_enabled = 1;            
+        } else {
+            VT_traceoff();
+            _tracing_enabled = 0;            
+        }
+#endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
         _mtx_taskwait.unlock();
     }
-    
+
     // currently barrier here to ensure correctness and avoid race condition between startup and teardown
     #pragma omp barrier
+
+#if defined(TRACE) && ENABLE_TRACING_FOR_SYNC_CYCLES
+    if(_tracing_enabled) {
+        VT_traceon();
+    } else {
+        VT_traceoff();
+    }
+#endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
 }
 
 /* 

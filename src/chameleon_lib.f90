@@ -16,6 +16,11 @@ interface
    integer :: chameleon_init
  end function chameleon_init
 
+ function chameleon_thread_init() bind(c)
+   implicit none
+   integer :: chameleon_thread_init
+ end function chameleon_thread_init
+
  function chameleon_determine_base_addresses(func) BIND(c) 
    use iso_c_binding
    implicit none

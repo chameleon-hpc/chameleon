@@ -132,7 +132,11 @@
 #endif
 
 #ifndef PRINT_CONFIG_VALUES
-#define PRINT_CONFIG_VALUES 1
+#define PRINT_CONFIG_VALUES 0
+#endif
+
+#ifndef PRINT_AFFINITY_MASKS
+#define PRINT_AFFINITY_MASKS 1
 #endif
 
 #ifndef ENABLE_TRACING_FOR_SYNC_CYCLES
@@ -1724,6 +1728,8 @@ static void split_string(const std::string& str, Container& cont, char delim = '
     }
 }
 
+#define gettid() ((pid_t)syscall(SYS_gettid))
+
 static void print_affinity_mask(cpu_set_t mask) {
     long nproc, i;
 
@@ -1734,9 +1740,10 @@ static void print_affinity_mask(cpu_set_t mask) {
     std::string mask_str("");
     for (i = 0; i < nproc; i++) {
         if (CPU_ISSET(i, &mask)) {
-            mask_str = mask_str + " X";
-        } else {
-            mask_str = mask_str + " .";
+            mask_str = mask_str + std::to_string(i) + ",";
+        //     mask_str = mask_str + " X";
+        // } else {
+        //     mask_str = mask_str + " .";
         }
     }
     RELP("CPUSET ==> %s\n", mask_str.c_str());
@@ -1745,7 +1752,7 @@ static void print_affinity_mask(cpu_set_t mask) {
 static void get_and_print_affinity_mask() {
     cpu_set_t mask;
     // get the affinity mask from the current thread
-    if (sched_getaffinity(getpid(), sizeof(cpu_set_t), &mask) == -1) {
+    if (sched_getaffinity(gettid(), sizeof(cpu_set_t), &mask) == -1) {
         perror("sched_getaffinity");
         return;
     }

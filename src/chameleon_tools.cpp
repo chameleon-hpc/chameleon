@@ -131,6 +131,9 @@ static cham_t_set_result_t cham_t_set_callback(cham_t_callback_types_t which, ch
         case cham_t_callback_thread_init:
             cham_t_status.cham_t_callback_thread_init = (cham_t_callback_thread_init_t)callback;
             break;
+        case cham_t_callback_post_init_serial:
+            cham_t_status.cham_t_callback_post_init_serial = (cham_t_callback_post_init_serial_t)callback;
+            break;
         case cham_t_callback_thread_finalize:
             cham_t_status.cham_t_callback_thread_finalize = (cham_t_callback_thread_finalize_t)callback;
             break;

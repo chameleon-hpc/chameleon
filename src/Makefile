@@ -24,6 +24,7 @@ CH_CXX_COMPILE_FLAGS += $(CUSTOM_COMPILE_FLAGS)
 CH_F90_COMPILE_FLAGS += $(CUSTOM_COMPILE_FLAGS)
 
 default: release
+default: CH_CXX_COMPILE_FLAGS += -DUSE_TASK_AFFINITY=1
 
 dbg: FLAGS_OPTIMIZATION=-g -O0
 dbg: generic
@@ -40,6 +41,18 @@ trace: generic
 aff_debug: CH_CXX_COMPILE_FLAGS += -DUSE_TASK_AFFINITY=1 -DTASK_AFFINITY_DEBUG=1
 aff_debug: FLAGS_OPTIMIZATION=-g -O3
 aff_debug: generic
+
+aff_no_commthread: CH_CXX_COMPILE_FLAGS += -DUSE_TASK_AFFINITY=1 -DTASK_AFFINITY_DEBUG=0 -DENABLE_COMM_THREAD=0
+aff_no_commthread: FLAGS_OPTIMIZATION=-g -O3
+aff_no_commthread: generic
+
+tool: CH_CXX_COMPILE_FLAGS += -DCHAMELEON_TOOL_SUPPORT=1 -DUSE_TASK_AFFINITY=1
+tool: FLAGS_OPTIMIZATION=-g -O3
+tool: generic
+
+vanilla: CH_CXX_COMPILE_FLAGS += -DUSE_TASK_AFFINITY=0
+vanilla: FLAGS_OPTIMIZATION=-g -O3
+vanilla: generic
 
 generic:
 	@if [ ! -z "$(MPIF90)" -a "$(MPIF90)" != "" ]; then\

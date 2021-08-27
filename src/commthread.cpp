@@ -138,6 +138,11 @@ std::atomic<int>    _th_service_actions_created(0);
 pthread_cond_t      _th_service_actions_cond    = PTHREAD_COND_INITIALIZER;
 pthread_mutex_t     _th_service_actions_mutex   = PTHREAD_MUTEX_INITIALIZER;
 
+// ===== Commthread Work Contribution =======
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+int32_t num_load_balances_handled = 0;
+#endif
+
 // ============== Tracing Section ===========
 std::atomic<bool> _trace_events_initialized(false);
 int event_receive_tasks          = -1;
@@ -2707,6 +2712,25 @@ inline void action_task_replication_send() {
   }
 }
 
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+void action_work_contribution(){
+    #if CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT == 0
+        return;
+    #elif CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT > 0
+        if (num_load_balances_handled >= CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT){
+            chameleon_taskyield();
+            num_load_balances_handled = 0;
+        }
+    #elif CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT < 0
+        int executed_tasks = 0;
+        while (executed_tasks < (-1*CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT)){
+            chameleon_taskyield();
+            executed_tasks++;
+        }
+    #endif
+}
+#endif
+
 void action_communication_progression(int comm_thread) {
     #if ENABLE_TASK_MIGRATION || CHAM_REPLICATION_MODE>0
     #if CHAM_REPLICATION_MODE>=2
@@ -2944,6 +2968,12 @@ void action_communication_progression(int comm_thread) {
         }
     }
     #endif
+
+    #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+    num_load_balances_handled++;
+    action_work_contribution();
+    #endif
+
     #if COMMUNICATION_MODE == 2
     _mtx_comm_progression.unlock();
     }

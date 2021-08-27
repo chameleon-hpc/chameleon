@@ -54,6 +54,12 @@ std::atomic<int> CHAM_AFF_MAP_MODE(3); //Domain mode or temporal mode
 std::atomic<int> CHAM_AFF_ALWAYS_CHECK_PHYSICAL(1); //may be usefull if numabalancing is active
 cham_affinity_settings_t cham_affinity_settings;
 #endif
+
+// settings for commthread work contribution
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+std::atomic<int> CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT(10);
+#endif
+
 #pragma endregion
 
 #pragma region Functions

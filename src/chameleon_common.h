@@ -157,9 +157,14 @@
 //#define REPLICATION_PRIORITIZE_MIGRATED 2 // migrated tasks have high priority
 #endif
 
-//flag whether to use task affinity
+//flag whether to use task affinity (bachelor marvin goal 1)
 #ifndef USE_TASK_AFFINITY
 #define USE_TASK_AFFINITY 1
+#endif
+
+// flag whether to let the communication thread contribute in executing tasks (bachelor marvin goal 3)
+#ifndef CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+#define CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION 0
 #endif
 
 //debug prints to validate the correctness
@@ -1644,6 +1649,12 @@ extern std::atomic<int> CHAM_AFF_MAP_MODE; //Domain mode or temporal mode
 extern std::atomic<int> CHAM_AFF_ALWAYS_CHECK_PHYSICAL;
 extern cham_affinity_settings_t cham_affinity_settings;
 #endif
+
+// settings for commthread work contribution
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+extern std::atomic<int> CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT;
+#endif
+
 #pragma endregion
 
 #pragma region Functions
@@ -1895,6 +1906,14 @@ static void load_config_values() {
         .always_check_loc = CHAM_AFF_ALWAYS_CHECK_PHYSICAL
     };
     #endif
+
+    #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+    tmp = nullptr;
+    tmp = std::getenv("CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT");
+    if(tmp) {
+         CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT = std::atof(tmp);
+    }
+    #endif
 }
 
 static void print_config_values() {
@@ -1943,6 +1962,10 @@ static void print_config_values() {
     , CHAM_AFF_MAP_MODE.load()
     , CHAM_AFF_ALWAYS_CHECK_PHYSICAL.load()
     );
+    #endif
+    RELP("CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION=%d\n", CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION);
+    #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+    RELP("CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT=%d\n", CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT.load());
     #endif
 }
 #pragma endregion

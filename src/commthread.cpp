@@ -2714,18 +2714,28 @@ inline void action_task_replication_send() {
 
 #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
 void action_work_contribution(){
-    #if CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT == 0
+    int32_t successful_task_execution = false;
+    int32_t contribution_limit = CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT;
+    // printf("executing action_work_contribution\n"); // yes this part works
+    if (contribution_limit == 0){
         return;
-    #elif CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT > 0
+    }
+    else if (contribution_limit > 0){
         if (num_load_balances_handled >= CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT){
-            chameleon_taskyield();
+            successful_task_execution = chameleon_taskyield();
             num_load_balances_handled = 0;
         }
-    #elif CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT < 0
+    }
+    else{ // contribution_limit < 0
         int executed_tasks = 0;
         while (executed_tasks < (-1*CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT)){
-            chameleon_taskyield();
+            successful_task_execution = chameleon_taskyield();
             executed_tasks++;
+        }
+    }
+    #if CHAM_STATS_RECORD
+        if ((successful_task_execution == CHAM_REMOTE_TASK_SUCCESS) || (successful_task_execution == CHAM_LOCAL_TASK_SUCCESS)){
+            _num_tasks_executed_by_commthread++;
         }
     #endif
 }

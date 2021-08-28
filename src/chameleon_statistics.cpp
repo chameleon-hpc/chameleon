@@ -114,6 +114,10 @@ std::atomic<double>  _time_tool_get_thread_data_sum(0.0);
 std::atomic<int>     _time_tool_get_thread_data_count(0);
 #endif
 
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+std::atomic<int> _num_tasks_executed_by_commthread(0);
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -160,6 +164,10 @@ void cham_stats_reset_for_sync_cycle() {
     _time_commthread_active_count = 0;
 
     _time_communication_ongoing_sum = 0.0;
+
+    #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+    _num_tasks_executed_by_commthread=0;
+    #endif
 
     _stats_bytes_send_per_message.reset();
     _stats_throughput_send.reset();
@@ -213,6 +221,9 @@ void cham_stats_print_stats() {
     fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_replicated_local\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated_local.load());
     fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_replicated_remote\t%d\n", chameleon_comm_rank, _num_executed_tasks_replicated_remote.load());
     fprintf(cur_file, "Stats R#%d:\t_num_executed_tasks_overall\t%d\n", chameleon_comm_rank, (_num_executed_tasks_replicated_local.load() + _num_executed_tasks_replicated_remote.load()  + _num_executed_tasks_local.load() + _num_executed_tasks_stolen.load()));
+    #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+    fprintf(cur_file, "Stats R#%d:\t_num_tasks_executed_by_commthread\t%d\n", chameleon_comm_rank, _num_tasks_executed_by_commthread.load());
+    #endif
     fprintf(cur_file, "Stats R#%d:\t_num_tasks_offloaded\t%d\n", chameleon_comm_rank, _num_tasks_offloaded.load());
     fprintf(cur_file, "Stats R#%d:\t_num_tasks_canceled\t%d\n", chameleon_comm_rank, _num_tasks_canceled.load());
     fprintf(cur_file, "Stats R#%d:\t_num_tasks_replicated\t%d\n", chameleon_comm_rank, _num_tasks_replicated.load());

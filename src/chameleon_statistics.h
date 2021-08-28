@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #ifndef CHAM_STATS_RECORD
-#define CHAM_STATS_RECORD 0
+#define CHAM_STATS_RECORD 1
 #endif
 
 #ifndef CHAM_STATS_PER_SYNC_INTERVAL
@@ -18,7 +18,7 @@
 #endif
 
 #ifndef CHAM_STATS_PRINT
-#define CHAM_STATS_PRINT 0
+#define CHAM_STATS_PRINT 1
 #endif
 
 class MinMaxAvgStats {
@@ -92,6 +92,10 @@ extern MinMaxAvgStats       _stats_bytes_recv_per_message;
 #if CHAMELEON_TOOL_SUPPORT
 extern std::atomic<double>  _time_tool_get_thread_data_sum;
 extern std::atomic<int>     _time_tool_get_thread_data_count;
+#endif
+
+#if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
+extern std::atomic<int>     _num_tasks_executed_by_commthread;
 #endif
 
 #ifdef __cplusplus

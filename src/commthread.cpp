@@ -2716,14 +2716,19 @@ inline void action_task_replication_send() {
 void action_work_contribution(){
     int32_t successful_task_execution = false;
     int32_t contribution_limit = CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT;
-    // printf("executing action_work_contribution\n"); // yes this part works
     if (contribution_limit == 0){
         return;
     }
     else if (contribution_limit > 0){
+        num_load_balances_handled++;
         if (num_load_balances_handled >= CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT){
             successful_task_execution = chameleon_taskyield();
             num_load_balances_handled = 0;
+            #if CHAM_STATS_RECORD
+                if ((successful_task_execution == CHAM_REMOTE_TASK_SUCCESS) || (successful_task_execution == CHAM_LOCAL_TASK_SUCCESS)){
+                    _num_tasks_executed_by_commthread++;
+                }
+            #endif
         }
     }
     else{ // contribution_limit < 0
@@ -2731,13 +2736,13 @@ void action_work_contribution(){
         while (executed_tasks < (-1*CHAM_COMMTHREAD_WORKCONTRIBUTION_LIMIT)){
             successful_task_execution = chameleon_taskyield();
             executed_tasks++;
+            #if CHAM_STATS_RECORD
+                if ((successful_task_execution == CHAM_REMOTE_TASK_SUCCESS) || (successful_task_execution == CHAM_LOCAL_TASK_SUCCESS)){
+                    _num_tasks_executed_by_commthread++;
+                }
+            #endif
         }
     }
-    #if CHAM_STATS_RECORD
-        if ((successful_task_execution == CHAM_REMOTE_TASK_SUCCESS) || (successful_task_execution == CHAM_LOCAL_TASK_SUCCESS)){
-            _num_tasks_executed_by_commthread++;
-        }
-    #endif
 }
 #endif
 
@@ -2980,7 +2985,6 @@ void action_communication_progression(int comm_thread) {
     #endif
 
     #if CHAM_ACTIVATE_COMMTHREAD_WORKCONTRIBUTION
-    num_load_balances_handled++;
     action_work_contribution();
     #endif
 

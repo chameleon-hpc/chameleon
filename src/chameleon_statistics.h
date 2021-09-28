@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #ifndef CHAM_STATS_RECORD
-#define CHAM_STATS_RECORD 1
+#define CHAM_STATS_RECORD 0
 #endif
 
 #ifndef CHAM_STATS_PER_SYNC_INTERVAL
@@ -18,7 +18,7 @@
 #endif
 
 #ifndef CHAM_STATS_PRINT
-#define CHAM_STATS_PRINT 1
+#define CHAM_STATS_PRINT 0
 #endif
 
 class MinMaxAvgStats {

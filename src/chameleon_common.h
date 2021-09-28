@@ -703,8 +703,8 @@ class thread_safe_task_list_t {
     }
 
     cham_migratable_task_t* affinity_task_select(int32_t my_domain, int32_t my_gtid) {
-        if(this->empty())
-            return nullptr;
+        // if(this->empty())
+        //     return nullptr;
 
         cham_migratable_task_t* ret_val = nullptr;
         bool found, backup_found;

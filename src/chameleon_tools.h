@@ -220,6 +220,8 @@ typedef cham_t_data_t *(*cham_t_get_rank_data_t) (void);
 typedef cham_t_data_t *(*cham_t_get_task_data_t) (TYPE_TASK_ID);
 typedef cham_t_task_param_info_t (*cham_t_get_task_param_info_by_id_t) (TYPE_TASK_ID);
 typedef cham_t_task_param_info_t (*cham_t_get_task_param_info_t) (cham_migratable_task_t*);
+typedef cham_t_task_meta_info_t (*cham_t_get_task_meta_info_by_id_t) (TYPE_TASK_ID);
+typedef cham_t_task_meta_info_t (*cham_t_get_task_meta_info_t) (cham_migratable_task_t*);
 typedef cham_t_rank_info_t *(*cham_t_get_rank_info_t) (void);
 
 /*****************************************************************************

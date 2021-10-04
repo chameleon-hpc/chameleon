@@ -123,6 +123,12 @@ typedef struct cham_t_rank_info_t {
     int32_t comm_size;
 } cham_t_rank_info_t;
 
+typedef struct cham_t_task_meta_info_t {
+    intptr_t    entry_ptr;
+    int32_t     idx_image;
+    ptrdiff_t   entry_image_offset;
+} cham_t_task_meta_info_t;
+
 typedef struct cham_t_task_param_info_t {
     int32_t num_args;
     int64_t *arg_sizes;

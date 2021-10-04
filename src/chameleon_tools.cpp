@@ -238,6 +238,27 @@ cham_t_task_param_info_t cham_t_get_task_param_info_by_id(TYPE_TASK_ID task_id) 
     return cham_t_get_task_param_info(task);
 }
 
+cham_t_task_meta_info_t cham_t_get_task_meta_info(cham_migratable_task_t* task) {
+    cham_t_task_meta_info_t ret;
+    ret.entry_ptr               = -1;
+    ret.idx_image               = -1;
+    ret.entry_image_offset      = -1;
+
+#if CHAMELEON_TOOL_SUPPORT
+    if(task) {
+        ret.entry_ptr           = task->tgt_entry_ptr;
+        ret.idx_image           = task->idx_image;
+        ret.entry_image_offset  = task->entry_image_offset;
+    }
+#endif
+    return ret;
+}
+
+cham_t_task_meta_info_t cham_t_get_task_meta_info_by_id(TYPE_TASK_ID task_id) {
+    cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
+    return cham_t_task_meta_info(task);
+}
+
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
     if(!strcmp(s, "cham_t_set_callback"))
         return (cham_t_interface_fn_t)cham_t_set_callback;
@@ -253,6 +274,10 @@ static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {
         return (cham_t_interface_fn_t)cham_t_get_task_param_info;
     else if(!strcmp(s, "cham_t_get_task_param_info_by_id"))
         return (cham_t_interface_fn_t)cham_t_get_task_param_info_by_id;
+    else if(!strcmp(s, "cham_t_get_task_meta_info"))
+        return (cham_t_interface_fn_t)cham_t_get_task_meta_info;
+    else if(!strcmp(s, "cham_t_get_task_meta_info_by_id"))
+        return (cham_t_interface_fn_t)cham_t_get_task_meta_info_by_id;
     else if(!strcmp(s, "cham_t_get_task_data"))
         return (cham_t_interface_fn_t)cham_t_get_task_data;
     else

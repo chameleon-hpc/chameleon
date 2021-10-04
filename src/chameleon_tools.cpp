@@ -256,7 +256,7 @@ cham_t_task_meta_info_t cham_t_get_task_meta_info(cham_migratable_task_t* task) 
 
 cham_t_task_meta_info_t cham_t_get_task_meta_info_by_id(TYPE_TASK_ID task_id) {
     cham_migratable_task_t* task = _map_overall_tasks.find(task_id);
-    return cham_t_task_meta_info(task);
+    return cham_t_get_task_meta_info(task);
 }
 
 static cham_t_interface_fn_t cham_t_fn_lookup(const char *s) {

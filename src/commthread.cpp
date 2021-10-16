@@ -21,8 +21,6 @@
 #include "VT.h"
 #endif
 
-#define CHAM_SLEEP_TIME_MICRO_SECS 5
-
 #pragma region Variables
 // communicator for remote task requests
 MPI_Comm chameleon_comm;
@@ -295,7 +293,7 @@ int32_t put_comm_threads_to_sleep() {
     _flag_comm_thread_sleeping             = 1;
     // wait until thread sleeps
     while(!_comm_thread_service_stopped) {
-        usleep(CHAM_SLEEP_TIME_MICRO_SECS);
+        usleep(COMM_THREAD_SLEEP_TIME_MICRO_SECS);
     }
     // DBP("put_comm_threads_to_sleep - service thread stopped = %d\n", _comm_thread_service_stopped);
     _comm_threads_ended_count               = 0;
@@ -1621,7 +1619,6 @@ inline void action_create_gather_request() {
     assert(num_tasks_local>=0);
     assert(num_tasks_replicated_local>=0);
     assert(num_tasks_replicated_remote>=0);
-
 
     TYPE_TASK_ID* ids_local = nullptr;
     TYPE_TASK_ID* ids_stolen = nullptr;
@@ -2992,7 +2989,7 @@ void* comm_thread_action(void* arg) {
                 DBP("comm_thread_action - thread went to sleep again (inside while) - _comm_thread_service_stopped=%d\n", _comm_thread_service_stopped.load());
             }
             // dont do anything if the thread is sleeping
-            usleep(CHAM_SLEEP_TIME_MICRO_SECS);
+            usleep(COMM_THREAD_SLEEP_TIME_MICRO_SECS);
             if(_flag_abort_comm_thread) {
                 DBP("comm_thread_action (abort)\n");
                 if(_session_data.buffer_load_values) {
@@ -3031,6 +3028,7 @@ void* comm_thread_action(void* arg) {
 #endif /* ENABLE_TRACING_FOR_SYNC_CYCLES */
         // call function for communication progression
         action_communication_progression(1);
+        usleep(COMM_THREAD_SLEEP_TIME_MICRO_SECS);
     }
 }
 #pragma endregion CommThread

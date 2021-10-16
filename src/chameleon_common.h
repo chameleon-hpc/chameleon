@@ -906,6 +906,7 @@ extern std::atomic<double> MAX_TASKS_PER_RANK_TO_MIGRATE_AT_ONCE;
 extern std::atomic<double> MAX_TASKS_PER_RANK_TO_ACTIVATE_AT_ONCE;
 extern std::atomic<int> TAG_NBITS_TASK_ID;
 extern std::atomic<int> TAG_MAX_TASK_ID;
+extern std::atomic<int> COMM_THREAD_SLEEP_TIME_MICRO_SECS;
 
 // settings to manipulate default migration strategy
 extern std::atomic<double> MIN_ABS_LOAD_IMBALANCE_BEFORE_MIGRATION;
@@ -1083,6 +1084,12 @@ static void load_config_values() {
     tmp = std::getenv("MAX_PERCENTAGE_REPLICATED_TASKS");
     if(tmp) {
         MAX_PERCENTAGE_REPLICATED_TASKS = std::atof(tmp);
+    }
+
+    tmp = nullptr;
+    tmp = std::getenv("COMM_THREAD_SLEEP_TIME_MICRO_SECS");
+    if(tmp) {
+        COMM_THREAD_SLEEP_TIME_MICRO_SECS = std::atof(tmp);
     }
 
     tmp = nullptr;

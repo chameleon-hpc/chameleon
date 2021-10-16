@@ -1041,7 +1041,7 @@ static void load_config_values() {
     tmp = nullptr;
     tmp = std::getenv("OMP_NUM_THREADS");
     if(tmp) {
-        OMP_NUM_THREADS_VAR = std::atof(tmp);
+        OMP_NUM_THREADS_VAR = std::atoi(tmp);
     }
 
     tmp = nullptr;
@@ -1089,25 +1089,25 @@ static void load_config_values() {
     tmp = nullptr;
     tmp = std::getenv("COMM_THREAD_SLEEP_TIME_MICRO_SECS");
     if(tmp) {
-        COMM_THREAD_SLEEP_TIME_MICRO_SECS = std::atof(tmp);
+        COMM_THREAD_SLEEP_TIME_MICRO_SECS = std::atoi(tmp);
     }
 
     tmp = nullptr;
     tmp = std::getenv("ENABLE_TRACE_FROM_SYNC_CYCLE");
     if(tmp) {
-        ENABLE_TRACE_FROM_SYNC_CYCLE = std::atof(tmp);
+        ENABLE_TRACE_FROM_SYNC_CYCLE = std::atoi(tmp);
     }
 
     tmp = nullptr;
     tmp = std::getenv("ENABLE_TRACE_TO_SYNC_CYCLE");
     if(tmp) {
-        ENABLE_TRACE_TO_SYNC_CYCLE = std::atof(tmp);
+        ENABLE_TRACE_TO_SYNC_CYCLE = std::atoi(tmp);
     }
 
     tmp = nullptr;
     tmp = std::getenv("TAG_NBITS_TASK_ID");
     if(tmp) {
-        TAG_NBITS_TASK_ID = std::atof(tmp);
+        TAG_NBITS_TASK_ID = std::atoi(tmp);
     }
     TAG_MAX_TASK_ID = ((int)pow(2.0, (double)TAG_NBITS_TASK_ID.load()))-1;
 
@@ -1136,6 +1136,7 @@ static void print_config_values() {
     RELP("ENABLE_TRACE_FROM_SYNC_CYCLE=%d\n", ENABLE_TRACE_FROM_SYNC_CYCLE.load());
     RELP("ENABLE_TRACE_TO_SYNC_CYCLE=%d\n", ENABLE_TRACE_TO_SYNC_CYCLE.load());
     RELP("MAX_PERCENTAGE_REPLICATED_TASKS=%f\n", MAX_PERCENTAGE_REPLICATED_TASKS.load());
+    RELP("COMM_THREAD_SLEEP_TIME_MICRO_SECS=%d\n", COMM_THREAD_SLEEP_TIME_MICRO_SECS.load());
     if(CHAMELEON_STATS_FILE_PREFIX.load()) {
         RELP("CHAMELEON_STATS_FILE_PREFIX=%s\n", CHAMELEON_STATS_FILE_PREFIX.load());
     }

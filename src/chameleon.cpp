@@ -912,7 +912,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         #endif
         #endif /* ENABLE_TASK_MIGRATION && CHAM_REPLICATION_MODE>0 */
 
-        // ========== Prio 4: work on a regular OpenMP task
+        // ========== Prio 7: work on a regular OpenMP task
         // make sure that we get info about outstanding tasks with dependences
         // to avoid that we miss some tasks
         // if(this_thread_num_attemps_standard_task >= MAX_ATTEMPS_FOR_STANDARD_OPENMP_TASK)
@@ -931,7 +931,7 @@ int32_t chameleon_distributed_taskwait(int nowait) {
         //     continue;
         // }
 
-        // ========== Prio 5: check whether to abort procedure
+        // ========== Prio 8: check whether to abort procedure
         // only abort if 
         //      - load exchange has happened at least once 
         //      - there are no outstanding jobs left
@@ -1115,17 +1115,6 @@ int32_t chameleon_add_task(cham_migratable_task_t *task) {
     // update value total tasks created per rank
     _total_created_tasks_per_rank++;
 
-    // add to queue
-/*#if CHAM_REPLICATION_MODE>0
-    if(!task->is_replicated_task) 
-#endif
-      _local_tasks.push_back(task);
-#if CHAM_REPLICATION_MODE>0
-    else {
-      _replicated_local_tasks.push_back(task);
-      _replicated_tasks_to_transfer.push_back(task);
-    }
-#endif */
     // set id of last task added
     __last_task_id_added = task->task_id;
 
@@ -1370,25 +1359,22 @@ inline int32_t process_replicated_local_task() {
     bool expected = false;
     bool desired = true;
 
-    //atomic CAS
-    //if(replicated_task->result_in_progress.compare_exchange_strong(expected, desired)) {
-        DBP("process_replicated_local_task - task %d was reserved for local execution\n", replicated_task->task_id);
-    //if(true) {
-        //now we can actually safely execute the replicated task (we have reserved it and a future recv back will be ignored)
+
+    DBP("process_replicated_local_task - task %d was reserved for local execution\n", replicated_task->task_id);
 
 #ifdef TRACE
-        static int event_process_replicated_local = -1;
-        static const std::string event_process_replicated_name = "process_replicated_local";
-        if( event_process_replicated_local == -1)
-            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_local);
-        VT_BEGIN_CONSTRAINED(event_process_replicated_local);
+    static int event_process_replicated_local = -1;
+    static const std::string event_process_replicated_name = "process_replicated_local";
+    if(event_process_replicated_local == -1)
+        int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_local);
+    VT_BEGIN_CONSTRAINED(event_process_replicated_local);
 #endif
 
 #if CHAM_STATS_RECORD
-        double cur_time = omp_get_wtime();
+    double cur_time = omp_get_wtime();
 #endif
 
-#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 // ||  CHAM_REPLICATION_MODE==4
+#if CHAM_REPLICATION_MODE==2 || CHAM_REPLICATION_MODE==3 
         //cancel task on remote ranks
         cancel_offloaded_task(replicated_task);
 #endif
@@ -1416,11 +1402,10 @@ inline int32_t process_replicated_local_task() {
         #endif
         _map_overall_tasks.erase(replicated_task->task_id);
 
-//#if CHAM_REPLICATION_MODE==2
         _num_local_tasks_outstanding--;
         assert(_num_local_tasks_outstanding>=0);
         DBP("process_replicated_task - decrement local outstanding count for task %ld new count %ld\n", replicated_task->task_id, _num_local_tasks_outstanding.load());
-//#endif
+
         // handle external finish callback
         if(replicated_task->cb_task_finish_func_ptr) {
             replicated_task->cb_task_finish_func_ptr(replicated_task->cb_task_finish_func_param);
@@ -1429,13 +1414,6 @@ inline int32_t process_replicated_local_task() {
 #ifdef TRACE
         VT_END_W_CONSTRAINED(event_process_replicated_local);
 #endif
-        //Do not free replicated task here, as the communication thread may later receive back
-        //this task and needs to access the task (check flag + post receive requests to trash buffer)
-        //The replicated task should be deallocated in recv back handlers
-    //}
-    //else {
-    //    return CHAM_REPLICATED_TASK_ALREADY_AVAILABLE;
-   // }
 
     return CHAM_REPLICATED_TASK_SUCCESS;
 
@@ -1454,50 +1432,44 @@ inline int32_t process_replicated_remote_task() {
     if(replicated_task==nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
-
 #ifdef TRACE
-        static int event_process_replicated_remote = -1;
-        static const std::string event_process_replicated_name = "process_replicated_remote";
-        if( event_process_replicated_remote == -1)
-            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_remote);
-        VT_BEGIN_CONSTRAINED(event_process_replicated_remote);
-#endif  
-        
-#if CHAM_STATS_RECORD
-        double cur_time = omp_get_wtime();
-#endif 
-
-//#if CHAM_REPLICATION_MODE==2
-        //cancel task on remote ranks
-//        cancel_offloaded_task(replicated_task);
-//#endif
-
-        int32_t res = execute_target_task(replicated_task);
-        if(res != CHAM_SUCCESS)
-            handle_error_en(1, "execute_target_task - remote");
-#if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime()-cur_time;
-        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
-        _time_task_execution_replicated_count++;
+    static int event_process_replicated_remote = -1;
+    static const std::string event_process_replicated_name = "process_replicated_remote";
+    if(event_process_replicated_remote == -1)
+        int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_remote);
+    VT_BEGIN_CONSTRAINED(event_process_replicated_remote);
 #endif
 
 #if CHAM_STATS_RECORD
-        _num_executed_tasks_replicated_remote++;
+    double cur_time = omp_get_wtime();
 #endif
 
-        //_map_tag_to_remote_task.erase(replicated_task->task_id);
-        _map_overall_tasks.erase(replicated_task->task_id);
+    int32_t res = execute_target_task(replicated_task);
+    if(res != CHAM_SUCCESS)
+        handle_error_en(1, "execute_target_task - remote");
+#if CHAM_STATS_RECORD
+    cur_time = omp_get_wtime() - cur_time;
+    atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+    _time_task_execution_replicated_count++;
+#endif
 
-        if(replicated_task->HasAtLeastOneOutput()) {
-            // just schedule it for sending back results if there is at least 1 output
-            _remote_tasks_send_back.push_back(replicated_task);
-        }
-        else {
-            _num_remote_tasks_outstanding--;
-            DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
-        }
+#if CHAM_STATS_RECORD
+    _num_executed_tasks_replicated_remote++;
+#endif
+
+    //_map_tag_to_remote_task.erase(replicated_task->task_id);
+    _map_overall_tasks.erase(replicated_task->task_id);
+
+    if(replicated_task->HasAtLeastOneOutput()){
+        // just schedule it for sending back results if there is at least 1 output
+        _remote_tasks_send_back.push_back(replicated_task);
+    }
+    else{
+        _num_remote_tasks_outstanding--;
+        DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
+    }
 #ifdef TRACE
-        VT_END_W_CONSTRAINED(event_process_replicated_remote);
+    VT_END_W_CONSTRAINED(event_process_replicated_remote);
 #endif
 
     return CHAM_REPLICATED_TASK_SUCCESS;
@@ -1514,53 +1486,46 @@ inline int32_t process_replicated_migrated_task() {
 
     replicated_task = _replicated_migrated_tasks.pop_front();
 
-    if(replicated_task==nullptr)
+    if(replicated_task == nullptr)
         return CHAM_REPLICATED_TASK_NONE;
 
-
 #ifdef TRACE
-        static int event_process_replicated_migrated = -1;
-        static const std::string event_process_replicated_name = "process_replicated_migrated";
-        if( event_process_replicated_migrated == -1)
-            int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_migrated);
-        VT_BEGIN_CONSTRAINED(event_process_replicated_migrated);
+    static int event_process_replicated_migrated = -1;
+    static const std::string event_process_replicated_name = "process_replicated_migrated";
+    if(event_process_replicated_migrated == -1)
+        int ierr = VT_funcdef(event_process_replicated_name.c_str(), VT_NOCLASS, &event_process_replicated_migrated);
+    VT_BEGIN_CONSTRAINED(event_process_replicated_migrated);
 #endif
 
 #if CHAM_STATS_RECORD
-        double cur_time = omp_get_wtime();
+    double cur_time = omp_get_wtime();
 #endif
-
-//#if CHAM_REPLICATION_MODE==2
-        //cancel task on remote ranks
-//        cancel_offloaded_task(replicated_task);
-//#endif
-
-        int32_t res = execute_target_task(replicated_task);
-        if(res != CHAM_SUCCESS)
-            handle_error_en(1, "execute_target_task - remote");
+    int32_t res = execute_target_task(replicated_task);
+    if(res != CHAM_SUCCESS)
+        handle_error_en(1, "execute_target_task - remote");
 #if CHAM_STATS_RECORD
-        cur_time = omp_get_wtime()-cur_time;
-        atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
-        _time_task_execution_replicated_count++;
+    cur_time = omp_get_wtime() - cur_time;
+    atomic_add_dbl(_time_task_execution_replicated_sum, cur_time);
+    _time_task_execution_replicated_count++;
 #endif
 
 #if CHAM_STATS_RECORD
-        _num_executed_tasks_replicated_remote++;
+    _num_executed_tasks_replicated_remote++;
 #endif
 
-        //_map_tag_to_remote_task.erase(replicated_task->task_id);
-        _map_overall_tasks.erase(replicated_task->task_id);
+    //_map_tag_to_remote_task.erase(replicated_task->task_id);
+    _map_overall_tasks.erase(replicated_task->task_id);
 
-        if(replicated_task->HasAtLeastOneOutput()) {
-            // just schedule it for sending back results if there is at least 1 output
-            _remote_tasks_send_back.push_back(replicated_task);
-        }
-        else {
-            _num_remote_tasks_outstanding--;
-            DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
-        }
+    if(replicated_task->HasAtLeastOneOutput()){
+        // just schedule it for sending back results if there is at least 1 output
+        _remote_tasks_send_back.push_back(replicated_task);
+    }
+    else{
+        _num_remote_tasks_outstanding--;
+        DBP("process_replicated_task - decrement remote outstanding count for task %ld\n", replicated_task->task_id);
+    }
 #ifdef TRACE
-        VT_END_W_CONSTRAINED(event_process_replicated_migrated);
+    VT_END_W_CONSTRAINED(event_process_replicated_migrated);
 #endif
 
     return CHAM_REPLICATED_TASK_SUCCESS;

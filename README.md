@@ -46,7 +46,7 @@ CHAMELEON can be build from source using CMake.
 
 ### 3.2. Getting the source 
 
-    $ git clone https://github.com/chameleon-hpc/chameleon.git
+    git clone https://github.com/chameleon-hpc/chameleon.git
 
 ### 3.3. Building
 
@@ -54,28 +54,45 @@ To build CHAMELEON using CMake run:
 
 Create build directory:
 
-    $ mkdir BUILD && cd ./BUILD
+    mkdir BUILD && cd ./BUILD
 
 Run cmake to configure the build:
 
-    $ cmake ..
+    cmake ..
 
 For a list of available parameters:
 
-    $ cmake .. -L
+    cmake .. -L
 
 To configure build parameters using ccmake:
 
-    $ ccmake ..
+    ccmake ..
 
 To build run:
 
-    $ make
+    make
 
 ### 3.4. Installation
 
 Installing to the default installation path usually requires root privileges. Changing the installation path can be done using `-DCMAKE_INSTALL_PREFIX`
 
-    $ cmake -DCMAKE_INSTALL_PREFIX=<install/path> ../
-    $ make
-    $ make install
+    cmake -DCMAKE_INSTALL_PREFIX=<install/path> ../
+    make
+    make install
+
+### 3.5. Make runtime available for applications
+
+To be able to link applications against the Chameleon runtime, you need to prepend / append a few environment variables.
+
+    # base path to install folder
+    export CHAMELEON_INSTALL_PATH=<install/path>
+    
+    # include paths
+    export INCLUDE="${CHAMELEON_INSTALL_PATH}/include:${INCLUDE}"
+    export CPATH="${CHAMELEON_INSTALL_PATH}/include:${CPATH}"
+    export C_INCLUDE_PATH="${CHAMELEON_INSTALL_PATH}/include:${C_INCLUDE_PATH}"
+    export CPLUS_INCLUDE_PATH="${CHAMELEON_INSTALL_PATH}/include:${CPLUS_INCLUDE_PATH}"
+    
+    # library paths
+    export LIBRARY_PATH="${CHAMELEON_INSTALL_PATH}/lib:${LIBRARY_PATH}"
+    export LD_LIBRARY_PATH="${CHAMELEON_INSTALL_PATH}/lib:${LD_LIBRARY_PATH}"
